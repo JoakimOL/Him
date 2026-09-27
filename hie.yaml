@@ -1,0 +1,8 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "him:lib"
+    - path: "./app"
+      component: "him:exe:him"
+    - path: "./test"
+      component: "him:test:him-test"

@@ -1,0 +1,3 @@
+# HLint configuration. Run with `make lint` (or inline via HLS).
+- ignore: {name: "Use camelCase"}
+- ignore: {name: "Redundant do"}

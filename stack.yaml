@@ -1,0 +1,6 @@
+# LTS 24.60 = GHC 9.10.3, which matches a binary shipped with
+# haskell-language-server 2.14. Bump both together.
+snapshot: lts-24.60
+
+packages:
+- .

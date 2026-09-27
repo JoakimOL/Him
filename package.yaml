@@ -1,0 +1,62 @@
+name:                him
+version:             0.1.0.0
+license:             BSD-3-Clause
+author:              "Joakim Lier"
+copyright:           "2026 Joakim Lier"
+synopsis:            A modal, selection-first terminal text editor
+category:            Editor
+description:         Please see docs/PLAN.md
+
+extra-source-files:
+- README.md
+- CHANGELOG.md
+- docs/PLAN.md
+
+language: GHC2021
+
+default-extensions:
+- OverloadedStrings
+- LambdaCase
+- DerivingStrategies
+
+# Only GHC boot libraries are allowed. Add them per-component as they
+# become used, so -Wunused-packages stays quiet.
+dependencies:
+- base >= 4.7 && < 5
+
+ghc-options:
+- -Wall
+- -Wcompat
+- -Widentities
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wmissing-export-lists
+- -Wmissing-home-modules
+- -Wpartial-fields
+- -Wredundant-constraints
+- -Wunused-packages
+
+library:
+  source-dirs: src
+  c-sources:
+  - cbits/winsize.c
+
+executables:
+  him:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    dependencies:
+    - him
+
+tests:
+  him-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    # Add `- him` under dependencies once the tests exercise library code.
