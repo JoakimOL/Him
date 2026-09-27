@@ -10,4 +10,6 @@ and this project adheres to the
 
 ## 0.1.0.0 - unreleased
 
+- Core editor: file loading/saving, rendering with frame diffing, Helix-style selections and motions, command registry + keymap tries, insert mode, `:` commands.
+
 - Project scaffold: tooling, FFI terminal-size shim, test harness, docs/PLAN.md.

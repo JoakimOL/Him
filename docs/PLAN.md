@@ -82,6 +82,18 @@ we enter raw mode, the saved state is already raw, so it undoes our restore. We 
 in milestone 2. Input is read with `System.Posix.IO.ByteString.fdRead` on `stdInput`
 (after `threadWaitRead`, which keeps it interruptible for timeouts).
 
+**ADR-5b: Details of the selection model.**
+Ranges are *inclusive* (a cursor covers the character under it), and `col == lineLength`
+addresses the line end (the newline). In insert mode the head is read as a gap: text is
+inserted before the character at the head. Edits apply to the primary range only. Motions
+and rendering already handle every range. Multi-range edits need position mapping and
+will come with multiple selections.
+
+**ADR-6b: Components are `Theme -> Editor -> Rect -> Frame -> Frame`.**
+This replaces the `[DrawOp]` lists in the original plan: composing frame transformers is
+simpler and just as modular. The mode `Command` was renamed `CmdLine` because it clashed
+with the `Command` type.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -93,7 +105,7 @@ Legend: ✅ exists, ⏳ planned.
 
 | Module | Status | Responsibility |
 |---|---|---|
-| `Him.App` | ✅ (stub) | Main loop: event → keymap → command → render. |
+| `Him.App` | ✅ | Main loop: event → keymap → command → render. `handleEvent` is exported so tests can drive it. |
 | `Him.Log` | ✅ | `logMsg`, which appends to the file named by `$HIM_LOG`. It is a no-op when unset. |
 | `Him.Terminal.Size` + `cbits/winsize.c` | ✅ | `getWindowSize :: IO (Maybe (Int, Int))`, returning (rows, cols); `onResize` installs the SIGWINCH handler. |
 | `Him.Terminal.Raw` | ✅ | Raw mode + alternate screen; `withRawTerminal` always restores the terminal. |
@@ -101,16 +113,20 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Terminal.Output` | ✅ | Writes one builder per frame and flushes. |
 | `Him.Terminal.Input` | ✅ | Reader thread → `Chan Event` (from `base`; `stm` wasn't needed); pure `decodeKeys final bytes`; a 30 ms lone-ESC timeout. |
 | `Him.Key`, `Him.Event` | ✅ | Key/modifier types and a `"C-s"`-style key parser; the `Event` sum type. |
-| `Him.Buffer` | ⏳ | Abstract text storage (`Seq Text`), path, dirty flag. |
-| `Him.Position`, `Him.Selection` | ⏳ | `Pos`, `Range {anchor, head}`, `Selection` (NonEmpty ranges + primary). |
-| `Him.Motion` | ⏳ | Pure motions: char, line (desired column), word, line/file start/end. |
-| `Him.Edit` | ⏳ | Pure edits over all selections. |
-| `Him.Editor`, `Him.Mode`, `Him.View` | ⏳ | Editor state, modes, viewport + scrolloff. |
-| `Him.Command`, `Him.Keymap` | ⏳ | Command registry and per-mode keymap tries. |
-| `Him.Ex` | ⏳ | `:`-command parser. |
-| `Him.Render`, `Him.Render.*` | ⏳ | Frame, layout, components, diffing. |
-| `Him.File` | ⏳ | Load/save (UTF-8, line endings, trailing newline). |
-| `Him.Config.Default` | ⏳ | The default keymaps and registry. **This is where bindings are added.** |
+| `Him.Buffer` | ✅ | Abstract text storage (`Seq Text`), path, dirty flag. |
+| `Him.Position`, `Him.Selection` | ✅ | `Pos`, `Range {anchor, head}`, `Selection` (NonEmpty ranges + primary). |
+| `Him.Motion` | ✅ | Pure motions: char, line (desired column), word, line/file start/end. |
+| `Him.Edit` | ✅ | Pure edits over all selections. |
+| `Him.Editor`, `Him.Mode`, `Him.View` | ✅ | Editor state, modes, viewport + scrolloff. |
+| `Him.Command`, `Him.Keymap` | ✅ | Command registry and per-mode keymap tries. |
+| `Him.Ex` | ✅ | `:`-command parser. |
+| `Him.Render`, `Him.Render.*` | ✅ | Frame, layout, components, diffing. |
+| `Him.File` | ✅ | Load/save (UTF-8, line endings, trailing newline). |
+| `Him.Document` | ✅ | Buffer + selection + path + dirty flag + line ending/trailing newline. (Split out of `Buffer` so the buffer stays pure text.) |
+| `Him.Config` | ✅ | `Config { cfgRegistry, cfgKeymaps, cfgFallback }`, held by the main loop rather than the `Editor`, which avoids a module cycle. |
+| `Him.Commands.*` | ✅ | Command lists: `Motion`, `Edit` (modes and text), `CommandLine`, `File` (ex commands). |
+| `Him.TextWidth` | ✅ | Tab expansion (width 4) and char→display-column layout. `charWidth` is a stub returning 1 until milestone 10. |
+| `Him.Config.Default` | ✅ | The default keymaps and registry. **This is where bindings are added.** |
 
 ## 5. Development goals / milestones
 
@@ -127,14 +143,14 @@ Each milestone ends with something runnable, and with this file updated.
   redraw on SIGWINCH. *Done when:* resizing redraws correctly.
 - [x] **4. Input decoding.** `Key`, `Event`, `Terminal.Input`. *Done when:* arrows, Ctrl-,
   Alt-, and a lone Esc are distinguished and shown on screen; `decodeKeys` is unit tested.
-- [ ] **5. Buffer, file loading, rendering.** `Buffer`, `File`, `Editor`, `View`, `Render`
+- [x] **5. Buffer, file loading, rendering.** `Buffer`, `File`, `Editor`, `View`, `Render`
   (TextArea + StatusLine), `Render.Diff`. *Done when:* `him file` shows the file and it
   scrolls.
-- [ ] **6. Selections & motions.** `h j k l`, clamping, desired column, viewport follows the
+- [x] **6. Selections & motions.** `h j k l`, clamping, desired column, viewport follows the
   cursor, selection highlighted. *Done when:* motions are unit tested.
-- [ ] **7. Commands, keymap, modes.** Registry, trie, Normal/Insert, `i a o`, typing,
+- [x] **7. Commands, keymap, modes.** Registry, trie, Normal/Insert, `i a o`, typing,
   Backspace, Enter, cursor shape, dirty flag.
-- [ ] **8. Command mode.** `:w`, `:q` (refuses when dirty), `:q!`, `:wq`; status messages.
+- [x] **8. Command mode.** `:w`, `:q` (refuses when dirty), `:q!`, `:wq`; status messages.
 - [ ] **9. Helix selection actions.** `w b e x v ; d c`, plus `g g` / `g e`, with the
   pending keys shown in the status line.
 - [ ] **10. Polish.** Line-number gutter, tab expansion, wide-character width, horizontal
@@ -153,36 +169,62 @@ Later (the architecture already has room for these):
 
 ## 6. Keybindings
 
-None are implemented yet. Planned for milestones 7–9 (kept small on purpose):
+Implemented (defined in `Him.Config.Default`):
 
 | Mode | Keys |
 |---|---|
-| Normal | `h j k l`, arrows, `w b e`, `x`, `v`, `;`, `d`, `c`, `i a o`, `g g`, `g e`, `:` |
-| Insert | printable chars, `Enter`, `Backspace`, `Esc` |
-| Command | printable chars, `Backspace`, `Enter`, `Esc` |
+| Normal | `h j k l`, arrows, `home`/`end`, `i a o`, `:` |
+| Select | same as normal, but motions extend; `esc` → normal |
+| Insert | printable chars, `ret` (keeps indent), `tab`, `backspace`, `del`, arrows, `esc` |
+| Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` |
+| `:` commands | `:w [path]`, `:q` (refuses when dirty), `:q!`, `:wq` / `:x` |
+
+Still to bind (milestone 9): `w b e x v ; d c`, `g g`, `g e`.
 
 ## 7. How to extend
-
-*(These steps become real in milestone 7; update them if the details change.)*
 
 - **Add a command:** write an `EditorM ()` action (keep the logic pure in `Him.Motion` or
   `Him.Edit` where you can), wrap it in a `Command` with a snake_case name and a doc string,
   and add it to the registry in `Him.Config.Default`.
-- **Add a keybinding:** add `("g h", "goto_line_start")`-style entries to that mode's keymap
-  in `Him.Config.Default`. Chords are parsed by `Him.Key`.
-- **Add a render component:** write `Editor -> Rect -> [DrawOp]` in `Him.Render.<Name>` and
-  give it a `Rect` in the layout in `Him.Render`.
+- **Add a keybinding:** add `("g h", "goto_line_start")`-style entries to that mode's list
+  in `Him.Config.Default`. Chords are parsed by `Him.Key`. At startup, `defaultConfig`
+  rejects bindings to unknown commands, and a test checks it.
+- **Add a `:` command:** add an `ExCommand` (names, doc, `[Text] -> EditorM ()`) to
+  `Him.Commands.File` or a new list, and include it in `exCommands` in `Him.Config.Default`.
+- **Add a render component:** write `Theme -> Editor -> Rect -> Frame -> Frame` in
+  `Him.Render.<Name>`, give it a `Rect` in `layout`, and compose it in `render`
+  (`Him.Render`).
 - **Debugging:** run `HIM_LOG=/tmp/him.log make run ARGS=file` and `tail -f /tmp/him.log` in
   another terminal. Never print to stdout while the terminal is in raw mode.
 
 ## 8. Where to pick up
 
-- **Next:** milestone 5: buffer, file loading, rendering.
-- `Him.App` currently holds a throwaway demo loop (tildes, plus the last decoded key; `q`
-  quits). Replace it with the real editor loop in milestone 5.
-- Key conventions (see `Him.Key`): a shifted letter is just the upper-case `KChar`, and
-  `Shift` only appears on non-character keys. `showKey` and `parseKey` round-trip
-  (`C-s`, `A-x`, `S-tab`, `ret`, `space`, `F5`, …).
+*Last session ended on 2026-09-27, after milestones 5–8 (committed together, since the
+command layer is needed to type or quit at all).*
+
+- **Next: milestone 9.** The commands already exist and have tests in
+  `Him.Commands.Motion` / `Him.Commands.Edit`: `move_next_word_start`,
+  `move_prev_word_start`, `move_next_word_end`, `select_line`, `select_mode`,
+  `collapse_selection`, `delete_selection`, `change_selection`, `goto_file_start`,
+  `goto_last_line`. What's left:
+  1. Add the bindings to `normalBindings`: `w b e x v ; d c`, `g g`, `g e`, and maybe
+     `g h` / `g l`.
+  2. Add `v` → `normal_mode` to `selectBindings`.
+  3. Add integration tests in `test/Spec.hs` (`integrationTests`), e.g. `"w d"`, `"x d"`,
+     `"g e"`.
+  4. Run a manual tmux check that the pending keys (`g`) show in the status line.
+- **Then milestone 10 (polish):** a line-number gutter (a new component plus a `layout`
+  change), a real `charWidth` (East Asian wide chars take 2 cells; wide cells need a
+  continuation-cell marker in `Frame`), and a horizontal-scrolling check with long lines.
+- **Small known issues:**
+  - A long file path in the status line is overwritten by the right-hand section, which
+    can hide `[+]`. The name should be truncated to fit.
+  - `rangeWantCol` stores a *character* column, not a display column, so `j`/`k` across
+    tab-indented lines can drift a little.
+- **How to verify:** `make test` (97 tests: pure modules, plus key sequences through the
+  real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
+  plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
+  `$(stack path --local-install-root)/bin/him`.
 - **Known issue (the user will handle it): HLS rejects Stack's GHC ("GHC ABIs don't match").** The installed HLS
   (AUR `haskell-language-server-static`, the upstream `linux-unknown` release) was built
   against the *rocky8* GHC 9.10.3 bindist. Stack's default `tinfo6` 9.10.3 is the

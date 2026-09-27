@@ -41,7 +41,9 @@ library:
   dependencies:
   - bytestring
   - containers
+  - directory
   - text
+  - transformers
   - unix
   c-sources:
   - cbits/winsize.c
@@ -68,3 +70,4 @@ tests:
     - him
     - bytestring
     - text
+    - transformers
