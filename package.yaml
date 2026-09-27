@@ -40,6 +40,8 @@ library:
   source-dirs: src
   dependencies:
   - bytestring
+  - containers
+  - text
   - unix
   c-sources:
   - cbits/winsize.c
@@ -62,4 +64,7 @@ tests:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
-    # Add `- him` under dependencies once the tests exercise library code.
+    dependencies:
+    - him
+    - bytestring
+    - text

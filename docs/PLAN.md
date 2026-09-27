@@ -95,12 +95,12 @@ Legend: ✅ exists, ⏳ planned.
 |---|---|---|
 | `Him.App` | ✅ (stub) | Main loop: event → keymap → command → render. |
 | `Him.Log` | ✅ | `logMsg`, which appends to the file named by `$HIM_LOG`. It is a no-op when unset. |
-| `Him.Terminal.Size` + `cbits/winsize.c` | ✅ | `getWindowSize :: IO (Maybe (Int, Int))`, returning (rows, cols). |
+| `Him.Terminal.Size` + `cbits/winsize.c` | ✅ | `getWindowSize :: IO (Maybe (Int, Int))`, returning (rows, cols); `onResize` installs the SIGWINCH handler. |
 | `Him.Terminal.Raw` | ✅ | Raw mode + alternate screen; `withRawTerminal` always restores the terminal. |
-| `Him.Terminal.Ansi` | ⏳ | Pure `Builder`s for escape codes (cursor, clear, SGR, cursor shape). |
-| `Him.Terminal.Output` | ⏳ | Writes one builder per frame and flushes. |
-| `Him.Terminal.Input` | ⏳ | Reader thread → `TChan Event`; pure `decodeKeys`; lone-ESC timeout. |
-| `Him.Key`, `Him.Event` | ⏳ | Key/modifier types and a `"C-s"`-style key parser; the `Event` sum type. |
+| `Him.Terminal.Ansi` | ✅ | Pure `Builder`s for escape codes (cursor, clear, SGR, cursor shape). |
+| `Him.Terminal.Output` | ✅ | Writes one builder per frame and flushes. |
+| `Him.Terminal.Input` | ✅ | Reader thread → `Chan Event` (from `base`; `stm` wasn't needed); pure `decodeKeys final bytes`; a 30 ms lone-ESC timeout. |
+| `Him.Key`, `Him.Event` | ✅ | Key/modifier types and a `"C-s"`-style key parser; the `Event` sum type. |
 | `Him.Buffer` | ⏳ | Abstract text storage (`Seq Text`), path, dirty flag. |
 | `Him.Position`, `Him.Selection` | ⏳ | `Pos`, `Range {anchor, head}`, `Selection` (NonEmpty ranges + primary). |
 | `Him.Motion` | ⏳ | Pure motions: char, line (desired column), word, line/file start/end. |
@@ -123,9 +123,9 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **2. Raw mode.** `Terminal.Raw` + alternate screen. A temporary loop echoes byte
   values and `q` quits. *Done when:* the terminal is restored after a normal quit and after
   an exception.
-- [ ] **3. Output & drawing.** `Terminal.Ansi/Output`; draw `~` rows and a welcome message;
+- [x] **3. Output & drawing.** `Terminal.Ansi/Output`; draw `~` rows and a welcome message;
   redraw on SIGWINCH. *Done when:* resizing redraws correctly.
-- [ ] **4. Input decoding.** `Key`, `Event`, `Terminal.Input`. *Done when:* arrows, Ctrl-,
+- [x] **4. Input decoding.** `Key`, `Event`, `Terminal.Input`. *Done when:* arrows, Ctrl-,
   Alt-, and a lone Esc are distinguished and shown on screen; `decodeKeys` is unit tested.
 - [ ] **5. Buffer, file loading, rendering.** `Buffer`, `File`, `Editor`, `View`, `Render`
   (TextArea + StatusLine), `Render.Diff`. *Done when:* `him file` shows the file and it
@@ -177,12 +177,12 @@ None are implemented yet. Planned for milestones 7–9 (kept small on purpose):
 
 ## 8. Where to pick up
 
-- **Next:** milestone 3, output & drawing (`Him.Terminal.Ansi`, `Him.Terminal.Output`,
-  SIGWINCH from `System.Posix.Signals.Exts`).
-- `Him.App` currently holds a throwaway byte-echo loop (from milestone 2). Replace it as the
-  real loop takes shape.
-- The test suite does not depend on the `him` library yet. Add `- him` under
-  `tests.him-test.dependencies` when the first library test is written (milestone 4).
+- **Next:** milestone 5: buffer, file loading, rendering.
+- `Him.App` currently holds a throwaway demo loop (tildes, plus the last decoded key; `q`
+  quits). Replace it with the real editor loop in milestone 5.
+- Key conventions (see `Him.Key`): a shifted letter is just the upper-case `KChar`, and
+  `Shift` only appears on non-character keys. `showKey` and `parseKey` round-trip
+  (`C-s`, `A-x`, `S-tab`, `ret`, `space`, `F5`, …).
 - **Known issue (the user will handle it): HLS rejects Stack's GHC ("GHC ABIs don't match").** The installed HLS
   (AUR `haskell-language-server-static`, the upstream `linux-unknown` release) was built
   against the *rocky8* GHC 9.10.3 bindist. Stack's default `tinfo6` 9.10.3 is the
