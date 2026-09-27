@@ -4,14 +4,24 @@ module Him.App
   ( run
   ) where
 
+import Data.ByteString qualified as B
+import Data.ByteString.Char8 qualified as BC
 import Him.Log (logMsg)
-import Him.Terminal.Size (getWindowSize)
+import Him.Terminal.Raw (withRawTerminal)
+import System.IO (hFlush, stdout)
+import System.Posix.IO (stdInput)
+import System.Posix.IO.ByteString (fdRead)
 
 -- | Run the editor, optionally opening the given file.
 run :: Maybe FilePath -> IO ()
 run file = do
   logMsg ("starting, file = " <> show file)
-  size <- getWindowSize
-  putStrLn ("him 0.1.0.0 - terminal size: " <> maybe "unknown (not a tty)" showSize size)
+  withRawTerminal $ do
+    say "raw mode - press keys to see their bytes, q to quit\r\n"
+    loop
   where
-    showSize (rows, cols) = show cols <> "x" <> show rows
+    loop = do
+      bytes <- fdRead stdInput 64
+      say (show (B.unpack bytes) <> "\r\n")
+      if bytes == "q" then pure () else loop
+    say s = BC.hPut stdout (BC.pack s) >> hFlush stdout

@@ -38,6 +38,9 @@ ghc-options:
 
 library:
   source-dirs: src
+  dependencies:
+  - bytestring
+  - unix
   c-sources:
   - cbits/winsize.c
 

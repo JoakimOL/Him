@@ -75,6 +75,13 @@ The `unix` package does not expose `ioctl(TIOCGWINSZ)`. `cbits/winsize.c` wraps 
 single function, and `SIGWINCH` triggers a resize event.
 *Alternative:* the cursor-position-report trick (`ESC[999C ESC[6n`). It is slower and racy.
 
+**ADR-7b: Read input from the file descriptor, never through the `stdin` Handle.**
+If `hSetBuffering stdin` or `hSetEcho` is called on a tty, GHC saves the termios state
+itself and restores *that* state when the program exits. When those calls happen after
+we enter raw mode, the saved state is already raw, so it undoes our restore. We found this
+in milestone 2. Input is read with `System.Posix.IO.ByteString.fdRead` on `stdInput`
+(after `threadWaitRead`, which keeps it interruptible for timeouts).
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -89,7 +96,7 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.App` | ✅ (stub) | Main loop: event → keymap → command → render. |
 | `Him.Log` | ✅ | `logMsg`, which appends to the file named by `$HIM_LOG`. It is a no-op when unset. |
 | `Him.Terminal.Size` + `cbits/winsize.c` | ✅ | `getWindowSize :: IO (Maybe (Int, Int))`, returning (rows, cols). |
-| `Him.Terminal.Raw` | ⏳ | Raw mode + alternate screen; `withRawTerminal` always restores the terminal. |
+| `Him.Terminal.Raw` | ✅ | Raw mode + alternate screen; `withRawTerminal` always restores the terminal. |
 | `Him.Terminal.Ansi` | ⏳ | Pure `Builder`s for escape codes (cursor, clear, SGR, cursor shape). |
 | `Him.Terminal.Output` | ⏳ | Writes one builder per frame and flushes. |
 | `Him.Terminal.Input` | ⏳ | Reader thread → `TChan Event`; pure `decodeKeys`; lone-ESC timeout. |
@@ -113,7 +120,7 @@ Each milestone ends with something runnable, and with this file updated.
   `.hlint.yaml`, `.editorconfig`, `Makefile`; FFI shim compiles; test harness in place;
   `Him.Log`. *Done when:* `make build` and `make test` pass, and HLS loads all components.
   **Note:** build and test pass, but HLS does not load yet. See the known issue in §8.
-- [ ] **2. Raw mode.** `Terminal.Raw` + alternate screen. A temporary loop echoes byte
+- [x] **2. Raw mode.** `Terminal.Raw` + alternate screen. A temporary loop echoes byte
   values and `q` quits. *Done when:* the terminal is restored after a normal quit and after
   an exception.
 - [ ] **3. Output & drawing.** `Terminal.Ansi/Output`; draw `~` rows and a welcome message;
@@ -170,11 +177,13 @@ None are implemented yet. Planned for milestones 7–9 (kept small on purpose):
 
 ## 8. Where to pick up
 
-- **Next:** milestone 2, raw mode (`Him.Terminal.Raw`, using `System.Posix.Terminal` from
-  `unix`, which must be added to `package.yaml`).
+- **Next:** milestone 3, output & drawing (`Him.Terminal.Ansi`, `Him.Terminal.Output`,
+  SIGWINCH from `System.Posix.Signals.Exts`).
+- `Him.App` currently holds a throwaway byte-echo loop (from milestone 2). Replace it as the
+  real loop takes shape.
 - The test suite does not depend on the `him` library yet. Add `- him` under
   `tests.him-test.dependencies` when the first library test is written (milestone 4).
-- **Known issue: HLS rejects Stack's GHC ("GHC ABIs don't match").** The installed HLS
+- **Known issue (the user will handle it): HLS rejects Stack's GHC ("GHC ABIs don't match").** The installed HLS
   (AUR `haskell-language-server-static`, the upstream `linux-unknown` release) was built
   against the *rocky8* GHC 9.10.3 bindist. Stack's default `tinfo6` 9.10.3 is the
   *fedora33* bindist, which has different ABI hashes. We verified that the rocky8 bindist's
