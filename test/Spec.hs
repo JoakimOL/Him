@@ -328,6 +328,9 @@ fileTests =
   , test "CRLF is kept" (assertEqual "a\r\nb\r\n" (roundTrip "a\r\nb\r\n"))
   , test "CRLF lines are split" (assertEqual ["a", "b"] (B.toLines (docBuffer (decodeDocument Nothing "a\r\nb\r\n"))))
   , test "empty file stays empty" (assertEqual "" (roundTrip ""))
+  , test "edited CRLF file saves CRLF everywhere" (assertEqual "a\r\nXb\r\nc\r\n" (editThenSave "a\r\nb\r\nc\r\n"))
+  , test "edited LF file" (assertEqual "a\nXb\nc" (editThenSave "a\nb\nc"))
+  , test "edited last line keeps no final newline" (assertEqual "a\nb\nXc" (encodeDocument (edit (Pos 2 0) (decodeDocument Nothing "a\nb\nc"))))
   , test "no final newline is remembered" (assertEqual False (docTrailingNewline (decodeDocument Nothing "a\nb")))
   , test "mixed endings follow the first line" (assertEqual ["a", "b\r", "c"] (B.toLines (docBuffer (decodeDocument Nothing "a\nb\r\nc"))))
   , test "chunks split anywhere decode the same" $
@@ -342,6 +345,8 @@ fileTests =
   where
     roundTrip :: ByteString -> ByteString
     roundTrip = encodeDocument . decodeDocument Nothing
+    edit p d = d {docBuffer = fst (B.insertText p "X" (docBuffer d))}
+    editThenSave = encodeDocument . edit (Pos 1 0) . decodeDocument Nothing
 
 exTests :: [Test]
 exTests =

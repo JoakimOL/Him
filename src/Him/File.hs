@@ -213,14 +213,18 @@ decodeChunks path = finish path . go (streamDecodeUtf8With lenientDecode) emptyL
 encodeDocument :: Document -> ByteString
 encodeDocument = BL.toStrict . toLazyByteString . encodeBuilder
 
--- | The file contents, as a builder that streams line by line.
+-- | The file contents, as a builder. Regions of the buffer whose line
+-- endings already match the file's are copied in one piece (for an
+-- unedited file that is nearly everything); others are written line by line.
 encodeBuilder :: Document -> Builder
 encodeBuilder doc
-  | Buffer.toLines buf == [""] = mempty
-  | otherwise = mconcat (intersperse sep (map encodeUtf8Builder (Buffer.toLines buf))) <> final
+  | Buffer.lineCount buf == 1 && T.null (Buffer.lineAt 0 buf) = mempty
+  | otherwise = mconcat (intersperse sep (map region (Buffer.regions buf))) <> final
   where
     buf = docBuffer doc
-    sep = case docLineEnding doc of
-      LF -> "\n"
-      CRLF -> "\r\n"
+    crlf = docLineEnding doc == CRLF
+    sep = if crlf then "\r\n" else "\n"
     final = if docTrailingNewline doc then sep else mempty
+    region r
+      | Buffer.regionCR r == crlf = encodeUtf8Builder (Buffer.regionText r)
+      | otherwise = mconcat (intersperse sep (map encodeUtf8Builder (Buffer.regionLines r)))

@@ -22,6 +22,8 @@ module Him.Buffer
   , deleteRange
   , replaceLines
   , textRange
+  , Region (..)
+  , regions
   , findForwardFrom
   , findBackwardBefore
   ) where
@@ -59,7 +61,7 @@ fromText t = Buffer (ropeFromBlocks [blockFromText False t])
 -- line breaks (as read from a file). With the flag set, a @\\r@ before each
 -- line break is not part of the line (CRLF). Nothing is copied.
 fromRegions :: [(Bool, Text)] -> Buffer
-fromRegions regions = case ropeFromBlocks [blockFromText cr t | (cr, t) <- regions] of
+fromRegions rs = case ropeFromBlocks [blockFromText cr t | (cr, t) <- rs] of
   r | ropeLines r == 0 -> empty
   r -> Buffer r
 
@@ -173,6 +175,29 @@ textRange p1 p2 b
   where
     Pos l1 c1 = clampPos b (min p1 p2)
     Pos l2 c2 = clampPos b (max p1 p2)
+
+-- | A run of lines stored contiguously: the bytes as they are in memory
+-- (lines joined by their original line breaks, CRLF when 'regionCR'; no
+-- trailing @\\r@), and the same lines one by one.
+data Region = Region
+  { regionCR :: !Bool
+  , regionText :: !Text
+  , regionLines :: [Text]
+  }
+
+-- | The buffer's storage regions, in order. Saving writes a region whose line
+-- endings match the file's in one piece instead of line by line.
+regions :: Buffer -> [Region]
+regions (Buffer r) =
+  [ Region cr (if cr then dropCR text else text) [blockLine b k | k <- [0 .. blockLines b - 1]]
+  | (_, b) <- ropeBlocksFrom 0 r
+  , let cr = blockCR b
+        text = fst (blockRegion b)
+  ]
+  where
+    -- The region ends just before its last line's newline, so a CRLF block
+    -- would end with that line's @\\r@.
+    dropCR t = if "\r" `T.isSuffixOf` t then T.dropEnd 1 t else t
 
 -- Search ---------------------------------------------------------------------
 --

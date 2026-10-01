@@ -26,6 +26,7 @@ module Him.Buffer.Rope
   , blockLines
   , blockLine
   , blockRegion
+  , blockCR
   , blockLineOfOffset
   , blockLineStart
   ) where
@@ -58,6 +59,10 @@ blockFromText cr t = Block t (lineStartsWith newlines t) 0 (newlines + 1) cr
 
 blockLines :: Block -> Int
 blockLines = blkCount
+
+-- | Whether the block's lines end in CRLF (loaded from a CRLF file).
+blockCR :: Block -> Bool
+blockCR = blkCR
 
 -- | Byte offset of a line's start within the block's text.
 blockLineStart :: Block -> Int -> Int
