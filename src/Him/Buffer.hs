@@ -1,10 +1,13 @@
--- | Text storage. The representation is hidden behind this interface so it
--- can later be swapped for a rope without touching callers.
+-- | Text storage. The representation ("Him.Buffer.Rope": a balanced tree
+-- of multi-line blocks) is hidden behind this interface.
 module Him.Buffer
   ( Buffer
   , empty
   , fromText
   , fromLines
+  , fromRegions
+  , linesFrom
+  , linesDownFrom
   , toLines
   , toText
   , lineCount
@@ -17,45 +20,69 @@ module Him.Buffer
   , prevPos
   , insertText
   , deleteRange
+  , replaceLines
   , textRange
+  , findForwardFrom
+  , findBackwardBefore
   ) where
 
-import Data.Foldable (toList)
 import Data.Maybe (fromMaybe)
-import Data.Sequence (Seq)
-import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Unsafe (dropWord8, lengthWord8, takeWord8)
+import Him.Buffer.Rope
 import Him.Position (Pos (..))
 
 -- | Lines of text without their terminators.
 -- Invariant: there is always at least one line.
-newtype Buffer = Buffer (Seq Text)
-  deriving stock (Eq, Show)
+newtype Buffer = Buffer Rope
+
+instance Eq Buffer where
+  a == b = lineCount a == lineCount b && toLines a == toLines b
+
+instance Show Buffer where
+  show b = "fromLines " <> show (toLines b)
 
 empty :: Buffer
-empty = Buffer (Seq.singleton T.empty)
+empty = fromText T.empty
 
 fromLines :: [Text] -> Buffer
 fromLines [] = empty
-fromLines ls = Buffer (Seq.fromList ls)
+fromLines ls = fromText (T.intercalate "\n" ls)
 
--- | Split on @\\n@; a trailing newline produces a final empty line.
+-- | Split on @\\n@; a trailing newline produces a final empty line. The
+-- lines share the text's memory.
 fromText :: Text -> Buffer
-fromText = fromLines . T.splitOn "\n"
+fromText t = Buffer (ropeFromBlocks [blockFromText False t])
+
+-- | From regions of whole lines, each one text with its lines joined by
+-- line breaks (as read from a file). With the flag set, a @\\r@ before each
+-- line break is not part of the line (CRLF). Nothing is copied.
+fromRegions :: [(Bool, Text)] -> Buffer
+fromRegions regions = case ropeFromBlocks [blockFromText cr t | (cr, t) <- regions] of
+  r | ropeLines r == 0 -> empty
+  r -> Buffer r
+
+-- | Lines from an index to the end, lazily.
+linesFrom :: Int -> Buffer -> [Text]
+linesFrom i (Buffer r) = ropeLinesFrom i r
+
+-- | Lines from an index down to the first, lazily.
+linesDownFrom :: Int -> Buffer -> [Text]
+linesDownFrom i (Buffer r) = ropeLinesDownFrom i r
 
 toLines :: Buffer -> [Text]
-toLines (Buffer ls) = toList ls
+toLines = linesFrom 0
 
 toText :: Buffer -> Text
 toText = T.intercalate "\n" . toLines
 
 lineCount :: Buffer -> Int
-lineCount (Buffer ls) = Seq.length ls
+lineCount (Buffer r) = ropeLines r
 
 -- | The line at an index, or empty if out of range.
 lineAt :: Int -> Buffer -> Text
-lineAt i (Buffer ls) = fromMaybe T.empty (Seq.lookup i ls)
+lineAt i (Buffer r) = fromMaybe T.empty (ropeLineAt i r)
 
 lineLength :: Int -> Buffer -> Int
 lineLength i = T.length . lineAt i
@@ -102,15 +129,26 @@ prevPos b p
   where
     Pos l c = clampPos b p
 
+-- | Replace lines @[from, to)@ with new lines.
+replaceLines :: Int -> Int -> [Text] -> Buffer -> Buffer
+replaceLines from to new (Buffer r) =
+  case ropeAppend before (ropeAppend middle after) of
+    r' | ropeLines r' == 0 -> empty
+    r' -> Buffer r'
+  where
+    (before, rest) = ropeSplitAt from r
+    (_, after) = ropeSplitAt (to - from) rest
+    middle = case new of
+      [] -> ropeFromBlocks []
+      _ -> ropeFromBlocks [blockFromText False (T.intercalate "\n" new)]
+
 -- | Insert text (which may contain newlines) before the given position.
 -- Returns the new buffer and the position just after the inserted text.
 insertText :: Pos -> Text -> Buffer -> (Buffer, Pos)
-insertText pos t b@(Buffer ls) =
-  (Buffer (Seq.take l ls <> Seq.fromList newLines <> Seq.drop (l + 1) ls), Pos (l + breaks) endCol)
+insertText pos t b = (replaceLines l (l + 1) [before <> t <> after] b, Pos (l + breaks) endCol)
   where
     Pos l c = clampPos b pos
     (before, after) = T.splitAt c (lineAt l b)
-    newLines = T.splitOn "\n" (before <> t <> after)
     breaks = T.count "\n" t
     endCol
       | breaks == 0 = c + T.length t
@@ -118,13 +156,12 @@ insertText pos t b@(Buffer ls) =
 
 -- | Delete the half-open range between two positions (in either order).
 deleteRange :: Pos -> Pos -> Buffer -> Buffer
-deleteRange p1 p2 b@(Buffer ls)
+deleteRange p1 p2 b
   | from >= to = b
-  | otherwise = Buffer ((Seq.take l1 ls Seq.|> merged) <> Seq.drop (l2 + 1) ls)
+  | otherwise = replaceLines l1 (l2 + 1) [T.take c1 (lineAt l1 b) <> T.drop c2 (lineAt l2 b)] b
   where
     from@(Pos l1 c1) = clampPos b (min p1 p2)
     to@(Pos l2 c2) = clampPos b (max p1 p2)
-    merged = T.take c1 (lineAt l1 b) <> T.drop c2 (lineAt l2 b)
 
 -- | The text in the half-open range between two positions.
 textRange :: Pos -> Pos -> Buffer -> Text
@@ -132,7 +169,54 @@ textRange p1 p2 b
   | l1 == l2 = T.take (c2 - c1) (T.drop c1 (lineAt l1 b))
   | otherwise =
       T.intercalate "\n" $
-        [T.drop c1 (lineAt l1 b)] <> [lineAt i b | i <- [l1 + 1 .. l2 - 1]] <> [T.take c2 (lineAt l2 b)]
+        [T.drop c1 (lineAt l1 b)] <> take (l2 - l1 - 1) (linesFrom (l1 + 1) b) <> [T.take c2 (lineAt l2 b)]
   where
     Pos l1 c1 = clampPos b (min p1 p2)
     Pos l2 c2 = clampPos b (max p1 p2)
+
+-- Search ---------------------------------------------------------------------
+--
+-- Whole blocks are handed to the matcher, so an unedited file is scanned
+-- with a few calls instead of one per line. Matches never span lines,
+-- because needles never contain line breaks.
+
+-- | The first match starting at or after a position. The matcher returns
+-- the byte offset of the first match in a text.
+findForwardFrom :: (Text -> Maybe Int) -> Pos -> Buffer -> Maybe Pos
+findForwardFrom match p0 buf@(Buffer r) = go True (ropeBlocksFrom l r)
+  where
+    Pos l c = clampPos buf p0
+    skip = lengthWord8 (T.take c (lineAt l buf))
+    go _ [] = Nothing
+    go isFirst ((firstLine, b) : rest) =
+      let (region, base) = blockRegion b
+          extra = if isFirst then skip else 0
+       in case match (dropWord8 extra region) of
+            Nothing -> go False rest
+            Just off -> Just (posOfOffset firstLine b (base + extra + off))
+
+-- | The last match starting before a position. The matcher returns the
+-- byte offset of the last match in a text; @needleBytes@ is the needle's
+-- length, so a match may extend past the position.
+findBackwardBefore :: (Text -> Maybe Int) -> Int -> Pos -> Buffer -> Maybe Pos
+findBackwardBefore match needleBytes p0 buf@(Buffer r) = go True (ropeBlocksDownFrom l r)
+  where
+    Pos l c = clampPos buf p0
+    colBytes = lengthWord8 (T.take c (lineAt l buf))
+    go _ [] = Nothing
+    go isLast ((firstLine, b) : rest) =
+      let (region, base) = blockRegion b
+          -- In the block holding the position, only matches starting
+          -- before it count.
+          limit
+            | isLast = blockLineStart b (l - firstLine) - base + colBytes + needleBytes - 1
+            | otherwise = lengthWord8 region
+       in case match (takeWord8 (min limit (lengthWord8 region)) region) of
+            Nothing -> go False rest
+            Just off -> Just (posOfOffset firstLine b (base + off))
+
+-- | The position of a byte offset (into the block's text).
+posOfOffset :: Int -> Block -> Int -> Pos
+posOfOffset firstLine b off = Pos (firstLine + k) (T.length (takeWord8 (off - blockLineStart b k) (blockLine b k)))
+  where
+    k = blockLineOfOffset b off

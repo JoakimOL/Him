@@ -17,7 +17,9 @@ import Him.Editor
 import Him.Event (Event (..))
 import Him.Ex (parseExLine)
 import Him.History qualified as H
-import Him.File (decodeDocument, encodeDocument)
+import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument)
+import Data.Text.Encoding qualified as TE
+import System.Directory (getTemporaryDirectory, removeFile)
 import Him.Key
 import Him.Keymap
 import Him.Mode (Mode (..))
@@ -40,10 +42,12 @@ import Test.Harness
 main :: IO ()
 main = do
   integration <- integrationTests
+  loading <- loadingTests
   runTests
     [ group "Him.Key" keyTests
     , group "Him.Terminal.Input.decodeKeys" decodeTests
     , group "Him.Buffer" bufferTests
+    , group "Him.Buffer (randomized against a list model)" ropeModelTests
     , group "Him.Motion" motionTests
     , group "Him.Edit" editTests
     , group "Him.History" historyTests
@@ -55,6 +59,7 @@ main = do
     , group "Him.Render" renderTests
     , group "Him.Render.Diff" diffTests
     , group "keys through the default config" integration
+    , group "Him.File (from disk)" loading
     ]
 
 keyTests :: [Test]
@@ -120,6 +125,53 @@ bufferTests =
   where
     ins :: Pos -> Text -> Text -> (Text, Pos)
     ins p t s = let (b', p') = B.insertText p t (buf s) in (B.toText b', p')
+
+-- | A tiny deterministic pseudo-random generator (no QuickCheck: boot
+-- libraries only).
+randoms :: Int -> [Int]
+randoms = drop 1 . iterate (\x -> (x * 6364136223846793005 + 1442695040888963407) `mod` (2 ^ (62 :: Int)))
+
+ropeModelTests :: [Test]
+ropeModelTests =
+  [ test "fromRegions joins regions" (assertEqual ["a", "b", "c", "d"] (B.toLines (B.fromRegions [(False, "a\nb"), (False, "c\nd")])))
+  , test "CR regions strip \\r" (assertEqual ["a", "b"] (B.toLines (B.fromRegions [(True, "a\r\nb\r")])))
+  , test "2000 random edits match the model" (runModel 2000 1)
+  , test "edits on a single line" (runModel 500 7)
+  ]
+  where
+    start = B.fromRegions [(False, T.intercalate "\n" [T.pack ("line " <> show i) | i <- [n .. n + 49 :: Int]]) | n <- [0, 50 .. 450]]
+    model0 = B.toLines start
+    runModel steps seed = go steps (randoms seed) start model0
+    go :: Int -> [Int] -> B.Buffer -> [Text] -> Either String ()
+    go 0 _ b m = check b m
+    go n (r1 : r2 : r3 : r4 : rs) b m = case check b m of
+      Left e -> Left ("before step " <> show n <> ": " <> e)
+      Right () ->
+        let lineN = length m
+            l1 = r1 `mod` lineN
+            c1 = r2 `mod` (T.length (m !! l1) + 1)
+            p1 = Pos l1 c1
+         in if even r3
+              then
+                let t = ["x", "\n", "ab\ncd", "\n\n", "é"] !! (r4 `mod` 5)
+                    (b', _) = B.insertText p1 t b
+                 in go (n - 1) rs b' (modelInsert m p1 t)
+              else
+                let l2 = min (lineN - 1) (l1 + r4 `mod` 3)
+                    c2 = (r4 `div` 3) `mod` (T.length (m !! l2) + 1)
+                    p2 = max p1 (Pos l2 c2)
+                 in go (n - 1) rs (B.deleteRange p1 p2 b) (modelDelete m p1 p2)
+    go _ _ b m = check b m
+    check b m
+      | B.toLines b /= m = Left ("lines differ: " <> show (take 3 (B.toLines b)) <> " vs " <> show (take 3 m))
+      | B.lineCount b /= length m = Left "lineCount differs"
+      | [B.lineAt i b | i <- [0 .. length m - 1]] /= m = Left "lineAt differs"
+      | B.linesDownFrom (length m - 1) b /= reverse m = Left "linesDownFrom differs"
+      | otherwise = Right ()
+    modelText = T.intercalate "\n"
+    offsetOf m (Pos l c) = sum [T.length x + 1 | x <- take l m] + c
+    modelInsert m p t = let whole = modelText m; (a, z) = T.splitAt (offsetOf m p) whole in T.splitOn "\n" (a <> t <> z)
+    modelDelete m p q = let whole = modelText m in T.splitOn "\n" (T.take (offsetOf m p) whole <> T.drop (offsetOf m q) whole)
 
 -- | Apply a motion to a collapsed range at a position; returns (anchor, head).
 runMotion :: Motion -> Text -> Pos -> (Pos, Pos)
@@ -210,6 +262,16 @@ fileTests =
   , test "CRLF is kept" (assertEqual "a\r\nb\r\n" (roundTrip "a\r\nb\r\n"))
   , test "CRLF lines are split" (assertEqual ["a", "b"] (B.toLines (docBuffer (decodeDocument Nothing "a\r\nb\r\n"))))
   , test "empty file stays empty" (assertEqual "" (roundTrip ""))
+  , test "no final newline is remembered" (assertEqual False (docTrailingNewline (decodeDocument Nothing "a\nb")))
+  , test "mixed endings follow the first line" (assertEqual ["a", "b\r", "c"] (B.toLines (docBuffer (decodeDocument Nothing "a\nb\r\nc"))))
+  , test "chunks split anywhere decode the same" $
+      let whole = "first line\r\nsecond æøå 漢字\r\n\r\nlast" :: ByteString
+          expected = docBuffer (decodeDocument Nothing whole)
+          splits = [docBuffer (decodeChunks Nothing [BS.take i whole, BS.drop i whole]) | i <- [0 .. BS.length whole]]
+       in assertEqual [] [i | (i, b) <- zip [0 :: Int ..] splits, b /= expected]
+  , test "many small chunks" $
+      let whole = "a\nbb\nccc\n" :: ByteString
+       in assertEqual (docBuffer (decodeDocument Nothing whole)) (docBuffer (decodeChunks Nothing [BS.singleton w | w <- BS.unpack whole]))
   ]
   where
     roundTrip :: ByteString -> ByteString
@@ -281,6 +343,24 @@ renderTests =
     cellAt f r c = case drop c (maybe [] toList (lookupRow f r)) of
       (Cell ch _ : _) -> Just ch
       [] -> Nothing
+
+-- | Files larger than the read chunk, with multi-byte characters straddling
+-- chunk boundaries, load exactly like an in-memory decode.
+loadingTests :: IO [Test]
+loadingTests = do
+  dir <- getTemporaryDirectory
+  let path = dir <> "/him-test-load.txt"
+      line i = T.pack (show i) <> " æøå 漢字 😀 lorem ipsum\r\n"
+      bytes = TE.encodeUtf8 (T.concat (map line [1 .. 60000 :: Int]) <> "tail")
+  BS.writeFile path bytes
+  loaded <- loadDocument path
+  removeFile path
+  let expected = decodeDocument (Just path) bytes
+  pure
+    [ test "large file loads like an in-memory decode" $
+        assertEqual (Right (B.toLines (docBuffer expected), docLineEnding expected, docTrailingNewline expected))
+          ((\d -> (B.toLines (docBuffer d), docLineEnding d, docTrailingNewline d)) <$> loaded)
+    ]
 
 -- | Feed key sequences through 'handleEvent' with the real keymaps.
 integrationTests :: IO [Test]

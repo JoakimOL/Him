@@ -48,6 +48,9 @@ library:
   - unix
   c-sources:
   - cbits/winsize.c
+  - cbits/text.c
+  cc-options:
+  - -O2
 
 executables:
   him:
@@ -56,6 +59,10 @@ executables:
     ghc-options:
     - -threaded
     - -rtsopts
+    # The non-moving collector does not need room for a copy of the old
+    # generation, so peak memory stays close to the live data (see
+    # docs/BENCHMARK.md). Override with `him +RTS ... -RTS`.
+    - '"-with-rtsopts=-xn"'
     dependencies:
     - him
 
@@ -70,5 +77,6 @@ tests:
     dependencies:
     - him
     - bytestring
+    - directory
     - text
     - transformers
