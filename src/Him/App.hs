@@ -8,7 +8,7 @@ module Him.App
 import Control.Concurrent (Chan, newChan, readChan, writeChan)
 import Control.Exception (SomeException, try)
 import Control.Monad (unless, when)
-import Control.Monad.Trans.State.Strict (execStateT, get, modify')
+import Control.Monad.Trans.State.Strict (execStateT, get, gets, modify')
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
@@ -17,7 +17,9 @@ import Him.Command (cmdRun, failWith)
 import Him.Command qualified as Command
 import Him.Config (Config (..))
 import Him.Config.Default (defaultConfig)
-import Him.Document (newDocument)
+import Him.Document (Document (..), newDocument)
+import Him.History qualified as History
+import Him.Mode (Mode (..))
 import Him.Editor
 import Him.Event (Event (..))
 import Him.File (loadDocument)
@@ -86,3 +88,13 @@ handleEvent config (EvKey key) = do
       setPending []
       -- Only a key typed on its own falls back (a failed chord is dropped).
       when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
+  commitOutsideInsert
+
+-- | Once the editor is out of insert mode, the edits made since the last
+-- commit become one undo step. A whole insert session therefore undoes at
+-- once.
+commitOutsideInsert :: Command.EditorM ()
+commitOutsideInsert = do
+  mode <- gets edMode
+  unless (mode == Insert) $
+    Command.modifyDoc (\d -> d {docHistory = History.commit (docHistory d)})

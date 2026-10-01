@@ -13,6 +13,8 @@ data Theme = Theme
   , themeCursor :: Style
   -- ^ Secondary cursors (the primary one is the terminal cursor).
   , themeTilde :: Style
+  , themeGutter :: Style
+  , themeGutterCurrent :: Style
   , themeStatusLine :: Style
   , themeMode :: Mode -> Style
   , themeInfo :: Style
@@ -26,6 +28,8 @@ defaultTheme =
     , themeSelection = defaultStyle {styleBg = Indexed 24}
     , themeCursor = defaultStyle {styleReverse = True}
     , themeTilde = defaultStyle {styleFg = Indexed 240}
+    , themeGutter = defaultStyle {styleFg = Indexed 240}
+    , themeGutterCurrent = defaultStyle {styleFg = Indexed 250}
     , themeStatusLine = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 252}
     , themeMode = \m -> defaultStyle {styleBold = True, styleFg = Indexed 235, styleBg = modeColor m}
     , themeInfo = defaultStyle

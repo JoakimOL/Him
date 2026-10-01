@@ -28,7 +28,7 @@ data Range = Range
   { rangeAnchor :: !Pos
   , rangeHead :: !Pos
   , rangeWantCol :: !(Maybe Int)
-  -- ^ Column to return to when moving vertically through shorter lines.
+  -- ^ Display column to return to when moving vertically through shorter lines.
   }
   deriving stock (Eq, Show)
 

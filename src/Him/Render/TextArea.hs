@@ -5,6 +5,7 @@ module Him.Render.TextArea
   , cursorDisplayCol
   ) where
 
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Him.Buffer (lineAt, lineCount)
 import Him.Document (Document (..))
@@ -14,7 +15,7 @@ import Him.Position (Pos (..))
 import Him.Render.Frame
 import Him.Render.Theme
 import Him.Selection
-import Him.TextWidth (displayCol, layoutLine)
+import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
 import Him.View (View (..))
 
 drawTextArea :: Theme -> Editor -> Rect -> Frame -> Frame
@@ -40,19 +41,23 @@ drawTextArea theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect 
         line = top + r
         screenRow = rectRow rect + r
         text = lineAt line buf
-        drawChar acc (i, col, w, c) =
-          let style = styleAt (Pos line i)
-              base = maybe (themeText theme) id style
-              shownChar = if c == '\t' then ' ' else c
-              cells = (col, shownChar) : [(col + k, ' ') | k <- [1 .. w - 1]]
-              isLineEnd = i == T.length text
-           in if isLineEnd && style == Nothing
-                then acc
-                else foldl' (\a (cc, ch) -> putVisible cc (Cell ch base) a) acc cells
+        drawChar acc (i, col, w, c)
+          | isLineEnd && style == Nothing = acc
+          | otherwise = foldl' (\a (k, ch) -> putVisible (col + k) ch a) acc cells
           where
-            putVisible cc cell a
+            style = styleAt (Pos line i)
+            base = fromMaybe (themeText theme) style
+            isLineEnd = i == T.length text
+            cells
+              | isWide c = [(0, c), (1, continuation)]
+              | otherwise = zip [0 ..] (glyphs c w)
+            -- A wide character that is cut off by the left or right edge is
+            -- drawn as blanks, so the terminal never draws half of it.
+            cutOff = isWide c && (col < left || col + 1 - left >= rectWidth rect)
+            putVisible cc ch a
               | cc < left || cc - left >= rectWidth rect = a
-              | otherwise = putCell screenRow (rectCol rect + cc - left) cell a
+              | otherwise =
+                  putCell screenRow (rectCol rect + cc - left) (Cell (if cutOff then ' ' else ch) base) a
 
 -- | Display column of the primary cursor.
 cursorDisplayCol :: Editor -> Int

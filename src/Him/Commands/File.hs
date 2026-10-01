@@ -41,7 +41,7 @@ write args = do
       liftIO (saveDocument path doc) >>= \case
         Left e -> False <$ failWith ("could not write " <> T.pack path <> ": " <> e)
         Right bytes -> do
-          modifyDoc (\d -> d {docPath = Just path, docDirty = False})
+          modifyDoc (\d -> d {docPath = Just path, docDirty = False, docSavedBuffer = docBuffer doc})
           info $
             "\"" <> T.pack path <> "\" written, "
               <> T.pack (show (lineCount (docBuffer doc)))

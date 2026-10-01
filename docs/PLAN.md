@@ -94,6 +94,19 @@ This replaces the `[DrawOp]` lists in the original plan: composing frame transfo
 simpler and just as modular. The mode `Command` was renamed `CmdLine` because it clashed
 with the `Command` type.
 
+**ADR-9: Undo with snapshots, committed outside insert mode.**
+`edit` records the state before the first edit of a change. After every key, the main loop
+commits it if the editor is not in insert mode. So `c foo esc` undoes in one step, as in
+Helix. Snapshots are cheap because `Seq` shares structure. `docSavedBuffer` lets undo
+back to the saved text clear the `[+]` marker.
+*Alternative:* inverse change sets, which are smaller and needed for an undo tree or
+collaboration. They can come later behind the same `Him.History` interface.
+
+**ADR-10: Registers live in the `Editor`, and pasting is linewise when the text ends
+with a newline.**
+This is the Helix/Vim convention. `selectionText` adds the implicit newline when `x`
+selects the last line, so yank/delete/paste of lines behaves the same everywhere.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -120,12 +133,13 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Editor`, `Him.Mode`, `Him.View` | ✅ | Editor state, modes, viewport + scrolloff. |
 | `Him.Command`, `Him.Keymap` | ✅ | Command registry and per-mode keymap tries. |
 | `Him.Ex` | ✅ | `:`-command parser. |
-| `Him.Render`, `Him.Render.*` | ✅ | Frame, layout, components, diffing. |
+| `Him.Render`, `Him.Render.*` | ✅ | Frame, layout, components, diffing. Components: `Gutter` (line numbers), `TextArea`, `StatusLine`, `CommandLine`. `layout` depends on the editor, because the gutter width follows the line count. |
 | `Him.File` | ✅ | Load/save (UTF-8, line endings, trailing newline). |
+| `Him.History` | ✅ | Undo/redo snapshots: `beginChange` (called by `edit`), `commit` (called by the main loop outside insert mode), `undo`, `redo`. |
 | `Him.Document` | ✅ | Buffer + selection + path + dirty flag + line ending/trailing newline. (Split out of `Buffer` so the buffer stays pure text.) |
 | `Him.Config` | ✅ | `Config { cfgRegistry, cfgKeymaps, cfgFallback }`, held by the main loop rather than the `Editor`, which avoids a module cycle. |
 | `Him.Commands.*` | ✅ | Command lists: `Motion`, `Edit` (modes and text), `CommandLine`, `File` (ex commands). |
-| `Him.TextWidth` | ✅ | Tab expansion (width 4) and char→display-column layout. `charWidth` is a stub returning 1 until milestone 10. |
+| `Him.TextWidth` | ✅ | Tab expansion (width 4), `charWidth` (a compact East-Asian-wide/emoji table; control chars are 2 wide and shown as `^X`), char↔display-column mapping. |
 | `Him.Config.Default` | ✅ | The default keymaps and registry. **This is where bindings are added.** |
 
 ## 5. Development goals / milestones
@@ -153,12 +167,17 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **8. Command mode.** `:w`, `:q` (refuses when dirty), `:q!`, `:wq`; status messages.
 - [x] **9. Helix selection actions.** `w b e x v ; d c`, plus `g g` / `g e`, with the
   pending keys shown in the status line.
-- [ ] **10. Polish.** Line-number gutter, tab expansion, wide-character width, horizontal
+- [x] **10. Polish.** Line-number gutter, tab expansion, wide-character width, horizontal
   scrolling.
 
+- [x] **11. Undo/redo.** `Him.History` holds snapshots. An insert session (including `c`
+  and `o`) is one undo step, and the dirty flag is recomputed after undo/redo.
+- [x] **12. Yank/paste.** `y`, `p`, `P` with a default register; `d` and `c` also yank.
+  Text ending in a newline (from `x`) pastes as whole lines.
+
 Later (the architecture already has room for these):
-- [ ] Undo/redo (snapshots first, then a change tree)
-- [ ] Yank/paste registers
+- [ ] Undo tree / change sets instead of snapshots
+- [ ] Named registers and the system clipboard
 - [ ] Multiple selections (`C`, `s` split)
 - [ ] Search (`/`, `n`)
 - [ ] Multiple buffers, `:e`
@@ -173,7 +192,7 @@ Implemented (defined in `Him.Config.Default`):
 
 | Mode | Keys |
 |---|---|
-| Normal | `h j k l`, arrows, `home`/`end`; `w b e` (select words), `x` (select line, repeat to extend), `;` (collapse), `v` (select mode), `d` (delete), `c` (change); `g g` / `g e` (first / last line), `g h` / `g l` (line start / end); `i a o`; `:` |
+| Normal | `h j k l`, arrows, `home`/`end`; `w b e` (select words), `x` (select line, repeat to extend), `;` (collapse), `v` (select mode), `d` (delete), `c` (change); `y` (yank), `p` / `P` (paste after / before); `u` / `U` (undo / redo); `g g` / `g e` (first / last line), `g h` / `g l` (line start / end); `i a o`; `:` |
 | Select | same as normal, but motions extend; `v` / `esc` → normal |
 | Insert | printable chars, `ret` (keeps indent), `tab`, `backspace`, `del`, arrows, `esc` |
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` |
@@ -197,17 +216,27 @@ Implemented (defined in `Him.Config.Default`):
 
 ## 8. Where to pick up
 
-*Last session ended on 2026-10-01, after milestone 9.*
+*Last session ended on 2026-10-01, after milestones 9–12. Every planned milestone is done,
+and the editor is usable for basic editing.*
 
-- **Next: milestone 10 (polish):** a line-number gutter (a new component plus a `layout`
-  change), a real `charWidth` (East Asian wide chars take 2 cells; wide cells need a
-  continuation-cell marker in `Frame`), and a horizontal-scrolling check with long lines.
+- **Next suggestions, roughly in order of value:**
+  1. **Search:** `/` prompt, `n` / `N`, and the matches selected. The `CmdLine` mode can be
+     generalised to a "prompt" carrying what Enter does.
+  2. **Multiple selections:** `C` (copy the selection to the next line), `s` (select
+     regex matches inside the selection), `,` (keep only the primary). This needs
+     multi-range edits that map positions between ranges (see ADR-5b). `edit` currently
+     changes only the primary range.
+  3. **Multiple buffers / `:e`:** `Editor` holds one `Document`, so make it a list plus
+     a current index.
+  4. **User config file** for keymaps. Bindings are already `(Text, Text)` pairs, so
+     parsing a simple `keys = command` file is enough.
+  5. **Counts** (`3w`, `5j`), and `PageUp` / `PageDown` / `C-d` / `C-u`.
 - **Small known issues:**
-  - A long file path in the status line is overwritten by the right-hand section, which
-    can hide `[+]`. The name should be truncated to fit.
-  - `rangeWantCol` stores a *character* column, not a display column, so `j`/`k` across
-    tab-indented lines can drift a little.
-- **How to verify:** `make test` (107 tests: pure modules, plus key sequences through the
+  - Zero-width combining characters are treated as width 1, so lines that contain them
+    misalign by one column per mark.
+  - The status line shows the cursor's character column, not its display column.
+  - `edit` changes only the primary range (see above).
+- **How to verify:** `make test` (137 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

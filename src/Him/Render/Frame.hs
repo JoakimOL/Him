@@ -4,6 +4,7 @@ module Him.Render.Frame
   ( Cell (..)
   , Frame (..)
   , Rect (..)
+  , continuation
   , blankFrame
   , putCell
   , putText
@@ -21,6 +22,11 @@ data Cell = Cell
   , cellStyle :: !Style
   }
   deriving stock (Eq, Show)
+
+-- | The marker in the cell to the right of a wide character, which the
+-- terminal fills by itself; it is skipped when emitting output.
+continuation :: Char
+continuation = '\0'
 
 data Frame = Frame
   { frameRows :: !Int

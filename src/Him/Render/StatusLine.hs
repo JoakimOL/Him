@@ -24,6 +24,15 @@ drawStatusLine theme ed rect =
     style = themeStatusLine theme
     doc = edDoc ed
     mode = " " <> modeLabel (edMode ed) <> " "
-    file = " " <> displayName doc <> (if docDirty doc then " [+]" else "")
+    dirty = if docDirty doc then " [+]" else ""
+    -- Shorten the file name from the left so the dirty marker and the right
+    -- section always fit.
+    room = rectWidth rect - T.length mode - T.length right - T.length dirty - 2
+    name = displayName doc
+    shortName
+      | T.length name <= room = name
+      | room <= 1 = ""
+      | otherwise = "…" <> T.takeEnd (room - 1) name
+    file = " " <> shortName <> dirty
     Pos l c = rangeHead (primary (docSelection doc))
     right = showKeys (edPending ed) <> "  " <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "

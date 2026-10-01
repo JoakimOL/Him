@@ -16,6 +16,7 @@ import Him.Edit
 import Him.Editor
 import Him.Event (Event (..))
 import Him.Ex (parseExLine)
+import Him.History qualified as H
 import Him.File (decodeDocument, encodeDocument)
 import Him.Key
 import Him.Keymap
@@ -28,6 +29,12 @@ import Him.Selection
 import Him.Terminal.Ansi (defaultStyle)
 import Him.Terminal.Input (decodeKeys)
 import Him.View (View (..), scrollToCursor)
+import Him.TextWidth (charIndexAtCol, charWidth, displayCol, glyphs)
+import Him.Render (render)
+import Him.Render.Frame (Cell (..), Frame (..), continuation)
+import Him.Render.Theme (defaultTheme)
+import Data.Foldable (toList)
+import Data.Text qualified as T
 import Test.Harness
 
 main :: IO ()
@@ -39,10 +46,13 @@ main = do
     , group "Him.Buffer" bufferTests
     , group "Him.Motion" motionTests
     , group "Him.Edit" editTests
+    , group "Him.History" historyTests
     , group "Him.Keymap" keymapTests
     , group "Him.File" fileTests
     , group "Him.Ex" exTests
     , group "Him.View" viewTests
+    , group "Him.TextWidth" widthTests
+    , group "Him.Render" renderTests
     , group "Him.Render.Diff" diffTests
     , group "keys through the default config" integration
     ]
@@ -157,6 +167,24 @@ editTests =
   , test "open line below" (assertEqual ("  ab\n  \ncd", Pos 1 2) (runEdit openLineBelow "  ab\ncd" (point (Pos 0 1))))
   ]
 
+historyTests :: [Test]
+historyTests =
+  [ test "nothing to undo" (assertEqual Nothing (fst <$> H.undo (snap "a") H.emptyHistory))
+  , test "only the first state of a change is kept" $
+      let h = H.commit (H.beginChange (snap "b") (H.beginChange (snap "a") H.emptyHistory))
+       in assertEqual (Just (snap "a")) (fst <$> H.undo (snap "c") h)
+  , test "undo then redo returns to the current state" $
+      let h = H.commit (H.beginChange (snap "a") H.emptyHistory)
+       in assertEqual (Just (snap "b")) (H.undo (snap "b") h >>= \(s', h') -> fst <$> H.redo s' h')
+  , test "a new change clears redo" $
+      let h1 = H.commit (H.beginChange (snap "a") H.emptyHistory)
+          h2 = maybe H.emptyHistory snd (H.undo (snap "b") h1)
+          h3 = H.commit (H.beginChange (snap "a") h2)
+       in assertEqual Nothing (fst <$> H.redo (snap "x") h3)
+  ]
+  where
+    snap t = H.Snapshot (buf t) (single (point (Pos 0 0)))
+
 keymapTests :: [Test]
 keymapTests =
   [ test "single key" (assertEqual (Found "one") (resolve km (keys "a")))
@@ -203,17 +231,56 @@ viewTests =
 
 diffTests :: [Test]
 diffTests =
-  [ test "identical frames redraw no rows" (assertEqual False ("top" `isInfix` render (Just f1) f1))
+  [ test "identical frames redraw no rows" (assertEqual False ("top" `isInfix` emit (Just f1) f1))
   , test "only the changed row is drawn" $
-      let out = render (Just f1) f2
+      let out = emit (Just f1) f2
        in assertEqual (True, False) ("\ESC[2;1H" `isInfix` out, "\ESC[1;1H" `isInfix` out)
-  , test "no previous frame clears the screen" (assertEqual True ("\ESC[2J" `isInfix` render Nothing f1))
+  , test "no previous frame clears the screen" (assertEqual True ("\ESC[2J" `isInfix` emit Nothing f1))
   ]
   where
     f1 = putText 0 0 defaultStyle "top" (blankFrame 3 10)
     f2 = putText 1 0 defaultStyle "changed" f1
-    render p f = toLazyByteString (diffFrames p f)
+    emit p f = toLazyByteString (diffFrames p f)
     isInfix needle hay = BL.toStrict needle `BS.isInfixOf` BL.toStrict hay
+
+widthTests :: [Test]
+widthTests =
+  [ test "ascii is narrow" (assertEqual 1 (charWidth 'a'))
+  , test "CJK is wide" (assertEqual 2 (charWidth '漢'))
+  , test "emoji is wide" (assertEqual 2 (charWidth '😀'))
+  , test "control chars show as ^X" (assertEqual ("^A", 2) (glyphs '\SOH' 2, charWidth '\SOH'))
+  , test "tab expands to the next stop" (assertEqual 4 (displayCol "\tx" 1))
+  , test "tab after text" (assertEqual 4 (displayCol "ab\tx" 3))
+  , test "wide chars shift columns" (assertEqual 4 (displayCol "漢字x" 2))
+  , test "column inside a wide char maps to it" (assertEqual 1 (charIndexAtCol "漢字x" 3))
+  , test "column past the end" (assertEqual 3 (charIndexAtCol "abc" 10))
+  , test "j keeps the visual column across tabs" $
+      let b = buf "\tabc\n    xyz"
+          r = lineDown b (point (Pos 0 2))
+       in assertEqual (Pos 1 5) (rangeHead r)
+  ]
+
+renderTests :: [Test]
+renderTests =
+  [ test "gutter shows line numbers" (assertEqual "  1 hello" (T.take 9 (rowText (frameOf "hello") 0)))
+  , test "wide chars use a continuation cell" $
+      assertEqual [Just '漢', Just continuation, Just 'x'] (map (cellAt (frameOf "漢x") 0) [4, 5, 6])
+  , test "control chars are drawn as ^X" (assertEqual "^[x" (T.take 3 (T.drop 4 (rowText (frameOf "\ESCx") 0))))
+  , test "long file names are shortened" $
+      let ed = (start "") {edSize = (5, 30), edDoc = (newDocument (Just (replicate 60 'p' <> "/name.txt")) B.empty) {docDirty = True}}
+          status = rowText (render defaultTheme ed) 3
+       in assertEqual (True, True) ("[+]" `T.isInfixOf` status, "name.txt" `T.isInfixOf` status)
+  ]
+  where
+    start t = newEditor (5, 40) (newDocument Nothing (buf t))
+    frameOf t = render defaultTheme (start t)
+    rowText f r = T.pack [c | Cell c _ <- maybe [] toList (lookupRow f r)]
+    lookupRow f r = case drop r (toList (frameCells f)) of
+      (row : _) -> Just row
+      [] -> Nothing
+    cellAt f r c = case drop c (maybe [] toList (lookupRow f r)) of
+      (Cell ch _ : _) -> Just ch
+      [] -> Nothing
 
 -- | Feed key sequences through 'handleEvent' with the real keymaps.
 integrationTests :: IO [Test]
@@ -237,6 +304,18 @@ integrationTests = do
   gotoTop <- textAfter "one\ntwo" "j g g x d"
   selectExtend <- textAfter "abcdef" "v l l esc d"
   collapsed <- textAfter "hello world" "w ; d"
+  undoInsert <- textAfter "" "i a b c esc u"
+  redoInsert <- textAfter "" "i a b c esc u U"
+  undoChange <- textAfter "foo bar" "e c x esc u"
+  undoTwice <- textAfter "a\nb\nc" "x d x d u"
+  undoClean <- typeKeys "i x esc u" (start "abc")
+  nothingToUndo <- typeKeys "u" (start "abc")
+  pasteLineBelow <- textAfter "one\ntwo\nthree" "x y j p"
+  movedLine <- textAfter "a\nb\nc" "x d p"
+  pasteAtEnd <- textAfter "a\nb" "x y g e p"
+  pasteAbove <- textAfter "one\ntwo" "j x y g g P"
+  pasteChars <- textAfter "hello world" "e y p"
+  undoPaste <- textAfter "hello world" "e y p u"
   pendingG <- typeKeys "g" (start "abc")
   badChord <- typeKeys "g z" (start "abc")
   pure
@@ -255,6 +334,18 @@ integrationTests = do
     , test "g g goes to the first line" (assertEqual "two" gotoTop)
     , test "select mode extends" (assertEqual "def" selectExtend)
     , test "; collapses the selection" (assertEqual "helloworld" collapsed)
+    , test "u undoes a whole insert session" (assertEqual "" undoInsert)
+    , test "U redoes it" (assertEqual "abc" redoInsert)
+    , test "u undoes a change (c + typing) at once" (assertEqual "foo bar" undoChange)
+    , test "u undoes one step at a time" (assertEqual "b\nc" undoTwice)
+    , test "undo back to the saved text is not dirty" (assertEqual False (docDirty (edDoc undoClean)))
+    , test "nothing to undo is reported" (assertEqual (Just (Status Info "nothing to undo")) (edStatus nothingToUndo))
+    , test "p pastes a yanked line below" (assertEqual "one\ntwo\none\nthree" pasteLineBelow)
+    , test "x d p moves a line down" (assertEqual "b\na\nc" movedLine)
+    , test "p pastes a line below the last line" (assertEqual "a\nb\na" pasteAtEnd)
+    , test "P pastes a line above" (assertEqual "two\none\ntwo" pasteAbove)
+    , test "p pastes characters after the selection" (assertEqual "hellohello world" pasteChars)
+    , test "u undoes a paste" (assertEqual "hello world" undoPaste)
     , test "g waits for the next key" (assertEqual [plain (KChar 'g')] (edPending pendingG))
     , test "an unknown chord is dropped" (assertEqual ([], "abc") (edPending badChord, B.toText (docBuffer (edDoc badChord))))
     ]

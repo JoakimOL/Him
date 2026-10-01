@@ -6,6 +6,8 @@ module Him.Editor
   , newEditor
   ) where
 
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Him.Document (Document)
 import Him.Key (Key)
@@ -32,6 +34,8 @@ data Editor = Editor
   -- ^ Keys of an unfinished key sequence (e.g. the @g@ of @g g@).
   , edCmdLine :: !Text
   -- ^ Text typed after @:@ in command mode.
+  , edRegisters :: !(Map Char Text)
+  -- ^ Yanked text. Only the default register @\"@ is used so far.
   , edQuit :: !Bool
   }
   deriving stock (Eq, Show)
@@ -46,5 +50,6 @@ newEditor size doc =
     , edStatus = Nothing
     , edPending = []
     , edCmdLine = ""
+    , edRegisters = Map.empty
     , edQuit = False
     }

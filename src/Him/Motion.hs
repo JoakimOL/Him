@@ -24,6 +24,7 @@ import Data.Maybe (fromMaybe)
 import Him.Buffer
 import Him.Position (Pos (..))
 import Him.Selection
+import Him.TextWidth (charIndexAtCol, displayCol)
 
 type Motion = Buffer -> Range -> Range
 
@@ -47,14 +48,15 @@ lineUp, lineDown :: Motion
 lineUp = lineBy (-1)
 lineDown = lineBy 1
 
--- | Vertical movement that remembers the column it started from.
+-- | Vertical movement that remembers the /display/ column it started from,
+-- so it stays visually aligned across tabs and wide characters.
 lineBy :: Int -> Motion
 lineBy delta b r = Range p p (Just want)
   where
     Pos l c = rangeHead r
-    want = fromMaybe c (rangeWantCol r)
+    want = fromMaybe (displayCol (lineAt l b) c) (rangeWantCol r)
     l' = max 0 (min (lineCount b - 1) (l + delta))
-    p = Pos l' (min want (lineLength l' b))
+    p = Pos l' (charIndexAtCol (lineAt l' b) want)
 
 lineStart, lineEnd, fileStart, lastLine :: Motion
 lineStart _ r = point (Pos (posLine (rangeHead r)) 0)

@@ -24,6 +24,7 @@ import Data.Text (Text)
 import Him.Document (Document (..))
 import Him.Edit (Edit)
 import Him.Editor
+import Him.History (Snapshot (..), beginChange)
 import Him.Mode (Mode (..))
 import Him.Motion (Motion, Movement (..), applyMotion)
 import Him.Selection (mapRanges, modifyPrimary, primary)
@@ -64,12 +65,19 @@ quit :: EditorM ()
 quit = modify' (\e -> e {edQuit = True})
 
 -- | Apply a pure edit to the primary range and mark the document modified.
+-- The state before the edit is recorded for undo (see "Him.History"; the
+-- main loop commits it once the editor is out of insert mode).
 -- (Multi-range edits need position mapping between ranges; they come with
 -- multiple-selection support.)
 edit :: Edit -> EditorM ()
 edit f = modifyDoc $ \d ->
   let (buf, r) = f (docBuffer d) (primary (docSelection d))
-   in d {docBuffer = buf, docSelection = modifyPrimary (const r) (docSelection d), docDirty = True}
+   in d
+        { docBuffer = buf
+        , docSelection = modifyPrimary (const r) (docSelection d)
+        , docDirty = True
+        , docHistory = beginChange (Snapshot (docBuffer d) (docSelection d)) (docHistory d)
+        }
 
 -- | Apply a motion to every range. In select mode the ranges are extended.
 motion :: Motion -> EditorM ()

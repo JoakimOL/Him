@@ -34,5 +34,6 @@ renderCells :: Seq Cell -> Builder
 renderCells = go Nothing . toList
   where
     go _ [] = mempty
+    go current (Cell c _ : rest) | c == continuation = go current rest
     go current (Cell c style : rest) =
       (if current == Just style then mempty else sgr style) <> charUtf8 c <> go (Just style) rest

@@ -16,6 +16,7 @@ import Him.Mode (Mode (..))
 import Him.Position (Pos (..))
 import Him.Render.CommandLine
 import Him.Render.Frame
+import Him.Render.Gutter
 import Him.Render.StatusLine
 import Him.Render.TextArea
 import Him.Render.Theme
@@ -24,18 +25,25 @@ import Him.Terminal.Ansi (CursorShape (..))
 import Him.View (scrollToCursor)
 
 data Layout = Layout
-  { layoutText :: Rect
+  { layoutGutter :: Rect
+  , layoutText :: Rect
   , layoutStatus :: Rect
   , layoutCommand :: Rect
   }
 
-layout :: (Int, Int) -> Layout
-layout (rows, cols) =
+layout :: Editor -> Layout
+layout ed =
   Layout
-    { layoutText = Rect 0 0 (max 0 (rows - 2)) cols
+    { layoutGutter = Rect 0 0 textRows gutter
+    , layoutText = Rect 0 gutter textRows (max 1 (cols - gutter))
     , layoutStatus = Rect (rows - 2) 0 1 cols
     , layoutCommand = Rect (rows - 1) 0 1 cols
     }
+  where
+    (rows, cols) = edSize ed
+    textRows = max 0 (rows - 2)
+    -- Drop the gutter on very narrow terminals.
+    gutter = if cols > 20 then gutterWidth ed else 0
 
 scrolloff :: Int
 scrolloff = 3
@@ -44,7 +52,7 @@ scrolloff = 3
 ensureCursorVisible :: Editor -> Editor
 ensureCursorVisible ed = ed {edView = scrollToCursor (rectHeight r, rectWidth r) scrolloff cursor (edView ed)}
   where
-    r = layoutText (layout (edSize ed))
+    r = layoutText (layout ed)
     cursor = (posLine (rangeHead (primary (docSelection (edDoc ed)))), cursorDisplayCol ed)
 
 render :: Theme -> Editor -> Frame
@@ -52,11 +60,12 @@ render theme ed =
   frame {frameCursor = cursor, frameCursorShape = shape}
   where
     (rows, cols) = edSize ed
-    Layout textR statusR cmdR = layout (edSize ed)
+    Layout gutterR textR statusR cmdR = layout ed
     frame =
       drawCommandLine theme ed cmdR
         . drawStatusLine theme ed statusR
         . drawTextArea theme ed textR
+        . drawGutter theme ed gutterR
         $ blankFrame rows cols
     cursor = case edMode ed of
       CmdLine -> Just (commandLineCursor ed cmdR)
