@@ -77,6 +77,7 @@ tests:
     dependencies:
     - him
     - bytestring
+    - containers
     - directory
     - text
     - transformers

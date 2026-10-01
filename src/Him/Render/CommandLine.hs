@@ -7,15 +7,22 @@ module Him.Render.CommandLine
 import Data.Text qualified as T
 import Him.Editor
 import Him.Mode (Mode (..))
+import Him.Search (Direction (..))
 import Him.Render.Frame
 import Him.Render.Theme
 
 drawCommandLine :: Theme -> Editor -> Rect -> Frame -> Frame
 drawCommandLine theme ed rect = case (edMode ed, edStatus ed) of
-  (CmdLine, _) -> putText (rectRow rect) (rectCol rect) (themeText theme) (":" <> edCmdLine ed)
+  (CmdLine, _) -> putText (rectRow rect) (rectCol rect) (themeText theme) (promptLabel ed <> edCmdLine ed)
   (_, Just (Status Info msg)) -> putText (rectRow rect) (rectCol rect) (themeInfo theme) msg
   (_, Just (Status Error msg)) -> putText (rectRow rect) (rectCol rect) (themeError theme) msg
   _ -> id
+
+promptLabel :: Editor -> T.Text
+promptLabel ed = case edPrompt ed of
+  ExPrompt -> ":"
+  SearchPrompt Forward _ -> "/"
+  SearchPrompt Backward _ -> "?"
 
 commandLineCursor :: Editor -> Rect -> (Int, Int)
 commandLineCursor ed rect =

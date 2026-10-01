@@ -36,10 +36,76 @@ void him_line_starts(const uint8_t *arr, size_t off, size_t len, uint32_t *out)
 static inline uint8_t lower(uint8_t c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
 static inline uint8_t upper(uint8_t c) { return (c >= 'a' && c <= 'z') ? c - 32 : c; }
 
-static int matches_folded(const uint8_t *h, const uint8_t *n, size_t len)
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
+
+/* First byte in [p, end) equal to a or b. With a == b this is memchr (which
+ * glibc vectorises well); otherwise compare 16 bytes at a time with SSE2. */
+static const uint8_t *find2(const uint8_t *p, const uint8_t *end, uint8_t a, uint8_t b)
 {
-    for (size_t i = 1; i < len; i++)
-        if (lower(h[i]) != n[i])
+    if (a == b)
+        return p < end ? memchr(p, a, end - p) : NULL;
+#ifdef __SSE2__
+    const __m128i va = _mm_set1_epi8((char)a), vb = _mm_set1_epi8((char)b);
+    for (; p + 16 <= end; p += 16) {
+        __m128i x = _mm_loadu_si128((const __m128i *)p);
+        int m = _mm_movemask_epi8(_mm_or_si128(_mm_cmpeq_epi8(x, va), _mm_cmpeq_epi8(x, vb)));
+        if (m)
+            return p + __builtin_ctz(m);
+    }
+#endif
+    for (; p < end; p++)
+        if (*p == a || *p == b)
+            return p;
+    return NULL;
+}
+
+/* Last byte in [start, end) equal to a or b. */
+static const uint8_t *rfind2(const uint8_t *start, const uint8_t *end, uint8_t a, uint8_t b)
+{
+    if (a == b)
+        return end > start ? memrchr(start, a, end - start) : NULL;
+#ifdef __SSE2__
+    const __m128i va = _mm_set1_epi8((char)a), vb = _mm_set1_epi8((char)b);
+    for (; end - 16 >= start; end -= 16) {
+        __m128i x = _mm_loadu_si128((const __m128i *)(end - 16));
+        int m = _mm_movemask_epi8(_mm_or_si128(_mm_cmpeq_epi8(x, va), _mm_cmpeq_epi8(x, vb)));
+        if (m)
+            return end - 16 + (31 - __builtin_clz(m));
+    }
+#endif
+    while (end > start) {
+        end--;
+        if (*end == a || *end == b)
+            return end;
+    }
+    return NULL;
+}
+
+/* The needle position whose byte is rarest in (a sample of) the haystack.
+ * Scanning for a rare byte means few candidates to verify, whatever the
+ * text looks like (the idea behind ripgrep's rare-byte prefilter, but
+ * measured on the actual text instead of a fixed frequency table). */
+static size_t rarest(const uint8_t *h, size_t hlen, const uint8_t *n, size_t nlen, int fold)
+{
+    uint32_t count[256] = {0};
+    size_t sample = hlen < 4096 ? hlen : 4096;
+    for (size_t i = 0; i < sample; i++)
+        count[fold ? lower(h[i]) : h[i]]++;
+    size_t best = 0;
+    for (size_t i = 1; i < nlen; i++)
+        if (count[n[i]] < count[n[best]])
+            best = i;
+    return best;
+}
+
+static int equal_at(const uint8_t *w, const uint8_t *n, size_t nlen, int fold)
+{
+    if (!fold)
+        return memcmp(w, n, nlen) == 0;
+    for (size_t i = 0; i < nlen; i++)
+        if (lower(w[i]) != n[i])
             return 0;
     return 1;
 }
@@ -52,22 +118,18 @@ ptrdiff_t him_find_forward(const uint8_t *harr, size_t hoff, size_t hlen,
     const uint8_t *h = harr + hoff, *n = narr + noff;
     if (nlen == 0 || nlen > hlen)
         return -1;
-    if (!fold) {
+    if (!fold) { /* glibc's memmem (two-way, vectorised) is hard to beat */
         const uint8_t *p = memmem(h, hlen, n, nlen);
         return p ? p - h : -1;
     }
-    const uint8_t lo = n[0], up = upper(n[0]);
-    const uint8_t *p = h, *last = h + hlen - nlen; /* last possible start */
-    while (p <= last) {
-        size_t span = last - p + 1;
-        const uint8_t *a = memchr(p, lo, span);
-        const uint8_t *b = (up != lo) ? memchr(p, up, (a ? (size_t)(a - p) : span)) : NULL;
-        const uint8_t *c = b ? b : a; /* b is only searched before a */
-        if (!c)
-            return -1;
-        if (matches_folded(c, n, nlen))
-            return c - h;
-        p = c + 1;
+    size_t k = rarest(h, hlen, n, nlen, fold);
+    const uint8_t a = n[k], b = upper(n[k]);
+    /* The anchor byte of a match starting at s is at s + k. */
+    const uint8_t *p = h + k, *end = h + hlen - nlen + k + 1;
+    while ((p = find2(p, end, a, b)) != NULL) {
+        if (equal_at(p - k, n, nlen, fold))
+            return (p - k) - h;
+        p++;
     }
     return -1;
 }
@@ -79,17 +141,14 @@ ptrdiff_t him_find_backward(const uint8_t *harr, size_t hoff, size_t hlen,
     const uint8_t *h = harr + hoff, *n = narr + noff;
     if (nlen == 0 || nlen > hlen)
         return -1;
-    const uint8_t lo = n[0], up = fold ? upper(n[0]) : n[0];
-    size_t span = hlen - nlen + 1; /* candidate starts are h[0 .. span) */
-    while (span > 0) {
-        const uint8_t *a = memrchr(h, lo, span);
-        const uint8_t *b = (up != lo) ? memrchr(h, up, span) : NULL;
-        const uint8_t *c = (a && b) ? (a > b ? a : b) : (a ? a : b);
-        if (!c)
-            return -1;
-        if (fold ? matches_folded(c, n, nlen) : memcmp(c + 1, n + 1, nlen - 1) == 0)
-            return c - h;
-        span = c - h;
+    size_t k = rarest(h, hlen, n, nlen, fold);
+    const uint8_t a = n[k], b = fold ? upper(n[k]) : n[k];
+    const uint8_t *start = h + k, *end = h + hlen - nlen + k + 1;
+    const uint8_t *p;
+    while ((p = rfind2(start, end, a, b)) != NULL) {
+        if (equal_at(p - k, n, nlen, fold))
+            return (p - k) - h;
+        end = p;
     }
     return -1;
 }

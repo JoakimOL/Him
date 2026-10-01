@@ -16,6 +16,8 @@ import Him.Edit
 import Him.Editor
 import Him.Event (Event (..))
 import Him.Ex (parseExLine)
+import Him.Search (Direction (..), Match (..), compileNeedle, findMatch)
+import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument)
 import Data.Text.Encoding qualified as TE
@@ -26,16 +28,17 @@ import Him.Mode (Mode (..))
 import Him.Motion
 import Him.Position (Pos (..))
 import Him.Render.Diff (diffFrames)
-import Him.Render.Frame (blankFrame, putText)
+import Him.Render.Frame (blankFrame, putCells, putText)
 import Him.Selection
-import Him.Terminal.Ansi (defaultStyle)
+import Him.Terminal.Ansi (Color (..), Style (..), defaultStyle, sgr)
 import Him.Terminal.Input (decodeKeys)
 import Him.View (View (..), scrollToCursor)
-import Him.TextWidth (charIndexAtCol, charWidth, displayCol, glyphs)
+import Him.TextWidth (charIndexAtCol, charWidth, displayCol, glyphs, isWide)
 import Him.Render (render)
 import Him.Render.Frame (Cell (..), Frame (..), continuation)
 import Him.Render.Theme (defaultTheme)
 import Data.Foldable (toList)
+import Data.Sequence qualified as Seq
 import Data.Text qualified as T
 import Test.Harness
 
@@ -48,6 +51,7 @@ main = do
     , group "Him.Terminal.Input.decodeKeys" decodeTests
     , group "Him.Buffer" bufferTests
     , group "Him.Buffer (randomized against a list model)" ropeModelTests
+    , group "Him.Search (randomized against a naive search)" searchTests
     , group "Him.Motion" motionTests
     , group "Him.Edit" editTests
     , group "Him.History" historyTests
@@ -173,6 +177,68 @@ ropeModelTests =
     modelInsert m p t = let whole = modelText m; (a, z) = T.splitAt (offsetOf m p) whole in T.splitOn "\n" (a <> t <> z)
     modelDelete m p q = let whole = modelText m in T.splitOn "\n" (T.take (offsetOf m p) whole <> T.drop (offsetOf m q) whole)
 
+searchTests :: [Test]
+searchTests =
+  [ test "empty and multi-line patterns are rejected" (assertEqual (Nothing, Nothing) (compileNeedle "", compileNeedle "a\nb"))
+  , test "smart case: lower-case pattern ignores case" (assertEqual (Just (Pos 0 4)) (matchStart <$> findIn "abc ABC" "abc" (Pos 0 0)))
+  , test "smart case: upper-case pattern is exact" (assertEqual (Just (Pos 0 4)) (matchStart <$> findIn "abc ABC Abc" "ABC" (Pos 0 0)))
+  , test "match end is inclusive" (assertEqual (Just (Pos 0 6)) (matchEnd <$> findIn "abc ABC" "abc" (Pos 0 0)))
+  , test "wraps around" (assertEqual (Just (Match (Pos 0 0) (Pos 0 1) True)) (findIn "ab ab" "ab" (Pos 0 3)))
+  , test "multi-byte columns" (assertEqual (Just (Pos 0 3)) (matchStart <$> findIn "漢字 x" "x" (Pos 0 0)))
+  , test "1500 random searches match the naive search" (randomSearches 1500)
+  ]
+  where
+    findIn t p pos = compileNeedle p >>= \n -> findMatch Forward n (buf t) pos
+    alphabet = "aAbB é漢\t" :: String
+    randomSearches :: Int -> Either String ()
+    randomSearches count = go count (randoms 99)
+      where
+        go 0 _ = Right ()
+        go k (r1 : r2 : r3 : r4 : r5 : r6 : rs) =
+          let (b, rs') = randomBuffer r1 rs
+              ls = B.toLines b
+              needle = T.pack [alphabet !! (x `mod` length alphabet) | x <- take (1 + r2 `mod` 3) rs']
+              l = r3 `mod` length ls
+              pos = Pos l (r4 `mod` (T.length (ls !! l) + 1))
+              dir = if even r5 then Forward else Backward
+              expected = naive dir needle ls pos
+              actual = (\n -> matchStart <$> findMatch dir n b pos) =<< compileNeedle needle
+           in if expected == actual
+                then go (k - 1) (drop 6 rs')
+                else Left (show (dir, needle, pos, ls) <> ": expected " <> show expected <> ", got " <> show actual <> show r6)
+        go _ _ = Right ()
+    -- Several regions (blocks) plus a few edits, so searches cross block
+    -- boundaries and edited single-line blocks.
+    randomBuffer r rs =
+      let lineOf xs = T.pack [alphabet !! (x `mod` length alphabet) | x <- xs]
+          rows = [lineOf (take (x `mod` 7) (drop (i * 7) rs)) | (i, x) <- zip [0 .. 11] (drop 100 rs)]
+          regions = [(False, T.intercalate "\n" chunk) | chunk <- chunksOf (1 + r `mod` 4) rows]
+          b0 = B.fromRegions regions
+          b1 = fst (B.insertText (Pos (r `mod` B.lineCount b0) 0) (lineOf (take 3 (drop 200 rs))) b0)
+       in (b1, drop 300 rs)
+    chunksOf n xs = case splitAt n xs of
+      (a, []) -> [a]
+      (a, z) -> a : chunksOf n z
+    -- All match starts in document order, overlapping matches included.
+    naive dir needle ls pos =
+      let fold = not (T.any isUpperAscii needle)
+          norm = if fold then T.map lowerAscii else id
+          n = norm needle
+          starts = [Pos li c | (li, line) <- zip [0 ..] ls, let ln = norm line, c <- [0 .. T.length ln - T.length n], n `T.isPrefixOf` T.drop c ln]
+       in case dir of
+            Forward -> case filter (> pos) starts of
+              (p : _) -> Just p
+              [] -> case starts of
+                (p : _) -> Just p
+                [] -> Nothing
+            Backward -> case reverse (filter (< pos) starts) of
+              (p : _) -> Just p
+              [] -> case reverse starts of
+                (p : _) -> Just p
+                [] -> Nothing
+    isUpperAscii c = c >= 'A' && c <= 'Z'
+    lowerAscii c = if isUpperAscii c then toEnum (fromEnum c + 32) else c
+
 -- | Apply a motion to a collapsed range at a position; returns (anchor, head).
 runMotion :: Motion -> Text -> Pos -> (Pos, Pos)
 runMotion m t p = let r = m (buf t) (point p) in (rangeAnchor r, rangeHead r)
@@ -293,7 +359,8 @@ viewTests =
 
 diffTests :: [Test]
 diffTests =
-  [ test "identical frames redraw no rows" (assertEqual False ("top" `isInfix` emit (Just f1) f1))
+  [ test "300 random frame sequences replay exactly in a terminal model" (randomDiffs 300)
+  , test "identical frames redraw no rows" (assertEqual False ("top" `isInfix` emit (Just f1) f1))
   , test "only the changed row is drawn" $
       let out = emit (Just f1) f2
        in assertEqual (True, False) ("\ESC[2;1H" `isInfix` out, "\ESC[1;1H" `isInfix` out)
@@ -362,12 +429,75 @@ loadingTests = do
           ((\d -> (B.toLines (docBuffer d), docLineEnding d, docTrailingNewline d)) <$> loaded)
     ]
 
+-- | Replays diff output on a minimal terminal model and checks that the
+-- screen equals the new frame (characters and styles, cell by cell).
+randomDiffs :: Int -> Either String ()
+randomDiffs n = go n (randoms 5) Nothing emptyScreen
+  where
+    rows = 4
+    cols = 12
+    styles = [defaultStyle, defaultStyle {styleReverse = True}, defaultStyle {styleFg = Indexed 240}]
+    chars = "ab  漢x" :: String
+    emptyScreen = replicate rows (replicate cols (' ', sgrText defaultStyle))
+    go 0 _ _ _ = Right ()
+    go k rs prev screen =
+      let (frame, rs') = randomFrame rs
+          out = TE.decodeUtf8 (BL.toStrict (toLazyByteString (diffFrames prev frame)))
+          screen' = replay (T.unpack out) screen
+          expected = [[(c, sgrText st) | Cell c st <- toList row] | row <- toList (frameCells frame)]
+       in if screen' == expected
+            then go (k - 1) rs' (Just frame) screen'
+            else Left ("mismatch at step " <> show (n - k) <> ": " <> show out)
+    randomFrame rs0 = let (f, rs') = foldl addText (blankFrame rows cols, rs0) [0 .. 5 :: Int] in (sanitize f, rs')
+      where
+        addText (f, r1 : r2 : r3 : r4 : rest) _ =
+          let t = T.pack [chars !! (x `mod` length chars) | x <- take (r3 `mod` 6) rest]
+              st = styles !! (r4 `mod` length styles)
+              cells = concat [if isWide c then [Cell c st, Cell continuation st] else [Cell c st] | c <- T.unpack t]
+           in (putCells (r1 `mod` rows) (r2 `mod` cols) (fixWide cells) f, drop 6 rest)
+        addText acc _ = acc
+    fixWide cells = cells
+    -- Frames from the renderer never contain half a wide character; make
+    -- the random ones valid the same way.
+    sanitize f = f {frameCells = fmap (Seq.fromList . fixRow . toList) (frameCells f)}
+    fixRow (Cell a sa : Cell b sb : rest)
+      | isWide a && b == continuation = Cell a sa : Cell b sb : fixRow rest
+      | isWide a = Cell ' ' sa : fixRow (Cell b sb : rest)
+      | a == continuation = Cell ' ' sa : fixRow (Cell b sb : rest)
+    fixRow [Cell a sa] | isWide a || a == continuation = [Cell ' ' sa]
+    fixRow (c : rest) = c : fixRow rest
+    fixRow [] = []
+    sgrText st = TE.decodeUtf8 (BL.toStrict (toLazyByteString (sgr st)))
+    -- The terminal model: cursor, current SGR, a grid of (char, SGR).
+    replay str scr = run str (0 :: Int, 0 :: Int) (sgrText defaultStyle) scr
+    run [] _ _ scr = scr
+    run ('\ESC' : '[' : rest) cur cs scr =
+      let (params, rest1) = span (\c -> c >= '0' && c <= '?') rest
+          (inter, rest2) = span (\c -> c >= ' ' && c <= '/') rest1
+       in case rest2 of
+            (final : rest3) -> case final of
+              'H' -> let (r, c) = break (== ';') params in run rest3 (read r - 1, read (drop 1 c) - 1) cs scr
+              'm' -> run rest3 cur (T.pack ("\ESC[" <> params <> inter <> "m")) scr
+              'K' -> let (r, c) = cur in run rest3 cur cs (setRow r [(c', (' ', cs)) | c' <- [c .. cols - 1]] scr)
+              'J' -> run rest3 cur cs [[(' ', cs) | _ <- [1 .. cols]] | _ <- [1 .. rows]]
+              _ -> run rest3 cur cs scr
+            [] -> scr
+    run (ch : rest) (r, c) cs scr
+      | isWide ch = run rest (r, c + 2) cs (setRow r [(c, (ch, cs)), (c + 1, (continuation, cs))] scr)
+      | otherwise = run rest (r, c + 1) cs (setRow r [(c, (ch, cs))] scr)
+    setRow r updates scr =
+      [ if i == r then [maybe old id (lookup j updates) | (j, old) <- zip [0 ..] row] else row
+      | (i, row) <- zip [0 ..] scr
+      ]
+
 -- | Feed key sequences through 'handleEvent' with the real keymaps.
 integrationTests :: IO [Test]
 integrationTests = do
   config <- either (fail . show) pure defaultConfig
   let start t = newEditor (24, 80) (newDocument Nothing (buf t))
-      typeKeys ks ed = foldlM (\e k -> execStateT (handleEvent config (EvKey k)) e) ed (fromMaybe (error ("bad keys: " <> show ks)) (parseKeys ks))
+      -- Like the main loop: handle the key, then refresh the search preview.
+      typeKeys ks ed = foldlM (\e k -> refreshSearchPreview <$> execStateT (handleEvent config (EvKey k)) e) ed (fromMaybe (error ("bad keys: " <> show ks)) (parseKeys ks))
+      selectionAfter t ks = (\e -> let r = primary (docSelection (edDoc e)) in (rangeAnchor r, rangeHead r)) <$> typeKeys ks (start t)
       textAfter t ks = B.toText . docBuffer . edDoc <$> typeKeys ks (start t)
   typed <- textAfter "" "i h i space t h e r e esc"
   newline <- textAfter "ab" "a ret c esc"
@@ -396,6 +526,16 @@ integrationTests = do
   pasteAbove <- textAfter "one\ntwo" "j x y g g P"
   pasteChars <- textAfter "hello world" "e y p"
   undoPaste <- textAfter "hello world" "e y p u"
+  searched <- selectionAfter "one two\nthree two" "/ t w o ret"
+  searchNext <- selectionAfter "one two\nthree two" "/ t w o ret n"
+  searchWrap <- selectionAfter "one two\nthree two" "/ t w o ret n n"
+  searchBack <- selectionAfter "one two\nthree two" "g e ? t w o ret"
+  searchPrev <- selectionAfter "one two\nthree two" "/ t w o ret n N"
+  previewed <- selectionAfter "one two\nthree two" "/ t h r"
+  cancelled <- selectionAfter "one two\nthree two" "l / t h r esc"
+  starSearch <- selectionAfter "one two\none" "e * n"
+  notFound <- typeKeys "/ z z ret" (start "abc")
+  deleteMatch <- textAfter "one two three" "/ t w o ret d"
   pendingG <- typeKeys "g" (start "abc")
   badChord <- typeKeys "g z" (start "abc")
   pure
@@ -426,6 +566,16 @@ integrationTests = do
     , test "P pastes a line above" (assertEqual "two\none\ntwo" pasteAbove)
     , test "p pastes characters after the selection" (assertEqual "hellohello world" pasteChars)
     , test "u undoes a paste" (assertEqual "hello world" undoPaste)
+    , test "/ selects the first match" (assertEqual (Pos 0 4, Pos 0 6) searched)
+    , test "n selects the next match" (assertEqual (Pos 1 6, Pos 1 8) searchNext)
+    , test "n wraps around" (assertEqual (Pos 0 4, Pos 0 6) searchWrap)
+    , test "? searches backward" (assertEqual (Pos 0 4, Pos 0 6) searchBack)
+    , test "N goes back" (assertEqual (Pos 0 4, Pos 0 6) searchPrev)
+    , test "typing previews the match" (assertEqual (Pos 1 0, Pos 1 2) previewed)
+    , test "esc restores the selection" (assertEqual (Pos 0 1, Pos 0 1) cancelled)
+    , test "* then n searches for the selection" (assertEqual (Pos 1 0, Pos 1 2) starSearch)
+    , test "a missing pattern is reported" (assertEqual (Just (Status Error "pattern not found: zz")) (edStatus notFound))
+    , test "d deletes the match" (assertEqual "one  three" deleteMatch)
     , test "g waits for the next key" (assertEqual [plain (KChar 'g')] (edPending pendingG))
     , test "an unknown chord is dropped" (assertEqual ([], "abc") (edPending badChord, B.toText (docBuffer (edDoc badChord))))
     ]

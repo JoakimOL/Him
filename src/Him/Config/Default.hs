@@ -18,6 +18,7 @@ import Him.Commands.CommandLine qualified as CommandLine
 import Him.Commands.Edit qualified as Edit
 import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
+import Him.Commands.Search qualified as Search
 import Him.Config (Config (..))
 import Him.Ex (ExCommand)
 import Him.Key (Key (..), KeyCode (..), Modifier (..))
@@ -28,6 +29,7 @@ allCommands :: [Command]
 allCommands =
   Motion.commands
     <> Edit.commands
+    <> Search.commands
     <> CommandLine.commands exCommands
 
 exCommands :: [ExCommand]
@@ -72,6 +74,11 @@ normalBindings =
        , ("a", "append_mode")
        , ("o", "open_below")
        , (":", "command_mode")
+       , ("/", "search_forward")
+       , ("?", "search_backward")
+       , ("n", "search_next")
+       , ("N", "search_prev")
+       , ("*", "search_selection")
        ]
 
 -- | Select mode is normal mode with these overrides.

@@ -16,6 +16,7 @@ import Him.Buffer qualified as Buffer
 import Him.Command (cmdRun, failWith)
 import Him.Command qualified as Command
 import Him.Config (Config (..))
+import Him.Commands.Search (refreshSearchPreview)
 import Him.Config.Default (defaultConfig)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
@@ -62,7 +63,7 @@ eventLoop config events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
-      let ed = ensureCursorVisible ed0
+      let ed = ensureCursorVisible (refreshSearchPreview ed0)
           frame = render defaultTheme ed
       writeOutput (diffFrames prev frame)
       next <- atomically (readTChan events) >>= batch maxBatch ed

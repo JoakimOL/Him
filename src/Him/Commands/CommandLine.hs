@@ -7,31 +7,50 @@ module Him.Commands.CommandLine
 import Control.Monad.Trans.State.Strict (gets, modify')
 import Data.Text qualified as T
 import Him.Command
-import Him.Editor (Editor (..))
+import Him.Commands.Search (cancelSearch, executeSearch)
+import Him.Editor (Editor (..), PromptKind (..))
 import Him.Ex (ExCommand, runExLine)
 import Him.Mode (Mode (..))
 
 commands :: [ExCommand] -> [Command]
 commands exTable =
   [ Command "command_mode" "Enter a : command" $ do
+      modify' (\e -> e {edPrompt = ExPrompt})
       setCmdLine ""
       setMode CmdLine
-  , Command "cmdline_cancel" "Leave the command line" $ do
-      setCmdLine ""
-      setMode Normal
+  , Command "cmdline_cancel" "Leave the command line" cancel
   , Command "cmdline_backspace" "Delete the last character (leave if empty)" $
       gets edCmdLine >>= \case
-        t | T.null t -> setMode Normal
+        t | T.null t -> cancel
         t -> setCmdLine (T.dropEnd 1 t)
   , Command "cmdline_execute" "Run the typed command" $ do
       line <- gets edCmdLine
+      prompt <- gets edPrompt
       setCmdLine ""
       setMode Normal
-      runExLine exTable line
+      case prompt of
+        ExPrompt -> runExLine exTable line
+        SearchPrompt dir origin -> executeSearch dir origin line
   ]
 
-cmdlineInsert :: Char -> EditorM ()
-cmdlineInsert c = modify' (\e -> e {edCmdLine = T.snoc (edCmdLine e) c})
+cancel :: EditorM ()
+cancel = do
+  prompt <- gets edPrompt
+  setCmdLine ""
+  setMode Normal
+  case prompt of
+    SearchPrompt _ origin -> cancelSearch origin
+    ExPrompt -> pure ()
 
+cmdlineInsert :: Char -> EditorM ()
+cmdlineInsert c = setCmdLine . (`T.snoc` c) =<< gets edCmdLine
+
+-- | Changing a search's text schedules the incremental preview.
 setCmdLine :: T.Text -> EditorM ()
-setCmdLine t = modify' (\e -> e {edCmdLine = t})
+setCmdLine t = modify' $ \e ->
+  e
+    { edCmdLine = t
+    , edPreviewPending = case edPrompt e of
+        SearchPrompt {} -> True
+        ExPrompt -> False
+    }

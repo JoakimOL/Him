@@ -368,6 +368,92 @@ def scenario_latency(editor: Editor, ctx) -> dict:
     }
 
 
+def timed(s: Session, keys: bytes, quiet: float = 0.03) -> tuple[float, bytes]:
+    """Write keys; return the time until the editor finished drawing (the
+    last output before `quiet` seconds of silence) and the output produced."""
+    mark = len(s.output)
+    t = time.perf_counter()
+    s.write(keys)
+    s.wait_until(lambda: s.last_data > t, 30.0, "a response")
+    s.wait_quiet(quiet)
+    return s.last_data - t, bytes(s.output[mark:])
+
+
+def search_session(editor: Editor, ctx, body, verify_target: str | None = None) -> dict:
+    """Run `body` on a copy of the large file. With `verify_target`, finish
+    by searching for it once more, typing HIT before the match and saving:
+    the edited file shows whether the editor really found the right place."""
+    target_file = ctx.workdir / f"search-{editor.name}.txt"
+    shutil.copyfile(ctx.large_file, target_file)
+    s = Session(editor.cmd + [str(target_file)], editor.env)
+    try:
+        s.wait_ready()
+        s.wait_for_text(MARKER)
+        s.wait_quiet(SETTLE * 2)
+        result = body(s)
+        if verify_target:
+            timed(s, editor.goto_top)
+            timed(s, b"/" + verify_target.encode() + b"\r")
+            s.send_script([b"iHIT", Pause(ESC_PAUSE), b"\x1b", Pause(ESC_PAUSE)] + editor.write_quit())
+        else:
+            s.send_script([Pause(ESC_PAUSE), b"\x1b", Pause(ESC_PAUSE)] + editor.quit())
+        s.wait_exit()
+    except BaseException:
+        s.kill()
+        raise
+    if verify_target:
+        with open(target_file, encoding="utf-8") as f:
+            last = f.read().splitlines()[-1]
+        result["found"] = last.startswith("HIT" + verify_target)
+    target_file.unlink()
+    result["max_rss_mb"] = s.max_rss_mb
+    return result
+
+
+def scenario_search_far(editor: Editor, ctx) -> dict:
+    """Search from the top for a pattern that only occurs on the last line."""
+    target = f"{ctx.lines - 1:07d} lorem"
+
+    def body(s: Session) -> dict:
+        times = []
+        for _ in range(ctx.search_samples):
+            timed(s, editor.goto_top)
+            times.append(timed(s, b"/" + target.encode() + b"\r")[0] * 1000)
+        return {"search_far_ms": statistics.median(times)}
+
+    return search_session(editor, ctx, body, verify_target=target)
+
+
+def scenario_search_none(editor: Editor, ctx) -> dict:
+    """Search for a pattern that does not occur (full scan plus wrap)."""
+
+    def body(s: Session) -> dict:
+        times = []
+        for _ in range(ctx.search_samples):
+            timed(s, editor.goto_top)
+            took, _ = timed(s, b"/zzznotfound\r")
+            times.append(took * 1000)
+        return {"search_none_ms": statistics.median(times)}
+
+    return search_session(editor, ctx, body)
+
+
+def scenario_search_next(editor: Editor, ctx) -> dict:
+    """`n` through a pattern that occurs every 1000 lines."""
+
+    def body(s: Session) -> dict:
+        timed(s, b"/000 lorem\r")
+        steps = [timed(s, b"n")[0] * 1000 for _ in range(ctx.samples)]
+        burst, _ = timed(s, b"n" * 200, quiet=0.05)
+        return {
+            "next_ms": statistics.median(steps),
+            "next_p95_ms": percentile(steps, 95),
+            "next_x200_burst_ms": burst * 1000,
+        }
+
+    return search_session(editor, ctx, body)
+
+
 SCENARIOS = {
     "startup_empty": (scenario_startup_empty, "start with no file (time until the screen settles)"),
     "open_large": (scenario_open_large, "open the large file (first paint of line 1; screen settled)"),
@@ -375,6 +461,9 @@ SCENARIOS = {
     "jump": (scenario_jump, "go to the last line and back JUMPS times, then :q!"),
     "edit_save": (scenario_edit_save, "insert text at the top, Esc, :wq (output is verified)"),
     "latency": (scenario_latency, "per-key latency of j and of typing in insert mode"),
+    "search_far": (scenario_search_far, "/pattern from the top; the only match is on the last line"),
+    "search_none": (scenario_search_none, "/pattern that does not occur (whole file scanned)"),
+    "search_next": (scenario_search_next, "n through matches every 1000 lines (one by one; 200 at once)"),
 }
 
 # Metrics to show in the summary table, per scenario.
@@ -385,6 +474,9 @@ SHOWN = {
     "jump": ["work_ms", "cpu_ms"],
     "edit_save": ["work_ms", "max_rss_mb", "correct"],
     "latency": ["move_frame_done_ms", "move_frame_done_p95_ms", "type_frame_done_ms", "type_frame_done_p95_ms"],
+    "search_far": ["search_far_ms", "found"],
+    "search_none": ["search_none_ms"],
+    "search_next": ["next_ms", "next_p95_ms", "next_x200_burst_ms"],
 }
 
 
@@ -408,6 +500,8 @@ class Context:
     moves: int
     jumps: int
     samples: int
+    search_samples: int
+    lines: int
 
 
 def make_large_file(path: Path, lines: int) -> None:
@@ -442,7 +536,7 @@ def editors(workdir: Path, him: str | None) -> dict[str, Editor]:
         found["vim"] = Editor(
             "vim",
             ["vim", "-u", "NONE", "-i", "NONE", "-N", "--noplugin", "-n",
-             "--cmd", "set ttimeout ttimeoutlen=10"],
+             "--cmd", "set ttimeout ttimeoutlen=10 ruler"],
             goto_end=b"G",
             goto_top=b"gg",
         )
@@ -513,6 +607,7 @@ def main() -> int:
     ap.add_argument("--moves", type=int, default=2000, help="j presses in the scroll scenario")
     ap.add_argument("--jumps", type=int, default=100, help="end/top round trips in the jump scenario")
     ap.add_argument("--samples", type=int, default=100, help="keys measured per latency run")
+    ap.add_argument("--search-samples", type=int, default=10, help="searches measured per search run")
     ap.add_argument("--him", help="path to the him binary (default: from `stack path`)")
     ap.add_argument("--json", help="also write all raw results to this file")
     args = ap.parse_args()
@@ -531,7 +626,7 @@ def main() -> int:
 
         large = workdir / "large.txt"
         make_large_file(large, args.lines)
-        ctx = Context(workdir, large, args.moves, args.jumps, args.samples)
+        ctx = Context(workdir, large, args.moves, args.jumps, args.samples, args.search_samples, args.lines)
         size_mb = large.stat().st_size / 1e6
         print(f"terminal {COLS}x{ROWS}, large file: {args.lines} lines ({size_mb:.1f} MB), "
               f"{args.runs} runs per scenario (median reported)")
