@@ -1,4 +1,4 @@
-.PHONY: build run test watch ghci fmt lint clean
+.PHONY: build run test bench watch ghci fmt lint clean
 
 HS_DIRS := src app test
 
@@ -11,6 +11,10 @@ run:
 
 test:
 	stack test
+
+# Compare against vim and helix (see docs/BENCHMARK.md). Usage: make bench ARGS="--runs 3"
+bench: build
+	python3 bench/bench.py $(ARGS)
 
 # Rebuild on every save (fast, unoptimised).
 watch:

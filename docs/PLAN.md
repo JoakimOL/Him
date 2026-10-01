@@ -219,6 +219,11 @@ Implemented (defined in `Him.Config.Default`):
 *Last session ended on 2026-10-01, after milestones 9–12. Every planned milestone is done,
 and the editor is usable for basic editing.*
 
+- **Performance:** `make bench` compares him with Vim and Helix (see `docs/BENCHMARK.md`
+  for the method and results). Startup and file loading are already competitive. The
+  per-key render cost (about 4.6 ms latency, about 1.4 ms of CPU per key) is the main
+  gap. The recommended first step is to process all queued keys before rendering, and
+  then make frame building cheaper (fewer per-cell `Seq` updates).
 - **Next suggestions, roughly in order of value:**
   1. **Search:** `/` prompt, `n` / `N`, and the matches selected. The `CmdLine` mode can be
      generalised to a "prompt" carrying what Enter does.
@@ -236,6 +241,9 @@ and the editor is usable for basic editing.*
     misalign by one column per mark.
   - The status line shows the cursor's character column, not its display column.
   - `edit` changes only the primary range (see above).
+- **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
+  tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
+  the date and commit.
 - **How to verify:** `make test` (137 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is

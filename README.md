@@ -21,6 +21,7 @@ The design, the decisions behind it, and the milestone status are in
 make build              # stack build
 make run ARGS=file.txt  # run the editor
 make test               # run the test suite
+make bench              # compare performance with vim and helix (docs/BENCHMARK.md)
 make watch              # rebuild on save
 make ghci               # REPL
 make fmt / make lint    # format / lint
@@ -35,5 +36,6 @@ app/Main.hs         argument parsing, then Him.App.run
 src/Him/…           the library (see the module map in docs/PLAN.md)
 cbits/              tiny C shims used through FFI (terminal size)
 test/               test suite with a minimal built-in harness
+bench/bench.py      benchmark against vim and helix (Python stdlib only)
 docs/PLAN.md        living plan: assumptions, ADRs, milestones, where to pick up
 ```
