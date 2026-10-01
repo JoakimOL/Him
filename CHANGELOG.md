@@ -10,6 +10,7 @@ and this project adheres to the
 
 ## 0.1.0.0 - unreleased
 
+- Rope buffer, streaming load/save, non-moving GC; search (/ ? n N *) with rare-byte SIMD scanning; row reuse and terminal scrolling in the renderer.
 - Undo/redo, yank/paste, line-number gutter, wide-character and control-character display.
 - Core editor: file loading/saving, rendering with frame diffing, Helix-style selections and motions, command registry + keymap tries, insert mode, `:` commands.
 

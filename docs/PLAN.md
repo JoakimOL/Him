@@ -47,7 +47,7 @@ Allowed: `base`, `unix`, `bytestring`, `text`, `containers`, `transformers`, `di
 it (`-Wunused-packages` enforces this).
 *Alternatives:* `vty`/`brick` (large and opinionated), `text-rope` (see ADR-3).
 
-**ADR-3: `Seq Text` line buffer behind an abstract interface.**
+**ADR-3 (superseded by ADR-12): `Seq Text` line buffer behind an abstract interface.**
 `Him.Buffer` exposes operations (`lineCount`, `getLine`, `insertAt`, `deleteRange`, …) and
 hides its representation. `Data.Sequence` gives O(log n) splitting and indexing by line,
 which is plenty for normal files.
@@ -113,6 +113,43 @@ main loop handles every queued event (up to 512) before rendering once. That's w
 makes typeahead (pastes, key repeat) cheap. Components write whole rows
 (`putCells`) instead of single cells.
 
+**ADR-12: The buffer is a rope of multi-line blocks.**
+A `Block` is one UTF-8 `Text` holding many lines, plus an array of `Word32` line starts.
+Blocks live in a weight-balanced tree that caches line counts (`Him.Buffer.Rope`).
+- **Loading:** a file loads as a few large blocks, one per 1 MB read chunk.
+- **Edits:** splitting a block is O(1) slicing; changed lines become a small new block.
+- **Why:** with `Seq Text`, each of the 200,000 lines of the test file cost about
+  50 bytes of heap objects. The copying GC also had to copy all of them.
+- **Search:** blocks make search fast, because a whole block is scanned with one C call.
+- **Interface:** `Him.Buffer`'s interface did not change. A randomized test compares
+  thousands of edits against a list model.
+
+**ADR-13: Hot byte loops in C, called with `unsafe` FFI on the `Text`'s array.**
+`cbits/text.c` scans newlines (`memchr`) and searches (`memmem`, SSE2 two-byte scan).
+`unsafe` calls cannot be interrupted by the GC, so the unpinned arrays can be passed
+directly (`UnliftedFFITypes`). This keeps the editor to boot libraries plus two small C
+files.
+
+**ADR-14: Search is literal, smart case, and anchored on the rarest byte.**
+- **Matching:** there is no regex engine, since none ships with GHC. A pattern
+  without upper-case letters matches ASCII letters case-insensitively.
+- **Exact matches:** these use glibc `memmem`.
+- **Case-insensitive matches:** these scan for the needle byte that is rarest in a
+  4 KB sample of each block, in both cases, 16 bytes at a time, and verify each
+  candidate.
+- **Why not Boyer–Moore–Horspool:** it was tried. It was 4× slower when the first
+  byte was rare, and only slightly faster when it was common.
+- **Incremental preview:** this runs once per input batch (`edPreviewPending`), not
+  once per key.
+
+**ADR-15: The renderer reuses rows and lets the terminal scroll.**
+`render` takes the previous frame. Text-area rows are keyed (`RowKey`: line, text,
+selection spans, cursors, scroll, width) and copied when unchanged, looked up by line so
+scrolling keeps them. When the view moved less than a screen, `diffFrames` scrolls the
+terminal's region (`DECSTBM` + `SU`/`SD`) and diffs against the shifted old frame. It
+writes only changed cell runs and clears trailing blanks with `EL`. Tests replay the
+output on a small terminal model with scroll regions and compare cell by cell.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -132,6 +169,10 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Terminal.Output` | ✅ | Writes one builder per frame and flushes. |
 | `Him.Terminal.Input` | ✅ | Reader thread → `TChan Event` (from `stm`, so the main loop can drain queued events before rendering); pure `decodeKeys final bytes`; a 30 ms lone-ESC timeout. |
 | `Him.Key`, `Him.Event` | ✅ | Key/modifier types and a `"C-s"`-style key parser; the `Event` sum type. |
+| `Him.Buffer.Rope` | ✅ | Blocks (a `Text` plus line starts) in a weight-balanced tree with line counts: split, append, line lookup, block iteration. |
+| `Him.Native` + `cbits/text.c` | ✅ | `unsafe` FFI on `Text` arrays: line starts, newline count, forward and backward search. |
+| `Him.Search` | ✅ | `compileNeedle` (smart case) and `findMatch` (direction, wrap-around), on top of `Him.Buffer.findForwardFrom` / `findBackwardBefore`. |
+| `Him.Commands.Search` | ✅ | `/ ? n N *`, the search prompt, and `refreshSearchPreview`. |
 | `Him.Buffer` | ✅ | Abstract text storage (`Seq Text`), path, dirty flag. |
 | `Him.Position`, `Him.Selection` | ✅ | `Pos`, `Range {anchor, head}`, `Selection` (NonEmpty ranges + primary). |
 | `Him.Motion` | ✅ | Pure motions: char, line (desired column), word, line/file start/end. |
@@ -181,13 +222,20 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **12. Yank/paste.** `y`, `p`, `P` with a default register; `d` and `c` also yank.
   Text ending in a newline (from `x`) pastes as whole lines.
 
+- [x] **13. Memory.** A rope of blocks, streaming load/save, and the non-moving GC.
+  Peak memory with the 14 MB file: 40 → 24 MB open, 87 → 35 MB after editing and saving.
+- [x] **14. Search.** `/`, `?`, `n`, `N`, `*`; smart case; incremental preview;
+  rare-byte SIMD scanning; benchmark scenarios with result checks.
+- [x] **15. Rendering pass.** Row reuse, terminal scroll regions, cell-level diff, and an
+  ASCII fast path.
+
 Later (the architecture already has room for these):
+- [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
+- [ ] Highlight all matches
 - [ ] Undo tree / change sets instead of snapshots
 - [ ] Named registers and the system clipboard
 - [ ] Multiple selections (`C`, `s` split)
-- [ ] Search (`/`, `n`)
 - [ ] Multiple buffers, `:e`
-- [ ] Rope-backed `Buffer`
 - [ ] User config file for keymaps
 - [ ] Syntax highlighting (a styling pass at render time)
 - [ ] Popups and pickers (render components)
@@ -201,7 +249,8 @@ Implemented (defined in `Him.Config.Default`):
 | Normal | `h j k l`, arrows, `home`/`end`; `w b e` (select words), `x` (select line, repeat to extend), `;` (collapse), `v` (select mode), `d` (delete), `c` (change); `y` (yank), `p` / `P` (paste after / before); `u` / `U` (undo / redo); `g g` / `g e` (first / last line), `g h` / `g l` (line start / end); `i a o`; `:` |
 | Select | same as normal, but motions extend; `v` / `esc` → normal |
 | Insert | printable chars, `ret` (keeps indent), `tab`, `backspace`, `del`, arrows, `esc` |
-| Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` |
+| Normal (search) | `/` / `?` (search forward / backward, with preview), `n` / `N` (next / previous match), `*` (selection becomes the pattern) |
+| Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
 | `:` commands | `:w [path]`, `:q` (refuses when dirty), `:q!`, `:wq` / `:x` |
 
 ## 7. How to extend
@@ -222,36 +271,32 @@ Implemented (defined in `Him.Config.Default`):
 
 ## 8. Where to pick up
 
-*Last session ended on 2026-10-01, after milestones 9–12. Every planned milestone is done,
-and the editor is usable for basic editing.*
+*Last session ended on 2026-10-01, after milestones 13–15 (memory, search, rendering).
+`docs/TUTORIAL.md` walks through how the whole editor is built.*
 
-- **Performance:** `make bench` compares him with Vim and Helix (see `docs/BENCHMARK.md`
-  for the method, the results history, and how to profile).
-  - **Done:** after the first performance pass, him leads in startup and in batched
-    input (`scroll`, `jump`). Per-key latency is about 1.9 ms (Helix 1.3, Vim 0.3).
-  - **Still open:** opening large files (about 2× slower), peak memory under GC, and
-    row caching to cut per-frame work further.
-- **Next suggestions, roughly in order of value:**
-  1. **Search:** `/` prompt, `n` / `N`, and the matches selected. The `CmdLine` mode can be
-     generalised to a "prompt" carrying what Enter does.
-  2. **Multiple selections:** `C` (copy the selection to the next line), `s` (select
-     regex matches inside the selection), `,` (keep only the primary). This needs
-     multi-range edits that map positions between ranges (see ADR-5b). `edit` currently
-     changes only the primary range.
-  3. **Multiple buffers / `:e`:** `Editor` holds one `Document`, so make it a list plus
-     a current index.
-  4. **User config file** for keymaps. Bindings are already `(Text, Text)` pairs, so
-     parsing a simple `keys = command` file is enough.
-  5. **Counts** (`3w`, `5j`), and `PageUp` / `PageDown` / `C-d` / `C-u`.
-- **Small known issues:**
-  - Zero-width combining characters are treated as width 1, so lines that contain them
-    misalign by one column per mark.
-  - The status line shows the cursor's character column, not its display column.
-  - `edit` changes only the primary range (see above).
+- **Performance status** (see `docs/BENCHMARK.md`):
+  - **Ahead:** him leads in startup, memory, batched input and search throughput.
+  - **Close:** per-key latency is close to Helix and about 2× Vim's.
+  - **Behind:** opening a 14 MB file (about 50 ms vs. 22–35 ms).
+- **Next suggestions:**
+  1. **Multiple selections** (`C`, `s`, `,`). `edit` must map positions across ranges
+     (ADR-5b).
+  2. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
+     matcher.
+  3. **Faster large-file open.** Build line indexes lazily per block, and avoid the
+     decode copy for valid UTF-8.
+  4. Multiple buffers / `:e`, and a config file for keymaps.
+- **Known issues:**
+  - Zero-width combining characters are treated as width 1.
+  - Case-insensitive search folds ASCII letters only.
+  - `edit` changes only the primary range.
+- **Working rule:** revert temporary instrumentation by editing it out (or with
+  `git checkout` on a clean tree only). A `git checkout` once threw away uncommitted
+  work (the search preview hook).
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (137 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (165 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.
