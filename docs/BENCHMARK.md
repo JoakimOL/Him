@@ -226,6 +226,8 @@ Measurements are on the 14 MB / 200,000-line benchmark file.
 | 16 | Zero-copy load | Read 14 MB into a buffer, then decode = copy into a `Text` | Regular files are read straight into one pinned array of the file's size; if `isValidUtf8ByteArray` (0.3 ms) accepts it, that array *is* the `Text`. Invalid UTF-8 and pipes (size unknown, `hFileSize` = 0) use the lenient/chunked paths | open_large first paint 26 → 15 ms (Helix 22); peak RSS 24 → 22.6 MB |
 | 17 | Save whole regions | Saving 14 MB took 14.7 ms: 200,000 `encodeUtf8Builder` calls, one per line | `Buffer.regions` exposes each block's lines as one contiguous text; a region whose line endings match the file's is written in one piece, others line by line | save 14.7 → 4.4 ms; edit_save 31.7 → 14.5 ms (Helix 18.7) |
 | 18 | `hPutBuf` from pinned arrays | 4.4 ms, about 1.5 ms of it copying into the builder buffer | A region ≥ 64 KB in a pinned array (a loaded file) is handed to `hPutBuf` directly (`keepAlive#` holds the array) | save 4.4 → 3.9 ms (small: the rest is the kernel's write) |
+| 19 | Single-pass cell diff | In the editor (slow-clocked CPU) the diff was the biggest per-`n` cost: 1.29 ms vs render 0.62, search 0.11 | `drawChanges` walks old/new once, building merged runs as it goes (no `zip3`, per-run `drop`/`take`, or double `reverse`) | full-redraw diff 0.23 → 0.20 ms (micro) |
+| 20 | Packed styles | Cell comparisons chased pointers to a boxed `Char` and a 6-field `Style` | `PackedStyle` (one `Word64`: two 26-bit colours + 4 flags); `Cell` unpacks `Char#` + `Word64#`; theme styles packed once per frame | diff 0.20 → 0.18 ms (micro); end-to-end `n` not yet re-measured |
 
 ## Profiling him
 

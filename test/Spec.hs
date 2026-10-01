@@ -30,7 +30,7 @@ import Him.Position (Pos (..))
 import Him.Render.Diff (diffFrames)
 import Him.Render.Frame (blankFrame, putCells, putText)
 import Him.Selection
-import Him.Terminal.Ansi (Color (..), Style (..), defaultStyle, sgr)
+import Him.Terminal.Ansi (Color (..), Style (..), defaultStyle, packStyle, sgr, unpackStyle)
 import Him.Terminal.Input (decodeKeys)
 import Him.View (View (..), scrollToCursor)
 import Him.TextWidth (charIndexAtCol, charWidth, displayCol, glyphs, isWide)
@@ -364,7 +364,10 @@ viewTests =
 
 diffTests :: [Test]
 diffTests =
-  [ test "300 random frame sequences replay exactly in a terminal model" (randomDiffs 300)
+  [ test "styles survive packing" $
+      let samples = [defaultStyle, defaultStyle {styleFg = Rgb 1 2 3, styleBg = Indexed 240, styleBold = True, styleReverse = True}, defaultStyle {styleFg = Ansi 9, styleItalic = True, styleUnderline = True}]
+       in assertEqual samples (map (unpackStyle . packStyle) samples)
+  , test "300 random frame sequences replay exactly in a terminal model" (randomDiffs 300)
   , test "identical frames redraw no rows" (assertEqual False ("top" `isInfix` emit (Just f1) f1))
   , test "only the changed row is drawn" $
       let out = emit (Just f1) f2
@@ -481,7 +484,7 @@ randomDiffs n = go n (randoms 5) Nothing emptyScreen
       let (frame, rs') = randomFrame rs
           out = TE.decodeUtf8 (BL.toStrict (toLazyByteString (diffFrames prev frame)))
           screen' = replay (T.unpack out) screen
-          expected = [[(c, sgrText st) | Cell c st <- toList row] | row <- toList (frameCells frame)]
+          expected = [[(c, sgrText (unpackStyle st)) | Cell c st <- toList row] | row <- toList (frameCells frame)]
        in if screen' == expected
             then go (k - 1) rs' (Just frame) screen'
             else Left ("mismatch at step " <> show (n - k) <> ": " <> show out)
@@ -496,7 +499,7 @@ randomDiffs n = go n (randoms 5) Nothing emptyScreen
       where
         addText (f, r1 : r2 : r3 : r4 : rest) _ =
           let t = T.pack [chars !! (x `mod` length chars) | x <- take (r3 `mod` 6) rest]
-              st = styles !! (r4 `mod` length styles)
+              st = packStyle (styles !! (r4 `mod` length styles))
               cells = concat [if isWide c then [Cell c st, Cell continuation st] else [Cell c st] | c <- T.unpack t]
            in (putCells (r1 `mod` rows) (r2 `mod` cols) cells f, drop 6 rest)
         addText acc _ = acc

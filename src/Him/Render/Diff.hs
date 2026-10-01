@@ -60,7 +60,7 @@ scrollRegion p new = case (frameScroll p, frameScroll new) of
         )
     where
       d = siTop b - siTop a
-      blank = Seq.replicate (frameCols p) (Cell ' ' defaultStyle)
+      blank = Seq.replicate (frameCols p) blankCell
       old = frameCells p
       shifted = Seq.mapWithIndex shiftRow old
       shiftRow i row
@@ -76,47 +76,50 @@ drawRow i cells = case blankTail cells of
   0 -> mempty
   n -> moveCursor i 0 <> renderCells (take n cells)
 
--- | Only the parts of a row that differ from the old one.
+-- | Only the parts of a row that differ from the old one, in one pass.
+-- Changed cells are collected into runs; a run absorbs the unchanged cells
+-- up to the next change when that is within 'mergeGap' cells (a cursor
+-- move costs about as much). Changes past the row's content are cleared
+-- with one "erase to end of line".
 drawChanges :: Int -> [Cell] -> [Cell] -> Builder
-drawChanges i old new = foldMap drawRun (runs changed) <> clearTail
+drawChanges i old new = go 0 Nothing (zip old new) <> clearTail
   where
-    width = length new
     contentEnd = blankTail new
-    changed = [c | (c, a, b) <- zip3 [0 ..] old new, a /= b, c < contentEnd]
-    -- Changed cells past the content need clearing (if the old row had
-    -- something there).
     tailChanged = or [a /= b | (a, b) <- drop contentEnd (zip old new)]
     clearTail
       | tailChanged = moveCursor i contentEnd <> sgr defaultStyle <> clearToEndOfLine
       | otherwise = mempty
-    drawRun (from, to) =
-      let from' = if isContinuation (cellAt from) then from - 1 else from
-          to' = if to + 1 < width && isContinuation (cellAt (to + 1)) then to + 1 else to
-       in moveCursor i from' <> renderCells (take (to' - from' + 1) (drop from' new))
-    cellAt c = case drop c new of
-      (x : _) -> x
-      [] -> Cell ' ' defaultStyle
+    -- The open run: its start column, its cells (reversed), and the
+    -- unchanged cells seen since its last change (reversed).
+    go :: Int -> Maybe (Int, [Cell], [Cell]) -> [(Cell, Cell)] -> Builder
+    go col run _
+      | col >= contentEnd = flush run
+    go col run ((o, n) : rest)
+      | o /= n = case run of
+          Just (start, acc, gap) -> go (col + 1) (Just (start, n : gap <> acc, [])) rest
+          Nothing
+            -- Never start drawing on the right half of a wide character.
+            | isContinuation n && col > 0 -> go (col + 1) (Just (col - 1, [n, cellBefore col], [])) rest
+            | otherwise -> go (col + 1) (Just (col, [n], [])) rest
+      | otherwise = case run of
+          Just (start, acc, gap)
+            | length gap < mergeGap -> go (col + 1) (Just (start, acc, n : gap)) rest
+            | otherwise -> flush run <> go (col + 1) Nothing rest
+          Nothing -> go (col + 1) Nothing rest
+    go _ run [] = flush run
+    flush Nothing = mempty
+    flush (Just (start, acc, _)) = moveCursor i start <> renderCells (reverse acc)
+    cellBefore col = case drop (col - 1) new of
+      (c : _) -> c
+      [] -> blankCell
     isContinuation (Cell ch _) = ch == continuation
-
--- | Group sorted columns into @(first, last)@ runs, merging runs separated by
--- fewer than 'mergeGap' unchanged cells.
-runs :: [Int] -> [(Int, Int)]
-runs [] = []
-runs (c : cs) = go c c cs
-  where
-    go s e [] = [(s, e)]
-    go s e (x : xs)
-      | x - e <= mergeGap = go s x xs
-      | otherwise = (s, e) : go x x xs
 
 mergeGap :: Int
 mergeGap = 6
 
 -- | Length of a row without its trailing default-style blanks.
 blankTail :: [Cell] -> Int
-blankTail cells = length (dropWhileEndBlank cells)
-  where
-    dropWhileEndBlank = reverse . dropWhile (== Cell ' ' defaultStyle) . reverse
+blankTail cells = length cells - length (takeWhile (== blankCell) (reverse cells))
 
 -- | Cells, emitting a style change only where the style changes.
 renderCells :: [Cell] -> Builder
@@ -125,5 +128,5 @@ renderCells = go Nothing
     go _ [] = mempty
     go current (Cell c _ : rest) | c == continuation = go current rest
     go current (Cell c style : rest) =
-      (if current == Just style then mempty else sgr style) <> charUtf8 c <> go (Just style) rest
+      (if current == Just style then mempty else sgrPacked style) <> charUtf8 c <> go (Just style) rest
 

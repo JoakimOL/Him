@@ -15,6 +15,7 @@ import Him.Mode (Mode (..))
 import Him.Position (Pos (..))
 import Him.Render.Frame
 import Him.Render.Theme
+import Him.Terminal.Ansi (packStyle)
 import Him.Selection
 import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
 import Him.View (View (..))
@@ -41,6 +42,10 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
     -- range is not shown as a one-character selection.
     shown = [(rangeStart r, rangeEnd r) | r <- ranges sel, edMode ed /= Insert || not (isCollapsed r)]
     secondaryHeads = [rangeHead r | r <- ranges sel, r /= prim]
+    -- Packed once per frame, not per cell.
+    textStyle = packStyle (themeText theme)
+    cursorStyle = packStyle (themeCursor theme)
+    selectionStyle = packStyle (themeSelection theme)
 
     drawRow f r
       | line >= lineCount buf = putText screenRow (rectCol rect) (themeTilde theme) "~" f
@@ -61,8 +66,8 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
         colOn (Pos l c) dflt = if l == line then c else dflt
         cursors = [c | Pos l c <- secondaryHeads, l == line]
         styleAt i
-          | i `elem` cursors = Just (themeCursor theme)
-          | any (\(a, b) -> a <= i && i <= b) spans = Just (themeSelection theme)
+          | i `elem` cursors = Just cursorStyle
+          | any (\(a, b) -> a <= i && i <= b) spans = Just selectionStyle
           | otherwise = Nothing
         -- The cells of the whole line from display column 0, then the part
         -- inside the horizontal scroll window.
@@ -70,13 +75,13 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
         -- wide or control characters), so no layout is needed.
         plain = T.all (\ch -> ch >= ' ' && ch < '\DEL') text
         lineCells
-          | plain = zipWith (\i ch -> Cell ch (fromMaybe (themeText theme) (styleAt i))) [0 ..] (T.unpack text) <> lineEndCell
+          | plain = zipWith (\i ch -> Cell ch (fromMaybe textStyle (styleAt i))) [0 ..] (T.unpack text) <> lineEndCell
           | otherwise = concatMap charCells (layoutLine text) <> lineEndCell
         visible
           | plain = take (rectWidth rect) (drop left lineCells)
           | otherwise = fixEdges (take (rectWidth rect) (drop left lineCells))
         charCells (i, _, w, c) =
-          let style = fromMaybe (themeText theme) (styleAt i)
+          let style = fromMaybe textStyle (styleAt i)
            in if isWide c
                 then [Cell c style, Cell continuation style]
                 else map (`Cell` style) (glyphs c w)

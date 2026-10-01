@@ -280,13 +280,30 @@ Implemented (defined in `Him.Config.Default`):
 
 ## 8. Where to pick up
 
-*Last session ended on 2026-10-01, after milestones 13–15 (memory, search, rendering).
-`docs/TUTORIAL.md` walks through how the whole editor is built.*
+*Last session ended on 2026-10-02, in the middle of the "on par with Helix" optimization
+pass. Strategies 14–20 are in the optimization log in `docs/BENCHMARK.md`.*
 
-- **Performance status** (see `docs/BENCHMARK.md`):
-  - **Ahead:** him leads in startup, memory, batched input and search throughput.
-  - **Close:** per-key latency is close to Helix and about 2× Vim's.
-  - **Behind:** opening a 14 MB file (about 50 ms vs. 22–35 ms).
+- **Status vs. Helix** (last full run, after strategy 18; 14 MB file):
+  - **Ahead:** startup 3.3 vs 23 ms, open 17 vs 23 ms, `scroll` 14 vs 652 ms,
+    `jump` 2.4 vs 116 ms, edit_save 9.9 vs 20 ms, `j` latency 1.1 vs 1.9 ms, typing
+    1.1 vs 1.6 ms, search far 10 vs 25 ms, search none 5.5 vs 47 ms, peak RSS everywhere.
+  - **Tied:** `n` 2.5 vs 2.5 ms (p95 3.4 vs 3.0).
+- **In progress:** strategies 19 (single-pass diff) and 20 (packed styles) are
+  committed and tested (173 tests), but the end-to-end benchmark was interrupted. Next:
+  1. `python3 bench/bench.py --runs 5 --scenarios search_next,latency`, then record the
+     effect in log entries 19/20.
+  2. If `n` still ties, profile the `n` path in the editor. The remaining cost is
+     render (0.6 ms) plus diff (about 1 ms) on a slow-clocked core. Ideas: skip the diff
+     for rows whose `RowKey` matches the old row at the same screen position; use a
+     cheaper row representation than `Seq Cell`.
+  3. Then do one full `bench.py` run, and add a dated results entry plus a short
+     tutorial section (part 7) for strategies 14–20.
+- **Requested next feature: an action layer.** Keys bind to *actions*, and actions are
+  features such as search. This prepares a config module that lets users rebind keys from
+  a file. Starting point: `Him.Command` (the named-command registry) and
+  `Him.Config.Default` (bindings as `(keys, name)` pairs) already separate keys from
+  behaviour. The action layer should group commands into user-facing actions, possibly
+  with arguments, and expose a stable naming scheme that a config parser can target.
 - **Next suggestions:**
   1. **Multiple selections** (`C`, `s`, `,`). `edit` must map positions across ranges
      (ADR-5b).

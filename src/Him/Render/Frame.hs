@@ -5,6 +5,7 @@ module Him.Render.Frame
   , Frame (..)
   , Rect (..)
   , continuation
+  , blankCell
   , RowKey (..)
   , ScrollInfo (..)
   , blankFrame
@@ -21,13 +22,17 @@ import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as T
-import Him.Terminal.Ansi (CursorShape (..), Style, defaultStyle)
+import Him.Terminal.Ansi (CursorShape (..), PackedStyle, Style, packStyle, packedDefault)
 
 data Cell = Cell
-  { cellChar :: !Char
-  , cellStyle :: !Style
+  { cellChar :: {-# UNPACK #-} !Char
+  , cellStyle :: {-# UNPACK #-} !PackedStyle
   }
   deriving stock (Eq, Show)
+
+-- | A space in the default style (what a cleared terminal shows).
+blankCell :: Cell
+blankCell = Cell ' ' packedDefault
 
 -- | The marker in the cell to the right of a wide character, which the
 -- terminal fills by itself; it is skipped when emitting output.
@@ -82,7 +87,7 @@ data Rect = Rect
 
 blankFrame :: Int -> Int -> Frame
 blankFrame rows cols =
-  Frame rows cols (Seq.replicate rows (Seq.replicate cols (Cell ' ' defaultStyle))) Nothing CursorBlock IntMap.empty Nothing
+  Frame rows cols (Seq.replicate rows (Seq.replicate cols blankCell)) Nothing CursorBlock IntMap.empty Nothing
 
 -- | Copy @width@ cells at column @col@ from row @srcRow@ of another frame
 -- (of the same size) to row @row@: one slice and one splice.
@@ -112,8 +117,8 @@ putCells row col cells f
 
 -- | Write text starting at @(row, col)@, clipped at the frame edge.
 putText :: Int -> Int -> Style -> Text -> Frame -> Frame
-putText row col style t = putCells row col (map (`Cell` style) (T.unpack t))
+putText row col style t = putCells row col (map (`Cell` packStyle style) (T.unpack t))
 
 fillRect :: Rect -> Style -> Frame -> Frame
 fillRect (Rect r c h w) style f =
-  foldl' (\acc row -> putCells row c (replicate w (Cell ' ' style)) acc) f [r .. r + h - 1]
+  foldl' (\acc row -> putCells row c (replicate w (Cell ' ' (packStyle style))) acc) f [r .. r + h - 1]
