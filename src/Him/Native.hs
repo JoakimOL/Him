@@ -46,16 +46,17 @@ countNewlines (Text (A.ByteArray arr) off len) =
   fromIntegral (c_countByte arr (fromIntegral off) (fromIntegral len) 10)
 
 -- | Start offsets (in bytes, relative to the text) of every line of a text,
--- followed by @length + 1@: @lines + 1@ entries for @countNewlines + 1@
--- lines.
-lineStarts :: Text -> Offsets
+-- followed by @length + 1@, and the number of lines (@newlines + 1@; the
+-- array has @lines + 1@ entries).
+lineStarts :: Text -> (Offsets, Int)
 lineStarts t@(Text (A.ByteArray arr) off len) = unsafeDupablePerformIO $ IO $ \s0 ->
-  let !(I# bytes) = 4 * (countNewlines t + 2)
+  let !newlines = countNewlines t
+      !(I# bytes) = 4 * (newlines + 2)
    in case newByteArray# bytes s0 of
         (# s1, mba #) -> case c_lineStarts arr (fromIntegral off) (fromIntegral len) mba of
           IO run -> case run s1 of
             (# s2, () #) -> case unsafeFreezeByteArray# mba s2 of
-              (# s3, ba #) -> (# s3, Offsets ba #)
+              (# s3, ba #) -> (# s3, (Offsets ba, newlines + 1) #)
 
 -- | Byte offset of the first occurrence of a needle in a text. With
 -- @fold@, the needle must be lower-case and ASCII letters match either case.

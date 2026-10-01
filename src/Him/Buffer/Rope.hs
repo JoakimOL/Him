@@ -31,7 +31,6 @@ module Him.Buffer.Rope
   ) where
 
 import Data.Text (Text)
-import Data.Text qualified as T
 import Data.Text.Array qualified as A
 import Data.Text.Internal (Text (..))
 import Data.Text.Unsafe (dropWord8, takeWord8)
@@ -50,7 +49,9 @@ data Block = Block
 
 -- | All lines of a text (split on @\\n@) as one block; nothing is copied.
 blockFromText :: Bool -> Text -> Block
-blockFromText cr t = Block t (lineStarts t) 0 (T.count "\n" t + 1) cr
+blockFromText cr t = Block t starts 0 count cr
+  where
+    (starts, count) = lineStarts t
 
 blockLines :: Block -> Int
 blockLines = blkCount
