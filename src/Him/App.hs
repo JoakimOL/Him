@@ -5,7 +5,7 @@ module Him.App
   , handleEvent
   ) where
 
-import Control.Concurrent (Chan, newChan, readChan, writeChan)
+import Control.Concurrent.STM (TChan, atomically, newTChanIO, readTChan, tryReadTChan, writeTChan)
 import Control.Exception (SomeException, try)
 import Control.Monad (unless, when)
 import Control.Monad.Trans.State.Strict (execStateT, get, gets, modify')
@@ -45,13 +45,19 @@ run file = do
     Just path -> loadDocument path >>= either (die . T.unpack) pure
   logMsg ("starting, file = " <> show file)
   withRawTerminal $ do
-    events <- newChan
+    events <- newTChanIO
     size <- fromMaybe (24, 80) <$> getWindowSize
-    onResize (writeChan events . uncurry EvResize)
+    onResize (atomically . writeTChan events . uncurry EvResize)
     startInputReader events
     eventLoop config events (newEditor size doc)
 
-eventLoop :: Config -> Chan Event -> Editor -> IO ()
+-- | Most events that can be handled before one render. Typeahead (a paste,
+-- key repeat, a fast typist) is handled first and drawn once, the way Vim
+-- does. The limit keeps the screen updating during a very long burst.
+maxBatch :: Int
+maxBatch = 512
+
+eventLoop :: Config -> TChan Event -> Editor -> IO ()
 eventLoop config events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
@@ -59,16 +65,29 @@ eventLoop config events = go Nothing
       let ed = ensureCursorVisible ed0
           frame = render defaultTheme ed
       writeOutput (diffFrames prev frame)
-      ev <- readChan events
+      next <- atomically (readTChan events) >>= batch maxBatch ed
+      unless (edQuit next) (go (Just frame) next)
+
+    -- Handle an event, then whatever else is already queued.
+    batch :: Int -> Editor -> Event -> IO Editor
+    batch n ed ev = do
+      ed' <- step ed ev
+      if edQuit ed' || n <= 1
+        then pure ed'
+        else
+          atomically (tryReadTChan events) >>= \case
+            Nothing -> pure ed'
+            Just ev' -> batch (n - 1) (ensureCursorVisible ed') ev'
+
+    step :: Editor -> Event -> IO Editor
+    step ed ev =
       -- A bug in a command should not take the editor (and unsaved work)
       -- down with it.
-      next <-
-        try (execStateT (handleEvent config ev) ed) >>= \case
-          Right ed' -> pure ed'
-          Left e -> do
-            logMsg ("command failed: " <> show (e :: SomeException))
-            execStateT (failWith ("internal error: " <> T.pack (show e))) ed
-      unless (edQuit next) (go (Just frame) next)
+      try (execStateT (handleEvent config ev) ed) >>= \case
+        Right ed' -> pure ed'
+        Left e -> do
+          logMsg ("command failed: " <> show (e :: SomeException))
+          execStateT (failWith ("internal error: " <> T.pack (show e))) ed
 
 handleEvent :: Config -> Event -> Command.EditorM ()
 handleEvent _ (EvResize rows cols) = modify' (\e -> e {edSize = (rows, cols)})

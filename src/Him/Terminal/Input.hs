@@ -8,7 +8,8 @@ module Him.Terminal.Input
   , escapeTimeoutMicros
   ) where
 
-import Control.Concurrent (Chan, forkIO, threadWaitRead, writeChan)
+import Control.Concurrent (forkIO, threadWaitRead)
+import Control.Concurrent.STM (TChan, atomically, writeTChan)
 import Control.Monad (unless, void)
 import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
@@ -30,8 +31,10 @@ import System.Timeout (timeout)
 escapeTimeoutMicros :: Int
 escapeTimeoutMicros = 30000
 
--- | Read stdin forever on a background thread, sending 'EvKey' events.
-startInputReader :: Chan Event -> IO ()
+-- | Read stdin forever on a background thread, sending 'EvKey' events. All
+-- keys decoded from one read are queued at once, so the main loop can
+-- handle a burst before rendering.
+startInputReader :: TChan Event -> IO ()
 startInputReader chan = void (forkIO (loop B.empty))
   where
     loop pending = do
@@ -45,12 +48,13 @@ startInputReader chan = void (forkIO (loop B.empty))
           bytes <- fdRead stdInput 4096
           unless (B.null bytes) $ do
             let (keys, rest) = decodeKeys False (pending <> bytes)
-            mapM_ (writeChan chan . EvKey) keys
+            send keys
             loop rest
         else do
           let (keys, _) = decodeKeys True pending
-          mapM_ (writeChan chan . EvKey) keys
+          send keys
           loop B.empty
+    send keys = atomically (mapM_ (writeTChan chan . EvKey) keys)
 
 data Step
   = -- | A key, and the remaining input.
