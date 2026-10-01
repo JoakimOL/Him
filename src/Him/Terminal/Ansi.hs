@@ -5,6 +5,10 @@ module Him.Terminal.Ansi
   ( moveCursor
   , clearScreen
   , clearToEndOfLine
+  , setScrollRegion
+  , resetScrollRegion
+  , scrollUp
+  , scrollDown
   , hideCursor
   , showCursor
   , CursorShape (..)
@@ -29,6 +33,20 @@ clearScreen = csi <> "2J"
 
 clearToEndOfLine :: Builder
 clearToEndOfLine = csi <> "K"
+
+-- | DECSTBM: scrolling affects rows @[top, top + height)@ only (0-based).
+setScrollRegion :: Int -> Int -> Builder
+setScrollRegion top height = csi <> intDec (top + 1) <> ";" <> intDec (top + height) <> "r"
+
+-- | Back to the whole screen (this also moves the cursor home).
+resetScrollRegion :: Builder
+resetScrollRegion = csi <> "r"
+
+-- | SU / SD: move the scroll region's contents up / down by n rows; the rows
+-- that come in are blank.
+scrollUp, scrollDown :: Int -> Builder
+scrollUp n = csi <> intDec n <> "S"
+scrollDown n = csi <> intDec n <> "T"
 
 hideCursor :: Builder
 hideCursor = csi <> "?25l"

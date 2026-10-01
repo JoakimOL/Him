@@ -5,13 +5,18 @@ module Him.Render.Frame
   , Frame (..)
   , Rect (..)
   , continuation
+  , RowKey (..)
+  , ScrollInfo (..)
   , blankFrame
+  , copyCells
   , putCell
   , putCells
   , putText
   , fillRect
   ) where
 
+import Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict qualified as IntMap
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
@@ -29,6 +34,30 @@ data Cell = Cell
 continuation :: Char
 continuation = '\0'
 
+-- | What a text-area row was drawn from (see "Him.Render.TextArea"). Equal
+-- keys give equal cells, so the next frame can copy the row instead of
+-- drawing it again.
+data RowKey = RowKey
+  { rkLine :: !Int
+  , rkText :: !Text
+  , rkSpans :: ![(Int, Int)]
+  , rkCursors :: ![Int]
+  , rkLeft :: !Int
+  , rkCol :: !Int
+  , rkWidth :: !Int
+  }
+  deriving stock (Eq, Show)
+
+-- | The rows that scroll together with the view (text area and gutter),
+-- and the view's first line. Two frames with the same region but different
+-- tops can be turned into each other by scrolling the terminal.
+data ScrollInfo = ScrollInfo
+  { siRow :: !Int
+  , siHeight :: !Int
+  , siTop :: !Int
+  }
+  deriving stock (Eq, Show)
+
 data Frame = Frame
   { frameRows :: !Int
   , frameCols :: !Int
@@ -36,6 +65,9 @@ data Frame = Frame
   , frameCursor :: !(Maybe (Int, Int))
   -- ^ Where the terminal cursor goes, as @(row, col)@; hidden if 'Nothing'.
   , frameCursorShape :: !CursorShape
+  , frameRowKeys :: !(IntMap RowKey)
+  -- ^ Keys of the text-area rows, by screen row.
+  , frameScroll :: !(Maybe ScrollInfo)
   }
   deriving stock (Eq, Show)
 
@@ -50,7 +82,16 @@ data Rect = Rect
 
 blankFrame :: Int -> Int -> Frame
 blankFrame rows cols =
-  Frame rows cols (Seq.replicate rows (Seq.replicate cols (Cell ' ' defaultStyle))) Nothing CursorBlock
+  Frame rows cols (Seq.replicate rows (Seq.replicate cols (Cell ' ' defaultStyle))) Nothing CursorBlock IntMap.empty Nothing
+
+-- | Copy @width@ cells at column @col@ from row @srcRow@ of another frame
+-- (of the same size) to row @row@: one slice and one splice.
+copyCells :: Int -> Int -> Int -> Int -> Frame -> Frame -> Frame
+copyCells srcRow row col width from f = case Seq.lookup srcRow (frameCells from) of
+  Nothing -> f
+  Just src ->
+    let piece = Seq.take width (Seq.drop col src)
+     in f {frameCells = Seq.adjust' (\r -> Seq.take col r <> piece <> Seq.drop (col + Seq.length piece) r) row (frameCells f)}
 
 -- | Set one cell; out-of-bounds writes are ignored.
 putCell :: Int -> Int -> Cell -> Frame -> Frame

@@ -5,6 +5,7 @@ module Him.Render.TextArea
   , cursorDisplayCol
   ) where
 
+import Data.IntMap.Strict qualified as IntMap
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Him.Buffer (lineAt, lineCount)
@@ -18,9 +19,19 @@ import Him.Selection
 import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
 import Him.View (View (..))
 
-drawTextArea :: Theme -> Editor -> Rect -> Frame -> Frame
-drawTextArea theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 1]
+-- | Draws the visible lines. Rows whose 'RowKey' is the same as in the
+-- previous frame are copied from it instead of being laid out again.
+drawTextArea :: Theme -> Maybe Frame -> Editor -> Rect -> Frame -> Frame
+drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 1]
   where
+    prevFrame = case prev of
+      Just p | frameRows p == frameRows frame0 && frameCols p == frameCols frame0 -> Just p
+      _ -> Nothing
+    -- Where a line was on the previous screen: rows are reused by line, so
+    -- scrolling does not invalidate them.
+    prevRowOf screenRow = case prevFrame >>= frameScroll of
+      Just si -> screenRow + (top - siTop si)
+      Nothing -> screenRow
     doc = edDoc ed
     buf = docBuffer doc
     View top left = edView ed
@@ -33,8 +44,13 @@ drawTextArea theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect 
 
     drawRow f r
       | line >= lineCount buf = putText screenRow (rectCol rect) (themeTilde theme) "~" f
-      | otherwise = putCells screenRow (rectCol rect) visible f
+      | Just p <- prevFrame
+      , IntMap.lookup (prevRowOf screenRow) (frameRowKeys p) == Just key =
+          remember (copyCells (prevRowOf screenRow) screenRow (rectCol rect) (rectWidth rect) p f)
+      | otherwise = remember (putCells screenRow (rectCol rect) visible f)
       where
+        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect)
+        remember fr = fr {frameRowKeys = IntMap.insert screenRow key (frameRowKeys fr)}
         line = top + r
         screenRow = rectRow rect + r
         text = lineAt line buf
@@ -50,8 +66,15 @@ drawTextArea theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect 
           | otherwise = Nothing
         -- The cells of the whole line from display column 0, then the part
         -- inside the horizontal scroll window.
-        lineCells = concatMap charCells (layoutLine text) <> lineEndCell
-        visible = fixEdges (take (rectWidth rect) (drop left lineCells))
+        -- Fast path: printable ASCII is one cell per character (no tabs,
+        -- wide or control characters), so no layout is needed.
+        plain = T.all (\ch -> ch >= ' ' && ch < '\DEL') text
+        lineCells
+          | plain = zipWith (\i ch -> Cell ch (fromMaybe (themeText theme) (styleAt i))) [0 ..] (T.unpack text) <> lineEndCell
+          | otherwise = concatMap charCells (layoutLine text) <> lineEndCell
+        visible
+          | plain = take (rectWidth rect) (drop left lineCells)
+          | otherwise = fixEdges (take (rectWidth rect) (drop left lineCells))
         charCells (i, _, w, c) =
           let style = fromMaybe (themeText theme) (styleAt i)
            in if isWide c

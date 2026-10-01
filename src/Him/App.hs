@@ -64,7 +64,7 @@ eventLoop config events = go Nothing
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
       let ed = ensureCursorVisible (refreshSearchPreview ed0)
-          frame = render defaultTheme ed
+          frame = render defaultTheme prev ed
       writeOutput (diffFrames prev frame)
       next <- atomically (readTChan events) >>= batch maxBatch ed
       unless (edQuit next) (go (Just frame) next)

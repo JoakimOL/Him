@@ -35,7 +35,7 @@ import Him.Terminal.Input (decodeKeys)
 import Him.View (View (..), scrollToCursor)
 import Him.TextWidth (charIndexAtCol, charWidth, displayCol, glyphs, isWide)
 import Him.Render (render)
-import Him.Render.Frame (Cell (..), Frame (..), continuation)
+import Him.Render.Frame (Cell (..), Frame (..), ScrollInfo (..), continuation)
 import Him.Render.Theme (defaultTheme)
 import Data.Foldable (toList)
 import Data.Sequence qualified as Seq
@@ -395,14 +395,21 @@ renderTests =
   , test "wide chars use a continuation cell" $
       assertEqual [Just '漢', Just continuation, Just 'x'] (map (cellAt (frameOf "漢x") 0) [4, 5, 6])
   , test "control chars are drawn as ^X" (assertEqual "^[x" (T.take 3 (T.drop 4 (rowText (frameOf "\ESCx") 0))))
+  , test "rendering with the previous frame gives the same frame" $
+      let base = start "hello\nworld\nthird line"
+          eds = [base, base {edMode = Insert}, base {edDoc = (edDoc base) {docSelection = single (Range (Pos 0 1) (Pos 1 2) Nothing)}}, base]
+          withPrev = go Nothing eds
+          go _ [] = []
+          go p (e : es) = let f = render defaultTheme p e in f : go (Just f) es
+       in assertEqual (map (frameCells . render defaultTheme Nothing) eds) (map frameCells withPrev)
   , test "long file names are shortened" $
       let ed = (start "") {edSize = (5, 30), edDoc = (newDocument (Just (replicate 60 'p' <> "/name.txt")) B.empty) {docDirty = True}}
-          status = rowText (render defaultTheme ed) 3
+          status = rowText (render defaultTheme Nothing ed) 3
        in assertEqual (True, True) ("[+]" `T.isInfixOf` status, "name.txt" `T.isInfixOf` status)
   ]
   where
     start t = newEditor (5, 40) (newDocument Nothing (buf t))
-    frameOf t = render defaultTheme (start t)
+    frameOf t = render defaultTheme Nothing (start t)
     rowText f r = T.pack [c | Cell c _ <- maybe [] toList (lookupRow f r)]
     lookupRow f r = case drop r (toList (frameCells f)) of
       (row : _) -> Just row
@@ -434,7 +441,7 @@ loadingTests = do
 randomDiffs :: Int -> Either String ()
 randomDiffs n = go n (randoms 5) Nothing emptyScreen
   where
-    rows = 4
+    rows = 5
     cols = 12
     styles = [defaultStyle, defaultStyle {styleReverse = True}, defaultStyle {styleFg = Indexed 240}]
     chars = "ab  漢x" :: String
@@ -448,15 +455,21 @@ randomDiffs n = go n (randoms 5) Nothing emptyScreen
        in if screen' == expected
             then go (k - 1) rs' (Just frame) screen'
             else Left ("mismatch at step " <> show (n - k) <> ": " <> show out)
-    randomFrame rs0 = let (f, rs') = foldl addText (blankFrame rows cols, rs0) [0 .. 5 :: Int] in (sanitize f, rs')
+    -- Random text, and a random view position for rows 0-3 (so the diff
+    -- sometimes scrolls the terminal).
+    randomFrame rs0 =
+      let (f, rs1) = foldl addText (blankFrame rows cols, rs0) [0 .. 5 :: Int]
+          (r, rs2) = case rs1 of
+            (x : xs) -> (x, xs)
+            [] -> (0, [])
+       in ((sanitize f) {frameScroll = Just (ScrollInfo 0 4 (r `mod` 6))}, rs2)
       where
         addText (f, r1 : r2 : r3 : r4 : rest) _ =
           let t = T.pack [chars !! (x `mod` length chars) | x <- take (r3 `mod` 6) rest]
               st = styles !! (r4 `mod` length styles)
               cells = concat [if isWide c then [Cell c st, Cell continuation st] else [Cell c st] | c <- T.unpack t]
-           in (putCells (r1 `mod` rows) (r2 `mod` cols) (fixWide cells) f, drop 6 rest)
+           in (putCells (r1 `mod` rows) (r2 `mod` cols) cells f, drop 6 rest)
         addText acc _ = acc
-    fixWide cells = cells
     -- Frames from the renderer never contain half a wide character; make
     -- the random ones valid the same way.
     sanitize f = f {frameCells = fmap (Seq.fromList . fixRow . toList) (frameCells f)}
@@ -468,23 +481,40 @@ randomDiffs n = go n (randoms 5) Nothing emptyScreen
     fixRow (c : rest) = c : fixRow rest
     fixRow [] = []
     sgrText st = TE.decodeUtf8 (BL.toStrict (toLazyByteString (sgr st)))
-    -- The terminal model: cursor, current SGR, a grid of (char, SGR).
-    replay str scr = run str (0 :: Int, 0 :: Int) (sgrText defaultStyle) scr
-    run [] _ _ scr = scr
-    run ('\ESC' : '[' : rest) cur cs scr =
+    -- The terminal model: cursor, current SGR, scroll region, and a grid of
+    -- (char, SGR).
+    replay str scr = run str (0 :: Int, 0 :: Int) (sgrText defaultStyle) (0, rows - 1) scr
+    run [] _ _ _ scr = scr
+    run ('\ESC' : '[' : rest) cur cs region scr =
       let (params, rest1) = span (\c -> c >= '0' && c <= '?') rest
           (inter, rest2) = span (\c -> c >= ' ' && c <= '/') rest1
+          blankRow = [(' ', cs) | _ <- [1 .. cols]]
+          (rt, rb) = region
        in case rest2 of
             (final : rest3) -> case final of
-              'H' -> let (r, c) = break (== ';') params in run rest3 (read r - 1, read (drop 1 c) - 1) cs scr
-              'm' -> run rest3 cur (T.pack ("\ESC[" <> params <> inter <> "m")) scr
-              'K' -> let (r, c) = cur in run rest3 cur cs (setRow r [(c', (' ', cs)) | c' <- [c .. cols - 1]] scr)
-              'J' -> run rest3 cur cs [[(' ', cs) | _ <- [1 .. cols]] | _ <- [1 .. rows]]
-              _ -> run rest3 cur cs scr
+              'H' -> let (r, c) = break (== ';') params in run rest3 (read r - 1, read (drop 1 c) - 1) cs region scr
+              'm' -> run rest3 cur cs' region scr where cs' = T.pack ("\ESC[" <> params <> inter <> "m")
+              'K' -> let (r, c) = cur in run rest3 cur cs region (setRow r [(c', (' ', cs)) | c' <- [c .. cols - 1]] scr)
+              'J' -> run rest3 cur cs region [blankRow | _ <- [1 .. rows]]
+              'r' -> case break (== ';') params of
+                ("", _) -> run rest3 (0, 0) cs (0, rows - 1) scr
+                (a, b) -> run rest3 (0, 0) cs (read a - 1, read (drop 1 b) - 1) scr
+              'S' -> run rest3 cur cs region (scrollRows (read params) rt rb blankRow scr)
+              'T' -> run rest3 cur cs region (scrollRows (negate (read params)) rt rb blankRow scr)
+              _ -> run rest3 cur cs region scr
             [] -> scr
-    run (ch : rest) (r, c) cs scr
-      | isWide ch = run rest (r, c + 2) cs (setRow r [(c, (ch, cs)), (c + 1, (continuation, cs))] scr)
-      | otherwise = run rest (r, c + 1) cs (setRow r [(c, (ch, cs))] scr)
+    run (ch : rest) (r, c) cs region scr
+      | isWide ch = run rest (r, c + 2) cs region (setRow r [(c, (ch, cs)), (c + 1, (continuation, cs))] scr)
+      | otherwise = run rest (r, c + 1) cs region (setRow r [(c, (ch, cs))] scr)
+    -- Positive: contents move up.
+    scrollRows d rt rb blankRow scr =
+      [ if i < rt || i > rb
+          then row
+          else case i + d of
+            j | j >= rt && j <= rb -> scr !! j
+            _ -> blankRow
+      | (i, row) <- zip [0 ..] scr
+      ]
     setRow r updates scr =
       [ if i == r then [maybe old id (lookup j updates) | (j, old) <- zip [0 ..] row] else row
       | (i, row) <- zip [0 ..] scr

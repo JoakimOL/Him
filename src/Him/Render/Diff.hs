@@ -10,6 +10,7 @@ module Him.Render.Diff
 
 import Data.ByteString.Builder (Builder, charUtf8)
 import Data.Foldable (toList)
+import Data.Sequence (Seq)
 
 import Data.Sequence qualified as Seq
 import Him.Render.Frame
@@ -17,6 +18,11 @@ import Him.Terminal.Ansi
 
 -- | Output that turns the previous frame into the new one. Without a
 -- previous frame, or if the size changed, the whole screen is redrawn.
+--
+-- When the view scrolled by less than a screen, the terminal is told to
+-- scroll the text area first ('scrollRegion'), and the new frame is compared
+-- with the shifted old one: only the lines that came into view (and cells
+-- that really changed) are written.
 diffFrames :: Maybe Frame -> Frame -> Builder
 diffFrames prev new = hideCursor <> body <> sgr defaultStyle <> cursor
   where
@@ -25,17 +31,44 @@ diffFrames prev new = hideCursor <> body <> sgr defaultStyle <> cursor
     body = case prev of
       Just p
         | sameSize p ->
-            foldMap
-              ( \(i, row) -> case Seq.lookup i (frameCells p) of
-                  Just old | old == row -> mempty
-                  Just old -> drawChanges i (toList old) (toList row)
-                  Nothing -> drawRow i (toList row)
-              )
-              rows
+            let (scrollOut, old) = scrollRegion p new
+             in scrollOut
+                  <> foldMap
+                    ( \(i, row) -> case Seq.lookup i old of
+                        Just o | o == row -> mempty
+                        Just o -> drawChanges i (toList o) (toList row)
+                        Nothing -> drawRow i (toList row)
+                    )
+                    rows
       _ -> clearScreen <> foldMap (\(i, row) -> drawRow i (toList row)) rows
     cursor = case frameCursor new of
       Just (r, c) -> moveCursor r c <> cursorShape (frameCursorShape new) <> showCursor
       Nothing -> mempty
+
+-- | If both frames scroll the same region and the view moved by less than
+-- its height, the output that scrolls the terminal, and the old rows as they
+-- are on screen afterwards.
+scrollRegion :: Frame -> Frame -> (Builder, Seq (Seq Cell))
+scrollRegion p new = case (frameScroll p, frameScroll new) of
+  (Just a, Just b)
+    | siRow a == siRow b && siHeight a == siHeight b && d /= 0 && abs d < siHeight b ->
+        ( sgr defaultStyle
+            <> setScrollRegion (siRow b) (siHeight b)
+            <> (if d > 0 then scrollUp d else scrollDown (negate d))
+            <> resetScrollRegion
+        , shifted
+        )
+    where
+      d = siTop b - siTop a
+      blank = Seq.replicate (frameCols p) (Cell ' ' defaultStyle)
+      old = frameCells p
+      shifted = Seq.mapWithIndex shiftRow old
+      shiftRow i row
+        | i < siRow b || i >= siRow b + siHeight b = row
+        | otherwise = case i + d of
+            j | j >= siRow b && j < siRow b + siHeight b -> Seq.index old j
+            _ -> blank
+  _ -> (mempty, frameCells p)
 
 -- | A whole row (after a clear screen, so trailing blanks can be skipped).
 drawRow :: Int -> [Cell] -> Builder

@@ -22,7 +22,7 @@ import Him.Render.TextArea
 import Him.Render.Theme
 import Him.Selection (primary, rangeHead)
 import Him.Terminal.Ansi (CursorShape (..))
-import Him.View (scrollToCursor)
+import Him.View (View (..), scrollToCursor)
 
 data Layout = Layout
   { layoutGutter :: Rect
@@ -55,16 +55,20 @@ ensureCursorVisible ed = ed {edView = scrollToCursor (rectHeight r, rectWidth r)
     r = layoutText (layout ed)
     cursor = (posLine (rangeHead (primary (docSelection (edDoc ed)))), cursorDisplayCol ed)
 
-render :: Theme -> Editor -> Frame
-render theme ed =
-  frame {frameCursor = cursor, frameCursorShape = shape}
+-- | Render the editor. The previous frame, if given, lets unchanged rows be
+-- reused (see "Him.Render.TextArea").
+render :: Theme -> Maybe Frame -> Editor -> Frame
+render theme prev ed =
+  frame {frameCursor = cursor, frameCursorShape = shape, frameScroll = Just scroll}
   where
     (rows, cols) = edSize ed
     Layout gutterR textR statusR cmdR = layout ed
+    -- Gutter and text area are full-width rows that move with the view.
+    scroll = ScrollInfo (rectRow textR) (rectHeight textR) (viewTop (edView ed))
     frame =
       drawCommandLine theme ed cmdR
         . drawStatusLine theme ed statusR
-        . drawTextArea theme ed textR
+        . drawTextArea theme prev ed textR
         . drawGutter theme ed gutterR
         $ blankFrame rows cols
     cursor = case edMode ed of
