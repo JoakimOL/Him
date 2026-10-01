@@ -9,6 +9,7 @@ module Him.Native
   ( Offsets
   , offsetAt
   , lineStarts
+  , lineStartsWith
   , countNewlines
   , findForward
   , findBackward
@@ -49,14 +50,17 @@ countNewlines (Text (A.ByteArray arr) off len) =
 -- followed by @length + 1@, and the number of lines (@newlines + 1@; the
 -- array has @lines + 1@ entries).
 lineStarts :: Text -> (Offsets, Int)
-lineStarts t@(Text (A.ByteArray arr) off len) = unsafeDupablePerformIO $ IO $ \s0 ->
-  let !newlines = countNewlines t
-      !(I# bytes) = 4 * (newlines + 2)
+lineStarts t = let n = countNewlines t in (lineStartsWith n t, n + 1)
+
+-- | 'lineStarts' when the number of newlines is already known.
+lineStartsWith :: Int -> Text -> Offsets
+lineStartsWith newlines (Text (A.ByteArray arr) off len) = unsafeDupablePerformIO $ IO $ \s0 ->
+  let !(I# bytes) = 4 * (newlines + 2)
    in case newByteArray# bytes s0 of
         (# s1, mba #) -> case c_lineStarts arr (fromIntegral off) (fromIntegral len) mba of
           IO run -> case run s1 of
             (# s2, () #) -> case unsafeFreezeByteArray# mba s2 of
-              (# s3, ba #) -> (# s3, (Offsets ba, newlines + 1) #)
+              (# s3, ba #) -> (# s3, Offsets ba #)
 
 -- | Byte offset of the first occurrence of a needle in a text. With
 -- @fold@, the needle must be lower-case and ASCII letters match either case.

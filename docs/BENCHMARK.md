@@ -201,6 +201,30 @@ What's left, by impact:
 At the baseline, him rendered after every key, and frames were built one cell at a time
 with `Seq.update`.
 
+## Optimization log
+
+One entry per strategy: what was measured, what was changed, the effect. Newest last.
+Measurements are on the 14 MB / 200,000-line benchmark file.
+
+| # | Strategy | Measured before | Change | Effect |
+|---|---|---|---|---|
+| 1 | Batch typeahead | 2000 × `j` rendered 2000 frames | Handle all queued events, render once (`TChan`, ≤ 512) | 2000 × `j`: 2809 → 26 ms |
+| 2 | Row-level frame writes | 4,800 `Seq.update`s per frame | `putCells`: one splice per row | render 1.43 → 0.75 ms |
+| 3 | Profile-guided fixes | `isWide` 19%, selection checks 15% | ASCII fast path + `IntMap`; per-line selection spans | render 0.75 → 0.54 ms |
+| 4 | Streaming save | Save built 2 whole-file copies (28 MB) | `Builder` straight to the handle | edit_save peak RSS −30 MB |
+| 5 | Reused read buffer | Garbage chunks + decoder state | `hGetBuf` into one buffer, decode the complete UTF-8 prefix | fewer transient chunks |
+| 6 | Slices, not `T.breakOnEnd` | 28 MB of arrays for 14 MB of text | `dropWhileEnd`/`takeWhileEnd` (slices) | max live 21 → 15 MB |
+| 7 | Rope of blocks | ~50 B of heap objects per line | Blocks with `Word32` line starts in a balanced tree | live 24 → 15 MB |
+| 8 | Non-moving GC | in use ≈ 2–3 × live | `-with-rtsopts=-xn` | open RSS 40 → 25 MB |
+| 9 | Block-level C search | — | `memmem`; rarest-byte anchor + SSE2 for smart case | far search 1.4 ms, no match 0.6 ms (in-process) |
+| 10 | Cell-level diff + `EL` | 5.7 KB per `n` (Vim: 0.7 KB) | Write changed cell runs only | 5.7 → 2 KB per full jump |
+| 11 | Row reuse by line | A no-op key cost ~2.7 ms | `RowKey` memo, looked up by line | typing latency 2.4 → 1.1 ms |
+| 12 | Terminal scrolling | Scrolling rewrote 38 rows | `DECSTBM` + `SU`/`SD`, diff against the shifted frame | `j` latency 2.7 → 1.2 ms |
+| 13 | ASCII row fast path | Full redraw 0.62 ms | Printable-ASCII lines skip `layoutLine` | full redraw 0.62 → 0.24 ms |
+| 14 | No `T.count` per block | `loadDocument` 25 ms, of which counting lines with `T.count "\n"` (a generic substring search) was most | Line count comes from the C newline scan that builds the offsets | `loadDocument` 25 → 5.4 ms; open_large first paint 51 → 26 ms |
+| 15 | SIMD newline scan, lazy offsets | Counting newlines 1.7 ms (one `memchr` call per newline); every block's offsets were built before the first paint | SSE2 count (byte counters summed with `_mm_sad_epu8`) and a movemask fill; `blkStarts` is lazy, so only blocks that are shown or searched are indexed | count 1.7 → 0.5 ms; `loadDocument` 5.4 → 3 ms |
+| 16 | Zero-copy load | Read 14 MB into a buffer, then decode = copy into a `Text` | Regular files are read straight into one pinned array of the file's size; if `isValidUtf8ByteArray` (0.3 ms) accepts it, that array *is* the `Text`. Invalid UTF-8 and pipes (size unknown, `hFileSize` = 0) use the lenient/chunked paths | open_large first paint 26 → 15 ms (Helix 22); peak RSS 24 → 22.6 MB |
+
 ## Profiling him
 
 GHC ships profiling libraries, so this needs no downloads. Use a separate work

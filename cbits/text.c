@@ -7,38 +7,61 @@
  * takes (array, offset, length) so Haskell can pass a Text's internals
  * directly (unsafe FFI: the GC cannot move the array during the call). */
 
-/* Number of occurrences of byte b. */
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
+
+/* Number of occurrences of byte b. With SSE2: compare 16 bytes at a time
+ * and add the 0/-1 results into byte counters, summed every 255 rounds
+ * (before they can overflow) with _mm_sad_epu8. No call per occurrence. */
 size_t him_count_byte(const uint8_t *arr, size_t off, size_t len, uint8_t b)
 {
     const uint8_t *p = arr + off, *end = p + len;
     size_t n = 0;
-    while ((p = memchr(p, b, end - p)) != NULL) {
-        n++;
-        p++;
+#ifdef __SSE2__
+    const __m128i vb = _mm_set1_epi8((char)b), zero = _mm_setzero_si128();
+    while ((size_t)(end - p) >= 16) {
+        size_t rounds = (size_t)(end - p) / 16;
+        if (rounds > 255)
+            rounds = 255;
+        __m128i acc = zero;
+        for (size_t i = 0; i < rounds; i++, p += 16)
+            acc = _mm_sub_epi8(acc, _mm_cmpeq_epi8(_mm_loadu_si128((const __m128i *)p), vb));
+        __m128i sums = _mm_sad_epu8(acc, zero);
+        n += (size_t)_mm_cvtsi128_si32(sums) + (size_t)_mm_cvtsi128_si32(_mm_srli_si128(sums, 8));
     }
+#endif
+    for (; p < end; p++)
+        n += (*p == b);
     return n;
 }
 
 /* Line start offsets: out[0] = 0, out[k] = (position of the k-th '\n') + 1,
- * and a final entry len + 1, as if the region ended with a newline. */
+ * and a final entry len + 1, as if the region ended with a newline. With
+ * SSE2 the newlines of 16 bytes come out of one movemask. */
 void him_line_starts(const uint8_t *arr, size_t off, size_t len, uint32_t *out)
 {
     const uint8_t *start = arr + off, *p = start, *end = start + len;
     size_t k = 0;
     out[k++] = 0;
-    while ((p = memchr(p, '\n', end - p)) != NULL) {
-        p++;
-        out[k++] = (uint32_t)(p - start);
+#ifdef __SSE2__
+    const __m128i nl = _mm_set1_epi8('\n');
+    for (; (size_t)(end - p) >= 16; p += 16) {
+        unsigned m = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128((const __m128i *)p), nl));
+        while (m) {
+            out[k++] = (uint32_t)(p - start) + (uint32_t)__builtin_ctz(m) + 1;
+            m &= m - 1;
+        }
     }
+#endif
+    for (; p < end; p++)
+        if (*p == '\n')
+            out[k++] = (uint32_t)(p - start) + 1;
     out[k] = (uint32_t)(len + 1);
 }
 
 static inline uint8_t lower(uint8_t c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
 static inline uint8_t upper(uint8_t c) { return (c >= 'a' && c <= 'z') ? c - 32 : c; }
-
-#ifdef __SSE2__
-#include <emmintrin.h>
-#endif
 
 /* First byte in [p, end) equal to a or b. With a == b this is memchr (which
  * glibc vectorises well); otherwise compare 16 bytes at a time with SSE2. */

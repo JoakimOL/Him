@@ -19,7 +19,7 @@ import Him.Ex (parseExLine)
 import Him.Search (Direction (..), Match (..), compileNeedle, findMatch)
 import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
-import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument)
+import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked)
 import Data.Text.Encoding qualified as TE
 import System.Directory (getTemporaryDirectory, removeFile)
 import Him.Key
@@ -426,14 +426,25 @@ loadingTests = do
   let path = dir <> "/him-test-load.txt"
       line i = T.pack (show i) <> " æøå 漢字 😀 lorem ipsum\r\n"
       bytes = TE.encodeUtf8 (T.concat (map line [1 .. 60000 :: Int]) <> "tail")
+      summary d = (B.toLines (docBuffer d), docLineEnding d, docTrailingNewline d)
+      expected = summary (decodeDocument (Just path) bytes)
   BS.writeFile path bytes
   loaded <- loadDocument path
+  -- Invalid UTF-8 takes the lenient decoding fallback.
+  let invalid = "ok\n\255\254 bad\r\nend" :: ByteString
+  BS.writeFile path invalid
+  loadedInvalid <- loadDocument path
   removeFile path
-  let expected = decodeDocument (Just path) bytes
+  -- What pipes get (no known size): chunked reads, with characters and
+  -- lines straddling the 1 MB chunks.
+  BS.writeFile path bytes
+  loadedChunked <- loadDocumentChunked path
+  removeFile path
   pure
-    [ test "large file loads like an in-memory decode" $
-        assertEqual (Right (B.toLines (docBuffer expected), docLineEnding expected, docTrailingNewline expected))
-          ((\d -> (B.toLines (docBuffer d), docLineEnding d, docTrailingNewline d)) <$> loaded)
+    [ test "large file loads like an in-memory decode" (assertEqual (Right expected) (summary <$> loaded))
+    , test "invalid UTF-8 loads like a lenient decode" $
+        assertEqual (Right (summary (decodeDocument (Just path) invalid))) (summary <$> loadedInvalid)
+    , test "chunked reads (pipes) load the same" (assertEqual (Right expected) (summary <$> loadedChunked))
     ]
 
 -- | Replays diff output on a minimal terminal model and checks that the

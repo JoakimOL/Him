@@ -34,14 +34,17 @@ import Data.Text (Text)
 import Data.Text.Array qualified as A
 import Data.Text.Internal (Text (..))
 import Data.Text.Unsafe (dropWord8, takeWord8)
-import Him.Native (Offsets, lineStarts, offsetAt)
+import Him.Native (Offsets, countNewlines, lineStartsWith, offsetAt)
 
 -- | Lines @first .. first + count - 1@ of a text. Line @k@ spans the bytes
 -- @[start k, start (k + 1) - 1)@, minus a trailing @\\r@ when 'blkCR' is set
 -- (CRLF files).
 data Block = Block
   { blkText :: !Text
-  , blkStarts :: !Offsets
+  , blkStarts :: Offsets
+  -- ^ Lazy: built the first time a line of the block is needed. Only the
+  -- line count is needed up front (for the tree), and counting is a cheaper
+  -- pass than filling the offsets.
   , blkFirst :: !Int
   , blkCount :: !Int
   , blkCR :: !Bool
@@ -49,9 +52,9 @@ data Block = Block
 
 -- | All lines of a text (split on @\\n@) as one block; nothing is copied.
 blockFromText :: Bool -> Text -> Block
-blockFromText cr t = Block t starts 0 count cr
+blockFromText cr t = Block t (lineStartsWith newlines t) 0 (newlines + 1) cr
   where
-    (starts, count) = lineStarts t
+    newlines = countNewlines t
 
 blockLines :: Block -> Int
 blockLines = blkCount

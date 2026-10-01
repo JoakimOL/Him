@@ -1,4 +1,6 @@
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 -- | Loading and saving documents.
 --
@@ -8,6 +10,7 @@
 -- size of the text itself, not several copies of the whole file.
 module Him.File
   ( loadDocument
+  , loadDocumentChunked
   , saveDocument
   , decodeDocument
   , decodeChunks
@@ -21,45 +24,98 @@ import Data.ByteString.Unsafe (unsafePackCStringLen)
 import Data.Word (Word8)
 import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Marshal.Utils (copyBytes)
+import Data.Array.Byte qualified as BA
+import Data.Text.Array qualified as A
+import Data.Text.Internal (Text (..))
+import Data.Text.Internal.Validate (isValidUtf8ByteArray)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
+import GHC.Exts (Int (..), MutableByteArray#, Ptr (..), RealWorld, mutableByteArrayContents#, newPinnedByteArray#, touch#, unsafeFreezeByteArray#)
+import GHC.IO (IO (..), unIO)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
 import Data.ByteString.Builder (Builder, hPutBuilder, toLazyByteString)
 import Data.ByteString.Lazy qualified as BL
 import Data.List (intersperse)
 import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding (Decoding (..), decodeUtf8Lenient, encodeUtf8Builder, streamDecodeUtf8With)
 import Data.Text.Encoding.Error (lenientDecode)
 import Him.Buffer qualified as Buffer
 import Him.Document
 import System.Directory (doesDirectoryExist, doesFileExist)
-import System.IO (BufferMode (..), Handle, IOMode (..), hFileSize, hGetBuf, hSetBuffering, withBinaryFile)
+import System.IO (BufferMode (..), Handle, IOMode (..), hFileSize, hGetBuf, hIsEOF, hSetBuffering, withBinaryFile)
 
 -- | Load a file. A file that does not exist yet gives an empty document bound
 -- to that path (it is created on the first save).
 loadDocument :: FilePath -> IO (Either Text Document)
-loadDocument path = do
+loadDocument = loadWith readFileLines
+
+-- | 'loadDocument' using only the chunked reader (what pipes get); exposed
+-- so tests can check it on ordinary files.
+loadDocumentChunked :: FilePath -> IO (Either Text Document)
+loadDocumentChunked = loadWith readLines
+
+loadWith :: (Handle -> IO Lines) -> FilePath -> IO (Either Text Document)
+loadWith reader path = do
   isFile <- doesFileExist path
   isDir <- doesDirectoryExist path
   if
     | isDir -> pure (Left (T.pack path <> " is a directory"))
     | not isFile -> pure (Right (newDocument (Just path) Buffer.empty))
     | otherwise ->
-        try (withBinaryFile path ReadMode readLines) >>= \case
+        try (withBinaryFile path ReadMode reader) >>= \case
           Left e -> pure (Left (T.pack (show (e :: IOException))))
           Right acc -> pure (Right (finish (Just path) acc))
 
 chunkSize :: Int
 chunkSize = 1024 * 1024
 
+-- | Regular files are read whole, straight into one pinned array the size
+-- of the file. If the bytes are valid UTF-8 (checked in place), that array
+-- /is/ the text: no decoding copy at all. Otherwise, and for files whose
+-- size is unknown (pipes), fall back to the chunked reader.
+readFileLines :: Handle -> IO Lines
+readFileLines h = do
+  size <- try (hFileSize h)
+  case size of
+    Right n | n > 0 && n < fromIntegral (maxBound :: Int) -> do
+      text <- readWhole h (fromIntegral n)
+      eof <- hIsEOF h
+      let acc = addChunk emptyLines text
+      -- The file grew while we read it: read the rest in chunks.
+      if eof then pure acc else readLinesFrom acc h
+    -- Size 0 is also what pipes report: read until EOF.
+    Right _ -> readLines h
+    Left (_ :: IOException) -> readLines h
+
+data MutableBytes = MutableBytes (MutableByteArray# RealWorld)
+
+readWhole :: Handle -> Int -> IO Text
+readWhole h size@(I# size#) = do
+  MutableBytes mba <- IO $ \s -> case newPinnedByteArray# size# s of
+    (# s', m #) -> (# s', MutableBytes m #)
+  let ptr = Ptr (mutableByteArrayContents# mba) :: Ptr Word8
+      fill done
+        | done >= size = pure done
+        | otherwise = do
+            n <- hGetBuf h (ptr `plusPtr` done) (size - done)
+            if n == 0 then pure done else fill (done + n)
+  got <- fill 0
+  IO $ \s -> case unsafeFreezeByteArray# mba s of
+    (# s', ba #)
+      | isValidUtf8ByteArray (BA.ByteArray ba) 0 got -> (# s', Text (A.ByteArray ba) 0 got #)
+      | otherwise -> case unIO (decodeUtf8Lenient <$> B.packCStringLen (castPtr ptr, got)) s' of
+          (# s'', t #) -> case touch# mba s'' of s''' -> (# s''', t #)
+
 -- | Read a file in chunks into one reused buffer. Each chunk's complete
 -- UTF-8 prefix is decoded (copied once, into the text that stays alive);
 -- an incomplete character at the end is moved to the front of the buffer
 -- for the next read. No garbage proportional to the file size is created.
 readLines :: Handle -> IO Lines
-readLines h = allocaBytes chunkSize $ \buf -> loop buf 0 emptyLines
+readLines = readLinesFrom emptyLines
+
+readLinesFrom :: Lines -> Handle -> IO Lines
+readLinesFrom start h = allocaBytes chunkSize $ \buf -> loop buf 0 start
   where
     loop :: Ptr Word8 -> Int -> Lines -> IO Lines
     loop buf pending acc = do
