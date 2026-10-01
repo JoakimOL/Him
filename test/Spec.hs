@@ -19,7 +19,7 @@ import Him.Ex (parseExLine)
 import Him.Search (Direction (..), Match (..), compileNeedle, findMatch)
 import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
-import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked)
+import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
 import System.Directory (getTemporaryDirectory, removeFile)
 import Him.Key
@@ -435,6 +435,18 @@ loadingTests = do
       expected = summary (decodeDocument (Just path) bytes)
   BS.writeFile path bytes
   loaded <- loadDocument path
+  -- Saving an unedited large file writes its pinned regions directly; an
+  -- edit in the middle mixes both paths.
+  savedBytes <- case loaded of
+    Right d -> do
+      let d' = d {docBuffer = fst (B.insertText (Pos 30000 2) "EDIT" (docBuffer d))}
+      _ <- saveDocument (path <> ".out") d
+      plainSave <- BS.readFile (path <> ".out")
+      _ <- saveDocument (path <> ".out") d'
+      editedSave <- BS.readFile (path <> ".out")
+      removeFile (path <> ".out")
+      pure (Just (plainSave, editedSave, encodeDocument d'))
+    Left _ -> pure Nothing
   -- Invalid UTF-8 takes the lenient decoding fallback.
   let invalid = "ok\n\255\254 bad\r\nend" :: ByteString
   BS.writeFile path invalid
@@ -447,6 +459,8 @@ loadingTests = do
   removeFile path
   pure
     [ test "large file loads like an in-memory decode" (assertEqual (Right expected) (summary <$> loaded))
+    , test "saving a loaded file writes the same bytes" (assertEqual (Just bytes) ((\(a, _, _) -> a) <$> savedBytes))
+    , test "saving after an edit matches encodeDocument" (assertEqual True (maybe False (\(_, b, c) -> b == c) savedBytes))
     , test "invalid UTF-8 loads like a lenient decode" $
         assertEqual (Right (summary (decodeDocument (Just path) invalid))) (summary <$> loadedInvalid)
     , test "chunked reads (pipes) load the same" (assertEqual (Right expected) (summary <$> loadedChunked))

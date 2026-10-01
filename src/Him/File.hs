@@ -29,7 +29,7 @@ import Data.Text.Array qualified as A
 import Data.Text.Internal (Text (..))
 import Data.Text.Internal.Validate (isValidUtf8ByteArray)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
-import GHC.Exts (Int (..), MutableByteArray#, Ptr (..), RealWorld, mutableByteArrayContents#, newPinnedByteArray#, touch#, unsafeFreezeByteArray#)
+import GHC.Exts (Int (..), MutableByteArray#, Ptr (..), RealWorld, byteArrayContents#, isByteArrayPinned#, isTrue#, keepAlive#, mutableByteArrayContents#, newPinnedByteArray#, touch#, unsafeFreezeByteArray#)
 import GHC.IO (IO (..), unIO)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
@@ -43,7 +43,7 @@ import Data.Text.Encoding.Error (lenientDecode)
 import Him.Buffer qualified as Buffer
 import Him.Document
 import System.Directory (doesDirectoryExist, doesFileExist)
-import System.IO (BufferMode (..), Handle, IOMode (..), hFileSize, hGetBuf, hIsEOF, hSetBuffering, withBinaryFile)
+import System.IO (BufferMode (..), Handle, IOMode (..), hFileSize, hGetBuf, hIsEOF, hPutBuf, hSetBuffering, withBinaryFile)
 
 -- | Load a file. A file that does not exist yet gives an empty document bound
 -- to that path (it is created on the first save).
@@ -154,8 +154,29 @@ saveDocument path doc =
   where
     write h = do
       hSetBuffering h (BlockBuffering (Just (64 * 1024)))
-      hPutBuilder h (encodeBuilder doc)
+      writeDocument h doc
       hFileSize h
+
+-- | Like @hPutBuilder h (encodeBuilder doc)@, but a large region held in a
+-- pinned array (a loaded file) is handed to 'hPutBuf' directly instead of
+-- being copied into the builder's buffer first.
+writeDocument :: Handle -> Document -> IO ()
+writeDocument h doc
+  | Buffer.lineCount buf == 1 && T.null (Buffer.lineAt 0 buf) = pure ()
+  | otherwise = do
+      sequence_ (intersperse (hPutBuilder h sep) (map region (Buffer.regions buf)))
+      if docTrailingNewline doc then hPutBuilder h sep else pure ()
+  where
+    buf = docBuffer doc
+    crlf = docLineEnding doc == CRLF
+    sep = if crlf then "\r\n" else "\n"
+    region r
+      | Buffer.regionCR r == crlf = putText (Buffer.regionText r)
+      | otherwise = hPutBuilder h (mconcat (intersperse sep (map encodeUtf8Builder (Buffer.regionLines r))))
+    putText t@(Text (A.ByteArray arr) off len)
+      | len >= 64 * 1024 && isTrue# (isByteArrayPinned# arr) =
+          IO $ \s -> keepAlive# arr s (unIO (hPutBuf h (Ptr (byteArrayContents# arr) `plusPtr` off) len))
+      | otherwise = hPutBuilder h (encodeUtf8Builder t)
 
 -- | Regions of complete lines read so far (newest first), the text after the
 -- last newline seen, and whether lines end in CRLF (decided by the first
