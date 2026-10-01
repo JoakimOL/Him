@@ -229,6 +229,16 @@ integrationTests = do
   quitDirty <- typeKeys ": q ret" =<< typeKeys "i x esc" (start "")
   quitClean <- typeKeys ": q ret" (start "")
   cmdEsc <- typeKeys ": w esc" (start "")
+  wordDelete <- textAfter "hello world" "w d"
+  lineDelete <- textAfter "one\ntwo\nthree" "j x d"
+  lineTwice <- textAfter "one\ntwo\nthree" "x x d"
+  change <- textAfter "foo bar" "e c b a z esc"
+  gotoEnd <- textAfter "one\ntwo\nthree" "g e x d"
+  gotoTop <- textAfter "one\ntwo" "j g g x d"
+  selectExtend <- textAfter "abcdef" "v l l esc d"
+  collapsed <- textAfter "hello world" "w ; d"
+  pendingG <- typeKeys "g" (start "abc")
+  badChord <- typeKeys "g z" (start "abc")
   pure
     [ test "typing in insert mode" (assertEqual "hi there" typed)
     , test "append then newline" (assertEqual "a\ncb" newline)
@@ -237,6 +247,16 @@ integrationTests = do
     , test ":q refuses when dirty" (assertEqual (False, True) (edQuit quitDirty, isError (edStatus quitDirty)))
     , test ":q quits when clean" (assertEqual True (edQuit quitClean))
     , test "esc leaves the command line" (assertEqual (Normal, "") (edMode cmdEsc, edCmdLine cmdEsc))
+    , test "w d deletes a word and its blanks" (assertEqual "world" wordDelete)
+    , test "x d deletes a line" (assertEqual "one\nthree" lineDelete)
+    , test "x x d deletes two lines" (assertEqual "three" lineTwice)
+    , test "e c replaces a word" (assertEqual "baz bar" change)
+    , test "g e goes to the last line" (assertEqual "one\ntwo" gotoEnd)
+    , test "g g goes to the first line" (assertEqual "two" gotoTop)
+    , test "select mode extends" (assertEqual "def" selectExtend)
+    , test "; collapses the selection" (assertEqual "helloworld" collapsed)
+    , test "g waits for the next key" (assertEqual [plain (KChar 'g')] (edPending pendingG))
+    , test "an unknown chord is dropped" (assertEqual ([], "abc") (edPending badChord, B.toText (docBuffer (edDoc badChord))))
     ]
   where
     isError = \case

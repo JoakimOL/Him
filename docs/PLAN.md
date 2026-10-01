@@ -151,7 +151,7 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **7. Commands, keymap, modes.** Registry, trie, Normal/Insert, `i a o`, typing,
   Backspace, Enter, cursor shape, dirty flag.
 - [x] **8. Command mode.** `:w`, `:q` (refuses when dirty), `:q!`, `:wq`; status messages.
-- [ ] **9. Helix selection actions.** `w b e x v ; d c`, plus `g g` / `g e`, with the
+- [x] **9. Helix selection actions.** `w b e x v ; d c`, plus `g g` / `g e`, with the
   pending keys shown in the status line.
 - [ ] **10. Polish.** Line-number gutter, tab expansion, wide-character width, horizontal
   scrolling.
@@ -173,13 +173,11 @@ Implemented (defined in `Him.Config.Default`):
 
 | Mode | Keys |
 |---|---|
-| Normal | `h j k l`, arrows, `home`/`end`, `i a o`, `:` |
-| Select | same as normal, but motions extend; `esc` → normal |
+| Normal | `h j k l`, arrows, `home`/`end`; `w b e` (select words), `x` (select line, repeat to extend), `;` (collapse), `v` (select mode), `d` (delete), `c` (change); `g g` / `g e` (first / last line), `g h` / `g l` (line start / end); `i a o`; `:` |
+| Select | same as normal, but motions extend; `v` / `esc` → normal |
 | Insert | printable chars, `ret` (keeps indent), `tab`, `backspace`, `del`, arrows, `esc` |
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` |
 | `:` commands | `:w [path]`, `:q` (refuses when dirty), `:q!`, `:wq` / `:x` |
-
-Still to bind (milestone 9): `w b e x v ; d c`, `g g`, `g e`.
 
 ## 7. How to extend
 
@@ -199,21 +197,9 @@ Still to bind (milestone 9): `w b e x v ; d c`, `g g`, `g e`.
 
 ## 8. Where to pick up
 
-*Last session ended on 2026-09-27, after milestones 5–8 (committed together, since the
-command layer is needed to type or quit at all).*
+*Last session ended on 2026-10-01, after milestone 9.*
 
-- **Next: milestone 9.** The commands already exist and have tests in
-  `Him.Commands.Motion` / `Him.Commands.Edit`: `move_next_word_start`,
-  `move_prev_word_start`, `move_next_word_end`, `select_line`, `select_mode`,
-  `collapse_selection`, `delete_selection`, `change_selection`, `goto_file_start`,
-  `goto_last_line`. What's left:
-  1. Add the bindings to `normalBindings`: `w b e x v ; d c`, `g g`, `g e`, and maybe
-     `g h` / `g l`.
-  2. Add `v` → `normal_mode` to `selectBindings`.
-  3. Add integration tests in `test/Spec.hs` (`integrationTests`), e.g. `"w d"`, `"x d"`,
-     `"g e"`.
-  4. Run a manual tmux check that the pending keys (`g`) show in the status line.
-- **Then milestone 10 (polish):** a line-number gutter (a new component plus a `layout`
+- **Next: milestone 10 (polish):** a line-number gutter (a new component plus a `layout`
   change), a real `charWidth` (East Asian wide chars take 2 cells; wide cells need a
   continuation-cell marker in `Frame`), and a horizontal-scrolling check with long lines.
 - **Small known issues:**
@@ -221,7 +207,7 @@ command layer is needed to type or quit at all).*
     can hide `[+]`. The name should be truncated to fit.
   - `rangeWantCol` stores a *character* column, not a display column, so `j`/`k` across
     tab-indented lines can drift a little.
-- **How to verify:** `make test` (97 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (107 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

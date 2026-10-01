@@ -51,6 +51,18 @@ normalBindings =
        , ("j", "move_line_down")
        , ("k", "move_line_up")
        , ("l", "move_char_right")
+       , ("w", "move_next_word_start")
+       , ("b", "move_prev_word_start")
+       , ("e", "move_next_word_end")
+       , ("x", "select_line")
+       , (";", "collapse_selection")
+       , ("v", "select_mode")
+       , ("d", "delete_selection")
+       , ("c", "change_selection")
+       , ("g g", "goto_file_start")
+       , ("g e", "goto_last_line")
+       , ("g h", "goto_line_start")
+       , ("g l", "goto_line_end")
        , ("i", "insert_mode")
        , ("a", "append_mode")
        , ("o", "open_below")
@@ -61,6 +73,7 @@ normalBindings =
 selectBindings :: [(Text, Text)]
 selectBindings =
   [ ("esc", "normal_mode")
+  , ("v", "normal_mode")
   ]
 
 insertBindings :: [(Text, Text)]
