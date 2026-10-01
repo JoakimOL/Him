@@ -66,10 +66,55 @@ already there and never downloads anything.
 
 ## Results
 
-### 2026-10-01
+Newest first. Machine: 16 cores, Linux 6.6, Vim 9.2, Helix 25.07.1. 200,000 lines,
+5 runs, median. Vim/Helix numbers vary by a few ms between runs, so compare within
+one run.
 
-Machine: 16 cores, Linux 6.6. Versions: him at `db992ae`, Vim 9.2, Helix 25.07.1.
-200,000 lines, 5 runs, median.
+### 2026-10-01: after the first performance pass
+
+Changes since the baseline:
+1. **Batching:** queued events are handled before rendering once (`TChan`, up to 512
+   per frame).
+2. **Row writes:** frame rows are written with one splice instead of cell by cell.
+3. **Text area:** each visible line is built as one cell list.
+4. **Selection:** the selected columns are computed per line, not per character.
+5. **Character widths:** `isWide` has an ASCII fast path and an `IntMap` lookup.
+
+`render` alone (a micro-benchmark, 40×120): 1.43 → 0.54 ms per frame. `diff`: 0.32 →
+0.13 ms.
+
+| Scenario / metric | him | vim | helix |
+|---|---:|---:|---:|
+| startup_empty: settled ms | **6.1** | 24.0 | 21.2 |
+| startup_empty: max RSS MB | **14.3** | 21.8 | 24.3 |
+| open_large: first paint ms | 50.2 | 24.3 | **21.9** |
+| open_large: max RSS MB | 40.4 | **37.1** | 45.0 |
+| scroll (2000 × `j`): work ms | **19.5** | 69.1 | 673 |
+| scroll: CPU ms | **68.1** | 92.8 | 1213 |
+| jump (100 × `ge gg`): work ms | **6.7** | 39.0 | 124 |
+| edit_save (880 chars): work ms | 49.5 | 33.4 | **18.2** |
+| edit_save: max RSS MB | 86.6 | **37.0** | 66.8 |
+| latency `j`: frame done ms (p95) | 1.9 (3.0) | **0.3 (0.4)** | 1.3 (1.8) |
+| latency typing: frame done ms (p95) | 1.6 (2.4) | **0.3 (0.4)** | 1.2 (1.5) |
+
+What's left, by impact:
+
+- **Opening large files** (50 ms vs. about 22 ms). The cost is decoding 14 MB,
+  `T.splitOn`, and building a `Seq` of 200,000 `Text`s. Options: split on the
+  `ByteString` and decode per line lazily, or move to a rope (ADR-3).
+- **Memory in `edit_save`** (87 MB vs. 37 MB). This is mostly GC overhead on top of
+  about 30 MB of live lines. The copying collector needs about twice the live data;
+  try the compacting/non-moving GC, or a more compact line representation.
+  (`-A16m`/`-A64m` were tried: latency is about the same, memory is worse.)
+- **Per-key latency** (about 1.9 ms vs. Vim's 0.3 ms). `render` (0.54 ms) is still
+  dominated by `layoutLine` allocation and building `Cell`s for every row on every frame.
+  Next steps: cache rendered rows of unchanged lines, or render only rows whose line
+  or selection changed. Write cost (about 0.5–1 ms, including the pty) could drop by
+  emitting shorter SGR sequences.
+- **Typing throughput** (`edit_save`): each typed key still runs `edit` plus the undo
+  bookkeeping, but rendering is batched now. Profile before changing anything.
+
+### 2026-10-01: baseline (`db992ae`)
 
 | Scenario / metric | him | vim | helix |
 |---|---:|---:|---:|
@@ -85,21 +130,16 @@ Machine: 16 cores, Linux 6.6. Versions: him at `db992ae`, Vim 9.2, Helix 25.07.1
 | latency `j`: frame done ms (p95) | 4.6 (6.5) | **0.3 (0.5)** | 1.4 (2.3) |
 | latency typing: frame done ms (p95) | 4.7 (6.1) | **0.3 (0.4)** | 1.2 (1.9) |
 
-What this says about him:
+At the baseline, him rendered after every key, and frames were built one cell at a time
+with `Seq.update`.
 
-- **Startup and loading:** these are already competitive. Startup is fastest, and
-  opening 14 MB is on par with Vim.
-- **Per-key cost:** this is the bottleneck, at about 1.4 ms of CPU per key in batch
-  and about 4.6 ms latency to a finished frame. All three CPU-heavy scenarios
-  (`scroll`, `jump`, `edit_save`) are dominated by it. Likely causes, worth profiling
-  first:
-  1. A full frame is built after every key, and every cell is written with
-     `Seq.adjust`/`Seq.update`. That is 4,800 small updates per frame, and more for
-     selections and tabs.
-  2. Nothing is coalesced. All queued keys could be processed before rendering once
-     (drain the `Chan`, then render), which is what Vim does.
-  3. The diff compares whole `Seq Cell` rows. Rows could be built as lists or `Text`
-     with style runs, and then compared.
-- **Memory in `edit_save`:** 88 MB. Undo snapshots and `docSavedBuffer` share
-  structure, but every insert creates new `Text` for the edited line plus `Seq` spine
-  nodes. Worth checking with `+RTS -s` once the rendering cost is fixed.
+## Profiling him
+
+GHC ships profiling libraries, so this needs no downloads. Use a separate work
+directory, so normal builds are untouched:
+
+```sh
+stack build --profile --work-dir .stack-prof
+# Then compile a small driver against the profiled library, e.g. one that calls
+# Him.Render.render in a loop, and run it with +RTS -p.
+```

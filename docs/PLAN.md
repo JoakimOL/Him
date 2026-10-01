@@ -107,6 +107,12 @@ with a newline.**
 This is the Helix/Vim convention. `selectionText` adds the implicit newline when `x`
 selects the last line, so yank/delete/paste of lines behaves the same everywhere.
 
+**ADR-11: Render once per batch of input.**
+The input thread queues all keys decoded from one read on a `TChan` (from `stm`). The
+main loop handles every queued event (up to 512) before rendering once. That's what
+makes typeahead (pastes, key repeat) cheap. Components write whole rows
+(`putCells`) instead of single cells.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -124,7 +130,7 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Terminal.Raw` | ✅ | Raw mode + alternate screen; `withRawTerminal` always restores the terminal. |
 | `Him.Terminal.Ansi` | ✅ | Pure `Builder`s for escape codes (cursor, clear, SGR, cursor shape). |
 | `Him.Terminal.Output` | ✅ | Writes one builder per frame and flushes. |
-| `Him.Terminal.Input` | ✅ | Reader thread → `Chan Event` (from `base`; `stm` wasn't needed); pure `decodeKeys final bytes`; a 30 ms lone-ESC timeout. |
+| `Him.Terminal.Input` | ✅ | Reader thread → `TChan Event` (from `stm`, so the main loop can drain queued events before rendering); pure `decodeKeys final bytes`; a 30 ms lone-ESC timeout. |
 | `Him.Key`, `Him.Event` | ✅ | Key/modifier types and a `"C-s"`-style key parser; the `Event` sum type. |
 | `Him.Buffer` | ✅ | Abstract text storage (`Seq Text`), path, dirty flag. |
 | `Him.Position`, `Him.Selection` | ✅ | `Pos`, `Range {anchor, head}`, `Selection` (NonEmpty ranges + primary). |
@@ -220,10 +226,11 @@ Implemented (defined in `Him.Config.Default`):
 and the editor is usable for basic editing.*
 
 - **Performance:** `make bench` compares him with Vim and Helix (see `docs/BENCHMARK.md`
-  for the method and results). Startup and file loading are already competitive. The
-  per-key render cost (about 4.6 ms latency, about 1.4 ms of CPU per key) is the main
-  gap. The recommended first step is to process all queued keys before rendering, and
-  then make frame building cheaper (fewer per-cell `Seq` updates).
+  for the method, the results history, and how to profile).
+  - **Done:** after the first performance pass, him leads in startup and in batched
+    input (`scroll`, `jump`). Per-key latency is about 1.9 ms (Helix 1.3, Vim 0.3).
+  - **Still open:** opening large files (about 2× slower), peak memory under GC, and
+    row caching to cut per-frame work further.
 - **Next suggestions, roughly in order of value:**
   1. **Search:** `/` prompt, `n` / `N`, and the matches selected. The `CmdLine` mode can be
      generalised to a "prompt" carrying what Enter does.

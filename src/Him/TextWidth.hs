@@ -10,6 +10,7 @@ module Him.TextWidth
   ) where
 
 import Data.Char (chr, ord)
+import Data.IntMap.Strict qualified as IntMap
 import Data.List (mapAccumL)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -22,6 +23,7 @@ tabWidth = 4
 -- @^X@, so they take two columns.
 charWidth :: Char -> Int
 charWidth c
+  | c >= ' ' && c < '\DEL' = 1 -- fast path: printable ASCII
   | isControl c = 2
   | isWide c = 2
   | otherwise = 1
@@ -41,9 +43,17 @@ isControl c = (c < ' ' && c /= '\t') || c == '\DEL'
 -- | East Asian Wide / Fullwidth characters and wide emoji (a compact
 -- approximation of Unicode's EastAsianWidth W/F classes).
 isWide :: Char -> Bool
-isWide c = any (\(lo, hi) -> n >= lo && n <= hi) wideRanges
+isWide c
+  | n < 0x1100 = False -- fast path: nothing below Hangul Jamo is wide
+  | otherwise = case IntMap.lookupLE n wideTable of
+      Just (_, hi) -> n <= hi
+      Nothing -> False
   where
     n = ord c
+
+-- | 'wideRanges' keyed by their start, for O(log n) lookup.
+wideTable :: IntMap.IntMap Int
+wideTable = IntMap.fromList wideRanges
 
 wideRanges :: [(Int, Int)]
 wideRanges =

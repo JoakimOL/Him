@@ -7,6 +7,7 @@ module Him.Render.Frame
   , continuation
   , blankFrame
   , putCell
+  , putCells
   , putText
   , fillRect
   ) where
@@ -53,15 +54,25 @@ blankFrame rows cols =
 
 -- | Set one cell; out-of-bounds writes are ignored.
 putCell :: Int -> Int -> Cell -> Frame -> Frame
-putCell row col cell f
-  | row < 0 || col < 0 || row >= frameRows f || col >= frameCols f = f
-  | otherwise = f {frameCells = Seq.adjust' (Seq.update col cell) row (frameCells f)}
+putCell row col cell = putCells row col [cell]
+
+-- | Write a run of cells starting at @(row, col)@, clipped at the frame
+-- edges. The row is updated with one splice, which is much cheaper than
+-- updating cell by cell; components should prefer whole runs.
+putCells :: Int -> Int -> [Cell] -> Frame -> Frame
+putCells row col cells f
+  | row < 0 || row >= frameRows f || n == 0 = f
+  | otherwise = f {frameCells = Seq.adjust' splice row (frameCells f)}
+  where
+    start = max 0 col
+    visible = take (frameCols f - start) (drop (start - col) cells)
+    n = length visible
+    splice r = Seq.take start r <> Seq.fromList visible <> Seq.drop (start + n) r
 
 -- | Write text starting at @(row, col)@, clipped at the frame edge.
 putText :: Int -> Int -> Style -> Text -> Frame -> Frame
-putText row col style t f =
-  foldl' (\acc (i, c) -> putCell row (col + i) (Cell c style) acc) f (zip [0 ..] (T.unpack t))
+putText row col style t = putCells row col (map (`Cell` style) (T.unpack t))
 
 fillRect :: Rect -> Style -> Frame -> Frame
 fillRect (Rect r c h w) style f =
-  foldl' (\acc (row, col) -> putCell row col (Cell ' ' style) acc) f [(row, col) | row <- [r .. r + h - 1], col <- [c .. c + w - 1]]
+  foldl' (\acc row -> putCells row c (replicate w (Cell ' ' style)) acc) f [r .. r + h - 1]
