@@ -41,6 +41,7 @@ import Him.Regex
 import Him.Lsp.Protocol
 import Him.Lsp.State (Attachment (..), Completion (..), DocLsp (..), ServerInfo (..), ShownDiagnostic (..), Sync (..), shownDiagnostics)
 import Him.Lsp.Sync (syncMessages)
+import Him.Lsp.Edit
 import Him.Commands.Lsp (lspFlush)
 import GHC.Clock (getMonotonicTime)
 import Him.Syntax.TreeSitter (findRuntime, readQuery, treeSitter)
@@ -455,6 +456,7 @@ main = do
     , group "Him.Regex" regexTests
     , group "Him.Lsp.Protocol" lspProtocolTests
     , group "Him.Lsp.Sync" syncTests
+    , group "Him.Lsp.Edit" lspEditTests
     , group "LSP client (with clangd)" lspIO
     , group "highlighting through a provider" syntaxIO
     , group "Him.Syntax.TreeSitter (with the installed grammars)" treeSitterIO
@@ -1036,6 +1038,25 @@ lspProtocolTests =
   ]
   where
     rng a b c d = JObject [("start", JObject [("line", JInt a), ("character", JInt b)]), ("end", JObject [("line", JInt c), ("character", JInt d)])]
+
+lspEditTests :: [Test]
+lspEditTests =
+  [ test "edits apply from the end, positions in the old text" $
+      assertEqual "int  y = 1;\nint z;" (B.toText (applyTextEdits Utf8 [TextEdit (0, 4) (0, 5) " y", TextEdit (1, 4) (1, 5) "z"] (buf "int x = 1;\nint w;")))
+  , test "insertions at one place keep their order" $
+      assertEqual "ab" (B.toText (applyTextEdits Utf8 [TextEdit (0, 0) (0, 0) "a", TextEdit (0, 0) (0, 0) "b"] (buf "")))
+  , test "UTF-16 columns" (assertEqual "😀X" (B.toText (applyTextEdits Utf16 [TextEdit (0, 2) (0, 3) "X"] (buf "😀y"))))
+  , test "an edit past the end appends" (assertEqual "a\nb" (B.toText (applyTextEdits Utf8 [TextEdit (5, 0) (5, 0) "\nb"] (buf "a"))))
+  , test "workspace edits: changes and documentChanges" $
+      let e = JObject [("newText", JString "x"), ("range", JObject [("start", pos 0 0), ("end", pos 0 1)])]
+       in assertEqual
+            ([("/a", [TextEdit (0, 0) (0, 1) "x"])], [("/b", [TextEdit (0, 0) (0, 1) "x"])])
+            ( parseWorkspaceEdit (JObject [("changes", JObject [("file:///a", JArray [e])])])
+            , parseWorkspaceEdit (JObject [("documentChanges", JArray [JObject [("textDocument", JObject [("uri", JString "file:///b")]), ("edits", JArray [e])]])])
+            )
+  ]
+  where
+    pos l c = JObject [("line", JInt l), ("character", JInt c)]
 
 syncTests :: [Test]
 syncTests =
