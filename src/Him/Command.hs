@@ -21,11 +21,10 @@ module Him.Command
 import Control.Monad.Trans.State.Strict (StateT, gets, modify')
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import Him.Document (Document (..), isReadOnly)
+import Him.Document (Document (..), changeDocument, isReadOnly)
 import Him.Edit (Edit, applyEdits)
 import Him.Effect (Effect)
 import Him.Editor
-import Him.History (Snapshot (..), beginChange)
 import Him.Mode (Mode (..))
 import Him.Motion (Motion, Movement (..), applyMotion)
 import Him.Selection (mapRanges, normalize)
@@ -93,13 +92,7 @@ editEach f = do
 editAll :: (Int -> Edit) -> EditorM ()
 editAll f = modifyDoc $ \d ->
   let (buf, sel) = applyEdits f (docBuffer d) (docSelection d)
-   in d
-        { docBuffer = buf
-        , docSelection = sel
-        , docDirty = True
-        , docVersion = docVersion d + 1
-        , docHistory = beginChange (Snapshot (docBuffer d) (docSelection d)) (docHistory d)
-        }
+   in (changeDocument buf sel d) {docDirty = True}
 
 -- | Apply a motion to every range. In select mode the ranges are extended.
 motion :: Motion -> EditorM ()

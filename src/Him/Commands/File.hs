@@ -14,7 +14,7 @@ import Him.Effect (Effect (..))
 import Him.Buffer (lineCount)
 import Him.Buffer qualified as Buffer
 import Him.Command
-import Him.Document (Document (..), displayName, isReadOnly, newDocument)
+import Him.Document (Document (..), changeDocument, clampSelection, displayName, isReadOnly, newDocument)
 import Him.Options (Options (..))
 import Him.Editor
 import Him.Ex (ExArgs (..), ExCommand (..))
@@ -22,8 +22,6 @@ import Him.Commands.Git (markGitReload)
 import Him.Directory (listingDir, loadPath)
 import Him.Lsp.Sync (closeEffects)
 import Him.File (loadDocument, saveDocument)
-import Him.History (Snapshot (..), beginChange)
-import Him.Selection (Range (..), mapRanges)
 import System.Directory (canonicalizePath, doesFileExist, getCurrentDirectory, setCurrentDirectory)
 
 actions :: [Action]
@@ -110,17 +108,12 @@ reloadDocument force d = case (isReadOnly d, docPath d) of
 reloaded :: Document -> Document -> Document
 reloaded fresh d =
   let buf = docBuffer fresh
-      clamp r = r {rangeAnchor = Buffer.clampPos buf (rangeAnchor r), rangeHead = Buffer.clampPos buf (rangeHead r)}
    in markGitReload
-        d
-          { docBuffer = buf
-          , docSelection = mapRanges clamp (docSelection d)
-          , docDirty = False
+        (changeDocument buf (clampSelection buf (docSelection d)) d)
+          { docDirty = False
           , docSavedBuffer = buf
           , docLineEnding = docLineEnding fresh
           , docTrailingNewline = docTrailingNewline fresh
-          , docVersion = docVersion d + 1
-          , docHistory = beginChange (Snapshot (docBuffer d) (docSelection d)) (docHistory d)
           }
 
 reloadCurrent :: Bool -> EditorM ()

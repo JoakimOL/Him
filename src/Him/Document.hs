@@ -8,17 +8,20 @@ module Him.Document
   , LineEnding (..)
   , newDocument
   , displayName
+  , changeDocument
+  , replaceBuffer
+  , clampSelection
   ) where
 
 import Data.Text (Text)
 import Data.Text qualified as T
-import Him.Buffer (Buffer)
+import Him.Buffer (Buffer, clampPos)
 import Him.GitState (GitInfo (..))
-import Him.History (History, emptyHistory)
+import Him.History (History, Snapshot (..), beginChange, emptyHistory)
 import Him.Lsp.State (DocLsp (..))
 import Him.Syntax (SyntaxInfo, noSyntax)
 import Him.Position (Pos (..))
-import Him.Selection (Selection, point, single)
+import Him.Selection (Range (..), Selection, mapRanges, point, single)
 
 data LineEnding = LF | CRLF
   deriving stock (Eq, Show)
@@ -95,3 +98,24 @@ newDocument path buf =
 
 displayName :: Document -> Text
 displayName = maybe "[scratch]" T.pack . docPath
+
+-- | A new text and selection as one undoable change: the old ones are kept
+-- for undo, and the version goes up (so highlighting, git and the language
+-- server notice). The dirty flag is the caller's ('replaceBuffer' compares).
+changeDocument :: Buffer -> Selection -> Document -> Document
+changeDocument buf sel d =
+  d
+    { docBuffer = buf
+    , docSelection = sel
+    , docVersion = docVersion d + 1
+    , docHistory = beginChange (Snapshot (docBuffer d) (docSelection d)) (docHistory d)
+    }
+
+-- | 'changeDocument' for a whole new text (a reset, a server's edits): the
+-- document is dirty unless the text is what was saved.
+replaceBuffer :: Buffer -> Selection -> Document -> Document
+replaceBuffer buf sel d = (changeDocument buf sel d) {docDirty = buf /= docSavedBuffer d}
+
+-- | Keep every range inside a (changed) text.
+clampSelection :: Buffer -> Selection -> Selection
+clampSelection buf = mapRanges (\r -> r {rangeAnchor = clampPos buf (rangeAnchor r), rangeHead = clampPos buf (rangeHead r)})

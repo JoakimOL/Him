@@ -16,11 +16,10 @@ import Him.Action
 import Him.Buffer qualified as Buffer
 import Him.Command
 import Him.Diff
-import Him.Document (DocKind (..), Document (..))
+import Him.Document (DocKind (..), Document (..), replaceBuffer)
 import Him.Effect (Effect (..), Job (..), JobResult (..))
 import Him.Editor
 import Him.GitState
-import Him.History (Snapshot (..), beginChange)
 import Him.Position (Pos (..))
 import Him.Selection
 import Data.Map.Strict qualified as Map
@@ -116,13 +115,7 @@ replaceLines :: [T.Text] -> EditorM ()
 replaceLines new = modifyDoc $ \d ->
   let buf = Buffer.fromLines new
       line = min (length new - 1) (posLine (rangeHead (primary (docSelection d))))
-   in d
-        { docBuffer = buf
-        , docSelection = single (point (Pos (max 0 line) 0))
-        , docDirty = buf /= docSavedBuffer d
-        , docVersion = docVersion d + 1
-        , docHistory = beginChange (Snapshot (docBuffer d) (docSelection d)) (docHistory d)
-        }
+   in replaceBuffer buf (single (point (Pos (max 0 line) 0))) d
 
 jumpChange :: Bool -> EditorM ()
 jumpChange forward = do

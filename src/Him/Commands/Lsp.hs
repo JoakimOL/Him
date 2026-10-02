@@ -28,7 +28,7 @@ import Him.Action hiding (text)
 import Him.Buffer qualified as Buffer
 import Him.Command
 import Him.Commands.File (openFile)
-import Him.Document (DocKind (..), Document (..))
+import Him.Document (DocKind (..), Document (..), clampSelection, replaceBuffer)
 import Him.Effect (Effect (..), Job (..), JobResult (..))
 import Him.Options (Options (..))
 import Him.Editor hiding (Severity (..))
@@ -47,7 +47,6 @@ import Him.Picker (PickTarget (..), Picker (..), PickerSource (..), fuzzyScore, 
 import System.FilePath (makeRelative)
 import Him.Position (Pos (..))
 import Control.Monad.IO.Class (liftIO)
-import Him.History (Snapshot (..), beginChange)
 import Him.Lsp.Edit
 import Him.Selection (Range (..), mapRanges, point, primary, rangeEnd, rangeHead, rangeStart, single)
 import System.Directory (makeAbsolute)
@@ -420,13 +419,7 @@ currentEncoding = do
 applyToDocument :: Encoding -> [TextEdit] -> Document -> Document
 applyToDocument enc edits d =
   let buf = applyTextEdits enc edits (docBuffer d)
-   in d
-        { docBuffer = buf
-        , docSelection = mapRanges (\r -> r {rangeAnchor = Buffer.clampPos buf (rangeAnchor r), rangeHead = Buffer.clampPos buf (rangeHead r)}) (docSelection d)
-        , docDirty = buf /= docSavedBuffer d
-        , docVersion = docVersion d + 1
-        , docHistory = beginChange (Snapshot (docBuffer d) (docSelection d)) (docHistory d)
-        }
+   in replaceBuffer buf (clampSelection buf (docSelection d)) d
 
 -- | Apply edits to several files: open buffers are changed in place, other
 -- files are opened (and left modified, to be saved). The current buffer
