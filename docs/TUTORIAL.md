@@ -810,6 +810,39 @@ holding the old name. `d` collects the entries under *every* selection, so the
 multiple-selection tools from 5.4 double as dired's marks. One detail is worth a test of
 its own: deleting a symlink to a directory must unlink it, not delete what it points to.
 
+### 5.7 Effects, background jobs, and a picker that never blocks (ADR-23, ADR-24)
+
+Everything so far ran on the main thread, and that was fine, since a key costs well
+under a millisecond. A file picker over 200,000 files is different: the walk takes
+hundreds of milliseconds and ranking takes tens. Two ideas keep the editor responsive.
+
+**Effects as data.** An action that wants work done asks for it:
+
+```haskell
+simple "file_picker" GBuffers "Open a file from the working directory" $ do
+  gen <- freshGeneration
+  open (newPicker "files" []) {pkGeneration = gen, pkLoading = True}
+  request (StartJob (ScanFiles gen "."))
+```
+
+The main loop owns the runtime. It starts the job on a thread, and the job posts its
+results on the same channel as the keys (`EvJob (FilesFound gen batch)`). Results
+are handled by `handleEvent` like a key press, so there are no locks around the
+editor state. A tagged generation lets the picker ignore results meant for one that
+was closed.
+
+**Measure, then choose.** The first profile showed three separate costs. Each got
+the cheapest fix that worked:
+- *rejecting* a non-match: a precomputed lower-case key and an in-order check,
+  65 → 12 ms;
+- *sorting* every match: buckets keyed by rank, keeping the best 1000;
+- *walking*: parallel workers, plus types from `readdir` instead of a `stat` per file,
+  732 → about 370 ms.
+
+What remained was about 75 ms when every item matches. So instead of more micro-tuning,
+large pickers rank in a background job and keep showing their last results until the
+new ones arrive. Typing never waits.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with

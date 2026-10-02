@@ -43,7 +43,8 @@ selections onto it later is harder.
 
 **ADR-2: GHC boot libraries only.**
 Allowed: `base`, `unix`, `bytestring`, `text`, `containers`, `transformers`, `directory`,
-`filepath`, `stm`, `array`. (`filepath` is used since milestone 19.) Each one is added to `package.yaml` only when a module first uses
+`filepath`, `stm`, `array`, `process`. (`process` since milestone 21, for git and
+language servers; `filepath` since milestone 19.) (`filepath` is used since milestone 19.) Each one is added to `package.yaml` only when a module first uses
 it (`-Wunused-packages` enforces this).
 *Alternatives:* `vty`/`brick` (large and opinionated), `text-rope` (see ADR-3).
 
@@ -308,6 +309,48 @@ wdired and oil.nvim do) would allow batch renames, but it needs a careful diff a
 confirmation; prompts were simpler and safer first. Or a real editor mode, which every `setMode Normal` would have to
 know about.
 
+**ADR-23: Effects as data, and a runtime for background jobs.**
+Actions are state changes (`EditorM = StateT Editor IO`). The `Editor` is plain data
+and holds no handles, and actions cannot see the config.
+- **Requests:** to ask for more, an action queues an `Effect` (`Him.Effect`) with
+  `request`.
+- **Immediate effects:** `handleEvent` carries out `RunAction` (run another action by
+  its `Invocation`; used by the palette and `:action`) and `OpenPalette` right after the
+  key, with the config at hand. A chain of them is capped at 8 rounds.
+- **Background effects:** `StartJob` / `CancelJob` are left for the main loop, which
+  owns the `Runtime` (`Him.Runtime`). The runtime runs each `Job` on its own thread, at
+  most one per `JobKey` (starting one cancels the old one with `killThread`), and posts
+  each `JobResult` as an `EvJob` event on the same channel as the keys. So results are
+  handled by `handleEvent` like any input, batched with it (ADR-11), and drawn once.
+- **Stale results:** documents have a `docId` (assigned when opened) and a `docVersion`
+  (bumped by edits, undo/redo and `replaceText`). Pickers have a generation. Every
+  result names what it was computed for, and a stale one is dropped.
+- **Testing:** tests can assert the effects an action requested. The `settle` helper in
+  `test/Spec.hs` runs jobs on a real runtime, as the main loop does.
+- **`Him.Process`** runs external programs (stdin in; stdout and stderr read
+  concurrently), and `Him.Json` is a small JSON library. Both are for the git and LSP
+  phases.
+
+*Alternative:* `ReaderT Env (StateT Editor IO)`, which would give actions the handles
+directly. Every action would change, and tests would need a full runtime.
+
+**ADR-24: The file picker streams, and large pickers filter in the background.**
+- **Walk:** `Him.FileTree.walkFiles` reads directories with a pool of up to 8 workers
+  over an STM queue. It takes entry types from `readdir` (`unix`'s
+  `readDirStreamWith`), so only links and unknown types are `stat`ed. Directory links
+  are followed (as in Helix), each target once, and never a link that contains itself.
+  On 200k files the walk went from 732 to about 370 ms (log 22).
+- **Streaming:** `space f` opens the picker at once, and a `ScanFiles` job sends files
+  in batches (every 5000 files or 100 ms). The count shows `…` while loading.
+- **Ranking:** each item has a precomputed lower-case key, file name and length. An
+  in-order character check rejects non-matches before scoring. Matches are bucketed by
+  rank, and only the best 1000 are kept, plus a total count (log 21). It still costs
+  about 75 ms when 200k items all match. So a picker of more than 20k items, with a
+  non-empty query, ranks in a `FilterPicker` job, and keeps showing its last matches
+  until the answer arrives. An answer for an older query is dropped.
+- **Ties:** among equal fuzzy scores, an exact first word or file name wins
+  (`goto_line` before `goto_line_end`), then the shorter label.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -339,6 +382,10 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Info` | ✅ | `refreshInfo`: the info box after a prefix key or on the `:` line (ADR-20). |
 | `Him.Ignore`, `Him.FileTree` | ✅ | The gitignore matcher (pure), and the ignore-aware breadth-first file walk for the picker (ADR-21). |
 | `Him.Directory`, `Him.Commands.Directory` | ✅ | Directory listings as read-only documents (`loadPath`, `loadDirectory`, `entryAt`, `selectEntry`), and their actions (ADR-22). |
+| `Him.Effect`, `Him.Runtime` | ✅ | Effects as data (`RunAction`, `OpenPalette`, `StartJob`, `CancelJob`) and the background-job runtime (ADR-23). |
+| `Him.Invocation` | ✅ | Pure invocation parsing/rendering (re-exported by `Him.Action`). |
+| `Him.Process`, `Him.Json` | ✅ | External programs with stdin/stdout/stderr; a JSON value type, parser and encoder. |
+| `Him.Palette` | ✅ | The command palette's rows: every action with its parameters, keys (from the config) and doc. |
 | `Him.Picker`, `Him.Commands.Picker` | ✅ | Pure picker (fuzzy matching, selection); `space f` / `space b` and the picker keys; `listFiles`. |
 | `Him.Action` | ✅ | Actions (name, group, doc, typed parameters), the registry, invocation parsing (`name arg "quoted arg"`), and binding to a runnable `Bound` (ADR-17). |
 | `Him.Command`, `Him.Keymap` | ✅ | `EditorM` and helpers for writing actions; per-mode keymap tries, generic in what they bind (`Keymap a`). |
@@ -405,6 +452,9 @@ Each milestone ends with something runnable, and with this file updated.
   `space d` / `space D`, `:cd`, `:pwd` (ADR-22).
 - [x] **20. File operations in listings.** `a`, `+`, `r`, `d` (with confirmation),
   and `g .` for dotfiles (ADR-22).
+- [x] **21. Foundation, palette, async picker** (roadmap phases 0–1). Effects and
+  background jobs (ADR-23), `:action`, `Him.Json`, `Him.Process`; the command palette
+  `space ?`; the streaming, parallel file picker with background filtering (ADR-24).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -429,7 +479,7 @@ Implemented (defined in `Him.Config.Default`):
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
 | `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
 | Directory listings | `:o dir`, `him dir`, `space d` (the current file's directory, cursor on the file), `space D` (the working directory). In a listing: normal motions and search, `ret` (enter a directory / open a file), `-` or `backspace` (parent), `g r` (refresh), `a` (new file, or directory with a trailing `/`), `+` (new directory), `r` (rename/move), `d` (delete the selected entries, asks `y`), `g .` (show/hide dotfiles). `:cd [dir]` (default: the listed directory), `:pwd`. |
-| Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker). In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
+| Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker), `space ?` (command palette: every action, its keys and doc; one with arguments opens `:action <name> `). `:action <invocation>` runs any action. In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
 
 Actions that take arguments, and have no default key yet: `move_char_left/right`,
 `move_line_up/down [count]`, `goto_line <line>`, `insert_text <text>`,
@@ -505,6 +555,12 @@ numbers are provisional.*
   and staging, 3 syntax highlighting (one common provider API; tree-sitter first,
   TextMate later behind the same interface), 4 the LSP client. Work through it in that
   order and tick phases off here.
+  - [x] Phase 0, foundation (milestone 21, ADR-23).
+  - [x] Phase 1, command palette and async picker (milestone 21, ADR-24).
+  - [ ] Phase 2, git signs and staging. **Next.** Start with `Him.Diff` (a pure Myers
+    diff with randomized tests), then `Him.Git` jobs, the gutter sign lane, and staging.
+  - [ ] Phase 3, syntax highlighting.
+  - [ ] Phase 4, LSP client.
 - **Next suggestions:**
   1. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
      matcher. `s` would get regexes for free.
@@ -522,7 +578,7 @@ numbers are provisional.*
   - `s` searches from each range's start, and a range without a match can scan on to
     the next match beyond it. With many ranges and few matches, that is slow.
   - Search (`/`, `n`) moves only the primary range.
-  - The file picker skips hidden entries and lists at most 50,000 files. It does not
+  - The file picker skips hidden entries and lists at most 500,000 files. It does not
     read the global gitignore (ADR-21).
   - A directory listing does not refresh by itself; `g r` lists it again.
   - Deleting a file leaves an open buffer for it (saving it recreates the file).
@@ -534,7 +590,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (308 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (336 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

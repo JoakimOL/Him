@@ -27,7 +27,8 @@ make ghci               # REPL
 make fmt / make lint    # format / lint
 ```
 
-In the editor, `space f` opens a file picker (it honours `.gitignore` and `.ignore`),
+In the editor, `space ?` lists every command with its keys, `space f` opens a file picker
+(it streams in the background and honours `.gitignore` and `.ignore`),
 `space b` a buffer picker, `space d` a directory listing (`ret` opens, `-` goes up, `a` /
 `+` / `r` / `d` create, rename and delete, `g .` shows dotfiles; also `:o dir` or
 `him dir`), and `:` shows
