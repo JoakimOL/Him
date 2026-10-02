@@ -51,6 +51,10 @@ data Effect
     OpenConfig
   | -- | Use the theme of this name; 'Nothing' shows which one is used.
     ChangeTheme !(Maybe Text)
+  | -- | Switch a plugin on or off (ADR-35); 'Nothing' lists them.
+    PluginCommand !(Maybe (Text, Bool))
+  | -- | Stop every language server (the LSP plugin was switched off).
+    LspStopAll
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were

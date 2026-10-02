@@ -152,6 +152,8 @@ data Editor = Editor
   , edPopup :: !(Maybe InfoBox)
   -- ^ A box shown until the next key (e.g. hover documentation).
   , edOptions :: !Options
+  , edSignLane :: !Bool
+  -- ^ The gutter has a sign lane (an enabled plugin draws there).
   -- ^ The settings (@[editor]@ in the config file).
   , edInfo :: !(Maybe InfoBox)
   , edCompletions :: ![Text]
@@ -190,6 +192,7 @@ newEditor size doc =
     , edCompletion = Nothing
     , edPopup = Nothing
     , edOptions = defaultOptions
+    , edSignLane = True
     , edInfo = Nothing
     , edCompletions = []
     , edRegisters = Map.empty

@@ -9,14 +9,21 @@ module Him.Config.Default
   , defaultBindings
   , configWith
   , allActions
+  , plugins
+  , allPlugins
+  , pluginOf
   , fallback
   ) where
 
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
-import Him.Action (Action)
-import Him.Command (EditorM)
+import Data.List (find)
+import Data.Text qualified as T
+import Him.Action (Action (..), Invocation (..), parseInvocation)
+import Him.Command (EditorM, failWith, request)
+import Him.Effect (Effect (..))
+import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Commands.CommandLine qualified as CommandLine
 import Him.Commands.Directory qualified as Directory
 import Him.Commands.Edit qualified as Edit
@@ -26,27 +33,59 @@ import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
 import Him.Commands.Picker qualified as Picker
 import Him.Commands.Search qualified as Search
-import Him.Config (Bindings, Config (..), buildConfig, overrideBindings)
-import Him.Ex (ExCommand)
+import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))
 import Him.Syntax (SyntaxProvider)
 import Him.Syntax.TreeSitter (treeSitter)
 
-allActions :: [Action]
-allActions =
+-- | Every plugin there is (ADR-35), in the order their hooks run.
+plugins :: [Plugin]
+plugins = [Git.gitPlugin, Lsp.lspPlugin]
+
+-- | All of them switched on (the default).
+allPlugins :: Set.Set Text
+allPlugins = Set.fromList (map plName plugins)
+
+-- | The plugin an action comes from, if any.
+pluginOf :: Text -> Maybe Plugin
+pluginOf name = find (\p -> name `elem` map actName (plActions p)) plugins
+
+-- | The core's actions, without the command-line ones (which need the
+-- @:@ commands, see 'actionsWith').
+coreActions :: [Action]
+coreActions =
   Motion.actions
     <> Edit.actions
     <> Search.actions
     <> File.actions
     <> Picker.actions
     <> Directory.actions
-    <> Git.actions
-    <> Lsp.actions
-    <> CommandLine.actions exCommands
 
-exCommands :: [ExCommand]
-exCommands = File.exCommands <> Lsp.exCommands
+-- | The actions with these plugins on.
+actionsWith :: [Plugin] -> [Action]
+actionsWith on = coreActions <> concatMap plActions on <> CommandLine.actions (exCommandsWith on)
+
+-- | Every action, of the core and of every plugin (for the dumped config).
+allActions :: [Action]
+allActions = actionsWith plugins
+
+exCommandsWith :: [Plugin] -> [ExCommand]
+exCommandsWith on = File.exCommands <> pluginCommands <> concatMap plExCommands on
+
+-- | Switching plugins while running (carried out by the main loop).
+pluginCommands :: [ExCommand]
+pluginCommands =
+  [ ExCommand ["plugins"] "List the plugins and whether they are on" NoArgs $ \_ -> request (PluginCommand Nothing)
+  , ExCommand ["plugin-enable"] "Switch a plugin on" (NameArgs names) $ \case
+      [name] -> request (PluginCommand (Just (name, True)))
+      _ -> failWith ("usage: :plugin-enable <name> (" <> T.intercalate ", " names <> ")")
+  , ExCommand ["plugin-disable"] "Switch a plugin off" (NameArgs names) $ \case
+      [name] -> request (PluginCommand (Just (name, False)))
+      _ -> failWith ("usage: :plugin-disable <name> (" <> T.intercalate ", " names <> ")")
+  ]
+  where
+    names = map plName plugins
 
 -- | Movement keys shared by normal, select and insert mode.
 arrowBindings :: [(Text, Text)]
@@ -108,25 +147,6 @@ normalBindings =
        , ("space ?", "command_palette")
        , ("space d", "directory_of_buffer")
        , ("space D", "directory_of_cwd")
-       , ("space g s", "git_stage_selection")
-       , ("space g u", "git_unstage_selection")
-       , ("space g S", "git_stage_file")
-       , ("space g U", "git_unstage_file")
-       , ("space g r", "git_reset_selection")
-       , ("space k", "lsp_hover")
-       , ("space x", "diagnostics_picker")
-       , ("g d", "goto_definition")
-       , ("g r", "goto_references")
-       , ("g y", "goto_type_definition")
-       , ("g i", "goto_implementation")
-       , ("space r", "rename_symbol")
-       , ("space a", "code_action")
-       , ("space s", "document_symbols")
-       , ("space S", "workspace_symbols")
-       , ("] d", "goto_next_diagnostic")
-       , ("[ d", "goto_prev_diagnostic")
-       , ("] g", "goto_next_change")
-       , ("[ g", "goto_prev_change")
        , ("g n", "buffer_next")
        , ("g p", "buffer_previous")
        , ("i", "insert_mode")
@@ -155,7 +175,6 @@ insertBindings =
        , ("tab", "insert_tab")
        , ("backspace", "delete_char_backward")
        , ("del", "delete_char_forward")
-       , ("C-x", "completion")
        ]
 
 commandBindings :: [(Text, Text)]
@@ -164,19 +183,6 @@ commandBindings =
   , ("ret", "cmdline_execute")
   , ("tab", "cmdline_complete")
   , ("backspace", "cmdline_backspace")
-  ]
-
--- | Insert mode with the completion menu open is insert mode with these.
-completionBindings :: [(Text, Text)]
-completionBindings =
-  [ ("tab", "completion_next")
-  , ("C-n", "completion_next")
-  , ("down", "completion_next")
-  , ("S-tab", "completion_previous")
-  , ("C-p", "completion_previous")
-  , ("up", "completion_previous")
-  , ("ret", "completion_accept")
-  , ("esc", "completion_cancel")
   ]
 
 -- | Normal mode in a directory listing is normal mode with these.
@@ -208,10 +214,17 @@ pickerBindings =
   , ("backspace", "picker_backspace")
   ]
 
--- | The default bindings. Select mode also gets normal mode's bindings
--- (see 'Him.Config.inheritsFrom').
+-- | The default bindings, of the core and every plugin. Select mode also
+-- gets normal mode's bindings (see 'Him.Config.inheritsFrom').
 defaultBindings :: Bindings
-defaultBindings =
+defaultBindings = bindingsWith plugins
+
+-- | The core's bindings, then the plugins'.
+bindingsWith :: [Plugin] -> Bindings
+bindingsWith on = foldl' (Map.unionWith (<>)) coreBindings (map plBindings on)
+
+coreBindings :: Bindings
+coreBindings =
   Map.fromList
     [ (Normal, normalBindings)
     , (Select, selectBindings)
@@ -219,19 +232,29 @@ defaultBindings =
     , (CmdLine, commandBindings)
     , (Picking, pickerBindings)
     , (Directory, directoryBindings)
-    , (Completing, completionBindings)
     ]
 
--- | The default configuration. Every binding is checked against the
--- actions; an error lists each bad binding.
+-- | The default configuration: every plugin on. Every binding is checked
+-- against the actions; an error lists each bad binding.
 defaultConfig :: Either Text Config
-defaultConfig = configWith Map.empty
+defaultConfig = configWith allPlugins Map.empty
 
--- | The defaults with some bindings replaced, e.g. from a config file.
-configWith :: Bindings -> Either Text Config
-configWith user = do
-  config <- buildConfig allActions (overrideBindings user defaultBindings) fallback
-  pure config {cfgExCommands = exCommands, cfgPrefixNames = prefixNames, cfgSyntaxProviders = syntaxProviders}
+-- | The configuration with these plugins on, and the user's bindings over
+-- the defaults. User bindings to a switched-off plugin's actions are left
+-- out (they come back with the plugin).
+configWith :: Set.Set Text -> Bindings -> Either Text Config
+configWith enabled user = do
+  let on = [p | p <- plugins, plName p `Set.member` enabled]
+      offActions = Set.fromList [actName a | p <- plugins, plName p `Set.notMember` enabled, a <- plActions p]
+      usable (_, inv) = either (const True) ((`Set.notMember` offActions) . invAction) (parseInvocation inv)
+  config <- buildConfig (actionsWith on) (overrideBindings (Map.map (filter usable) user) (bindingsWith on)) fallback
+  pure
+    config
+      { cfgExCommands = exCommandsWith on
+      , cfgPrefixNames = prefixNames <> Map.fromList (concatMap plPrefixNames on)
+      , cfgSyntaxProviders = syntaxProviders
+      , cfgPlugins = on
+      }
 
 -- | Highlighters, tried in order for each language (ADR-26). A TextMate
 -- provider would be added here, and nowhere else.
@@ -244,7 +267,6 @@ prefixNames =
   Map.fromList
     [ ([plain (KChar 'g')], "goto")
     , ([plain (KChar ' ')], "space")
-    , ([plain (KChar ' '), plain (KChar 'g')], "git")
     , ([plain (KChar ']')], "next")
     , ([plain (KChar '[')], "previous")
     ]

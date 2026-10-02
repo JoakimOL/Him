@@ -663,6 +663,47 @@ Still constants, on purpose: undo levels, gutter glyphs, the language table, the
 start timeout, and the internal tuning values (`maxBatch`, `chunkSize`, `mergeGap`,
 `syncLimit`, `matchLimit`, `maxEdits`, the scan batching, `highlightMargin`).
 
+**ADR-35: Git and the LSP client are plugins.**
+A `Plugin` (in `Him.Config`) names everything a feature adds:
+- its actions, default bindings, `:` commands and key-prefix titles;
+- whether it draws in the gutter's sign lane;
+- hooks: housekeeping after every event, `plBeforeRender` once per input batch, and
+  `plJobResult` for every job result;
+- `plEnable` / `plDisable` for switching it while running.
+
+The core folds over `cfgPlugins` (the enabled ones) where it used to call git and LSP
+code by name: `App.housekeeping`, the job-result dispatch, and the per-batch flush.
+`Config.Default.configWith enabled userBindings` builds the config:
+- the core's actions and bindings, plus those of the enabled plugins;
+- the user's bindings on top, minus those that name a switched-off plugin's actions
+  (they come back with the plugin, rather than failing the config).
+
+How plugins are switched:
+- **At startup:** `[plugins] git = false` (all are on by default).
+- **While running:** `:plugin-enable` / `:plugin-disable <name>` (`tab` completes the
+  names; `ExArgs` gained `NameArgs`), and `:plugins` lists them. The loop keeps the
+  `UserConfig`, makes the config again with the new set, and runs the hooks of the
+  plugins that came and went (`switchPlugins`; `:config-reload` uses it too).
+  - Switching git off resets every document's git state, so no signs are left.
+    Switching it on looks every document up again.
+  - Switching the LSP off sends `LspStopAll`, which the runtime turns into stopping
+    every server. It also clears `edLsp`, the attachments, the completion menu and
+    the popups.
+- **Gutter:** the sign lane exists only while a sign-drawing plugin is on
+  (`edSignLane`).
+
+Coupling that remains, on purpose:
+- Plugin state still lives in `Document` (`docGit`, `docLsp`) and `Editor` (`edLsp`).
+- `Effect`, `Job` and `JobResult` keep their plugin constructors.
+- Rendering reads that state directly. With the plugin off, the state is empty, so
+  nothing is drawn.
+- A few core actions call LSP functions: the rename prompt, code-action and
+  workspace-symbol pickers. They are only reachable through LSP actions.
+
+Making these generic (state as `Dynamic`, plugin-provided gutter lanes) would cost
+type safety for no user-visible gain yet. Syntax highlighting could become a plugin the
+same way.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -805,6 +846,8 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **31. Settings.** Tab width, expand-tab, relative line numbers, cursor shapes,
   completion, search, file-picker and preview settings, and the escape timeout, all
   from one table (ADR-34).
+- [x] **32. Plugins.** Git and LSP as plugins: `[plugins]`, `:plugins`,
+  `:plugin-enable`, `:plugin-disable` (ADR-35).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -870,7 +913,7 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-02. Themes and settings (milestones 30–31, ADR-33/34) are done. Benchmarking
+*Last updated 2026-10-02. Themes, settings and plugins (milestones 30–32, ADR-33/34/35) are done. Benchmarking
 is **on hold**: the user was using the machine during the runs, so this session's
 numbers are provisional.*
 
@@ -890,7 +933,7 @@ numbers are provisional.*
      (`maxBatch`, `chunkSize`, `mergeGap`, `syncLimit`, `matchLimit`, `maxEdits`,
      scan batching, `highlightMargin`) stay constants, possibly gathered in one module
      with their reasons.
-  3. [ ] **Plugins** (the user's request, 2026-10-02): git and LSP (maybe syntax)
+  3. [x] **Plugins** (ADR-35, milestone 32). The request (2026-10-02): git and LSP (maybe syntax)
      become plugins that can be switched off in the config (`[plugins]`) and at run
      time (`:plugin-enable`, `:plugin-disable`, `:plugins`). A disabled plugin has no
      actions, keys, `:` commands, gutter lane, housekeeping or state. This is the core
@@ -907,6 +950,16 @@ numbers are provisional.*
        `Runtime.runJob`;
      - rename `Him.Command` → `Him.EditorM` and `Him.Commands.*` → `Him.Actions.*`;
      - split `test/Spec.hs` into `test/Test/*`.
+  6. [ ] **A REPL plugin** (the user's request, 2026-10-02): it opens a split with a
+     REPL (a process: `ghci`, `python3`, … per language, configurable). You can type
+     into it by hand, and a key sends the selection from the file to it. Set it up so
+     it is useful for testing while developing, e.g. `stack ghci` in a Haskell project
+     loads the project, `:reload` after saving, and the selection runs as an
+     expression. It needs splits (5) and a buffer that holds a process's output and
+     takes input.
+  7. [ ] **Benchmark again** (the user's request, 2026-10-02) against Helix and Vim,
+     also with plugins on and off, and apply low-hanging optimizations that keep the
+     code readable. See "Benchmarking on hold" below for where it stopped.
   5. [ ] **Splits (windows)**, with Helix's keys: `C-w` / `space w` then `v`/`s` (split
      vertically/horizontally), `h j k l` / `C-h …` (focus), `w` (next), `q` (close), `o`
      (only), `H J K L` (swap); `:vsplit`/`:hsplit` (`:vs`, `:hs`) with an optional file.
@@ -1004,7 +1057,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (490 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (494 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

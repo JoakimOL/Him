@@ -18,13 +18,18 @@ import Him.Render.Theme
 import Him.Selection (primary, rangeHead)
 import Him.View (View (..))
 
--- | Width of the gutter: a column for git signs, the digits of the largest
--- line number (at least three; none when line numbers are off), and one
--- column of padding.
+-- | Width of the gutter: a column for signs (when a plugin draws them), the
+-- digits of the largest line number (at least three; none when line
+-- numbers are off), and one column of padding.
 gutterWidth :: Editor -> Int
-gutterWidth ed = case optLineNumbers (edOptions ed) of
-  LineNumbersOff -> 2
-  _ -> 1 + max 3 (length (show (lineCount (docBuffer (edDoc ed))))) + 1
+gutterWidth ed = signLane ed + numbers + 1
+  where
+    numbers = case optLineNumbers (edOptions ed) of
+      LineNumbersOff -> 0
+      _ -> max 3 (length (show (lineCount (docBuffer (edDoc ed)))))
+
+signLane :: Editor -> Int
+signLane ed = if edSignLane ed then 1 else 0
 
 drawGutter :: Theme -> Editor -> Rect -> Frame -> Frame
 drawGutter theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 1]
@@ -32,7 +37,8 @@ drawGutter theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 
     doc = edDoc ed
     top = viewTop (edView ed)
     current = posLine (rangeHead (primary (docSelection doc)))
-    digits = rectWidth rect - 2
+    lane = signLane ed
+    digits = rectWidth rect - 1 - lane
     signs = maybe mempty (\t -> gitSigns t top (top + rectHeight rect - 1)) (tracking (docGit doc))
     -- Diagnostics win over git signs: the most severe on each line.
     diagnostics =
@@ -40,8 +46,8 @@ drawGutter theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 
     drawRow f r
       | line >= lineCount (docBuffer doc) = f
       | otherwise =
-          putText (rectRow rect + r) (rectCol rect + 1) style label $
-            putText (rectRow rect + r) (rectCol rect) signStyle signText f
+          putText (rectRow rect + r) (rectCol rect + lane) style label $
+            if lane == 0 then f else putText (rectRow rect + r) (rectCol rect) signStyle signText f
       where
         line = top + r
         style = if line == current then themeGutterCurrent theme else themeGutter theme

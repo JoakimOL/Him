@@ -14,13 +14,16 @@ import Him.Action
 import Him.App (handleEvent)
 import Him.Buffer qualified as B
 import Data.Map.Strict qualified as Map
-import Him.Config (Config (..))
-import Him.Config.Default (allActions, configWith, defaultConfig)
+import Data.Set qualified as Set
+import Him.Config (Config (..), Plugin (..))
+import Him.Commands.Git (gitPlugin)
+import Him.Commands.Lsp (lspPlugin)
+import Him.Config.Default (allPlugins, allActions, configWith, defaultConfig)
 import Him.Document
 import Him.Edit
 import Him.Editor
 import Him.Event (Event (..))
-import Him.Ex (parseExLine)
+import Him.Ex (ExCommand (..), parseExLine)
 import Him.Search (Direction (..), Match (..), compileNeedle, findMatch, selectMatches)
 import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
@@ -108,7 +111,7 @@ rebindTests :: IO [Test]
 rebindTests = do
   config <-
     either (fail . T.unpack) pure $
-      configWith
+      configWith allPlugins
         ( Map.fromList
             [ (Normal, [("C-d", "move_line_down 2"), ("j", "no_op"), ("space i", "insert_text \"// \""), ("Q", "ex q!"), ("g 3", "goto_line 3"), ("F", "search_text two")])
             , (Insert, [("C-a", "set_mode normal")])
@@ -137,7 +140,7 @@ rebindTests = do
   idsAfter <- typeKeys ": n ret" idsBefore
   idsTyped <- typeKeys "i a b esc" idsBefore
   let badConfig =
-        configWith
+        configWith allPlugins
           ( Map.fromList
               [ (Normal, [("a", "fly"), ("b", "goto_line")])
               , (Insert, [("C-x", "set_mode command")])
@@ -520,6 +523,7 @@ main = do
     , group "Him.Toml" tomlTests
     , group "Him.UserConfig" userConfigTests
     , group "Him.Theme" themeTests
+    , group "plugins" pluginTests
     , group "a remapping config file, through the keys" remapIO
     , group "LSP client (with clangd)" lspIO
     , group "highlighting through a provider" syntaxIO
@@ -1139,6 +1143,36 @@ tomlTests =
         [parseToml "k = 1\nk = 2", parseToml "k 1", parseToml "k = \"abc"]
   ]
 
+pluginTests :: [Test]
+pluginTests =
+  [ test "a plugin switched off has no actions, keys or : commands; user keys to it are left out" $
+      let c = either (error . T.unpack) id $ configWith (Set.fromList ["git"]) (Map.fromList [(Normal, [("Z", "goto_definition"), ("Y", "goto_next_change")])])
+          normal = Map.findWithDefault emptyKeymap Normal (cfgKeymaps c)
+          found ks = case resolve normal (fromMaybe [] (parseKeys ks)) of
+            Found _ -> True
+            _ -> False
+       in assertEqual
+            (Nothing, True, [False, False, True, True], False, ["git"])
+            ( fmap actName (lookupAction "goto_definition" (cfgActions c))
+            , isJust (lookupAction "git_stage_file" (cfgActions c))
+            , map found ["g d", "Z", "] g", "Y"]
+            , any (("lsp-info" `elem`) . exNames) (cfgExCommands c)
+            , map plName (cfgPlugins c)
+            )
+  , test "[plugins] switches plugins off; unknown names are errors" $
+      assertEqual
+        (Right (Set.fromList ["git"]), Left ["unknown plugin gti (known: git, lsp)"])
+        (enabledPlugins <$> parseUserConfig "[plugins]\nlsp = false\n", parseUserConfig "[plugins]\ngti = false\n")
+  , test "without sign-drawing plugins the gutter has no sign lane" $
+      let ed = (newEditor (5, 40) (newDocument Nothing (buf "hello"))) {edSignLane = False}
+       in assertEqual "  1 hello" (T.take 9 (rowText (render defaultTheme Nothing ed) 0))
+  , test "switching git off forgets the signs; switching the LSP off stops the servers" $
+      let ed = newEditor (5, 40) (newDocument Nothing (buf "x"))
+          gitOff = runNoIO (plDisable gitPlugin) ed {edDoc = (edDoc ed) {docGit = GitOutside}}
+          lspOff = runNoIO (plDisable lspPlugin) ed {edDoc = (edDoc ed) {docLsp = LspNone}}
+       in assertEqual (GitUnknown, LspUnknown, [LspStopAll]) (docGit (edDoc gitOff), docLsp (edDoc lspOff), edEffects lspOff)
+  ]
+
 themeTests :: [Test]
 themeTests =
   [ test "colours: palette (also chained), hex, #rgb, index, names, default" $
@@ -1207,7 +1241,7 @@ userConfigTests =
           assertEqual (Right defaultServers) (cfgServers <$> applyUserConfig uc)
   , test "unknown sections, modes and settings are reported, all of them" $
       assertEqual
-        (Left ["unknown section [keyz] (known: editor, keys, language-server)", "unknown setting editor.tabs (known in [editor]: scrolloff, show-hidden-files, tab-width, expand-tab, line-number, escape-timeout)", "unknown mode [keys.nromal] (known: normal, select, insert, command, picker, directory, completion)"])
+        (Left ["unknown section [keyz] (known: editor, keys, language-server, plugins)", "unknown setting editor.tabs (known in [editor]: scrolloff, show-hidden-files, tab-width, expand-tab, line-number, escape-timeout)", "unknown mode [keys.nromal] (known: normal, select, insert, command, picker, directory, completion)"])
         (parseUserConfig "[keyz]\n[editor]\ntabs = 2\n[keys.nromal]\n")
   , test "a binding must be an action in quotes" $
       assertEqual (Left ["keys.normal.j: the value must be an action in quotes, e.g. \"move_line_down\""]) (parseUserConfig "[keys.normal]\nj = 5\n")

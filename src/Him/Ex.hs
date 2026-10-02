@@ -20,8 +20,9 @@ data ExCommand = ExCommand
   -- ^ Receives the whitespace-separated arguments.
   }
 
--- | What the arguments are, for completion.
-data ExArgs = NoArgs | PathArgs | ThemeArgs
+-- | What the arguments are, for completion: paths, theme names, or one of
+-- a fixed list of names.
+data ExArgs = NoArgs | PathArgs | ThemeArgs | NameArgs [Text]
   deriving stock (Eq, Show)
 
 -- | Split a command line into a command name and its arguments.

@@ -4,7 +4,8 @@
 -- diagnostics. Messages are built and read as pure data; the runtime only
 -- moves them ("Him.Lsp.Server").
 module Him.Commands.Lsp
-  ( actions
+  ( lspPlugin
+  , actions
   , lspHousekeeping
   , lspFlush
   , applyLspResult
@@ -40,6 +41,7 @@ import Him.Lsp.State
 import Him.Lsp.Sync (syncMessages)
 import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Mode (Mode (..))
+import Him.Config (Plugin (..), plugin)
 import Data.Sequence qualified as Seq
 import Him.Picker (PickTarget (..), Picker (..), PickerSource (..), fuzzyScore, labelWidth, matchLimit, newPicker, pickerItem)
 import System.FilePath (makeRelative)
@@ -49,6 +51,61 @@ import Him.History (Snapshot (..), beginChange)
 import Him.Lsp.Edit
 import Him.Selection (Range (..), mapRanges, point, primary, rangeEnd, rangeHead, rangeStart, single)
 import System.Directory (makeAbsolute)
+
+-- | The language-server client (ADR-29) as a plugin (ADR-35).
+lspPlugin :: Plugin
+lspPlugin =
+  (plugin "lsp" "Language servers: diagnostics, hover, go to, completion, rename, format, code actions")
+    { plActions = actions
+    , plBindings =
+        Map.fromList
+          [ ( Normal
+            ,
+              [ ("space k", "lsp_hover")
+              , ("space x", "diagnostics_picker")
+              , ("g d", "goto_definition")
+              , ("g r", "goto_references")
+              , ("g y", "goto_type_definition")
+              , ("g i", "goto_implementation")
+              , ("space r", "rename_symbol")
+              , ("space a", "code_action")
+              , ("space s", "document_symbols")
+              , ("space S", "workspace_symbols")
+              , ("] d", "goto_next_diagnostic")
+              , ("[ d", "goto_prev_diagnostic")
+              ]
+            )
+          , (Insert, [("C-x", "completion")])
+          , -- Insert mode with the completion menu open is insert mode with these.
+            ( Completing
+            ,
+              [ ("tab", "completion_next")
+              , ("C-n", "completion_next")
+              , ("down", "completion_next")
+              , ("S-tab", "completion_previous")
+              , ("C-p", "completion_previous")
+              , ("up", "completion_previous")
+              , ("ret", "completion_accept")
+              , ("esc", "completion_cancel")
+              ]
+            )
+          ]
+    , plExCommands = exCommands
+    , plSigns = True
+    , plHousekeeping = lspHousekeeping >> completionHousekeeping
+    , plBeforeRender = lspFlush
+    , plJobResult = applyLspResult
+    , -- Documents attach again as they are shown.
+      plEnable = modify' (mapDocuments (\d -> d {docLsp = LspUnknown}))
+    , plDisable = do
+        request LspStopAll
+        modify' $ \e ->
+          (mapDocuments (\d -> d {docLsp = LspUnknown}) e)
+            { edLsp = emptyLsp
+            , edCompletion = Nothing
+            , edPopup = Nothing
+            }
+    }
 
 actions :: [Action]
 actions =

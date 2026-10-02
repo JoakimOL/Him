@@ -20,19 +20,17 @@ import Him.Action (Bound (..), bindInvocation)
 import Him.Effect (Effect (..))
 import Him.Command (failWith)
 import Him.Command qualified as Command
-import Him.Config (Config (..))
+import Him.Config (Config (..), Plugin (..))
 import Him.Commands.Search (refreshSearchPreview)
-import Him.Config.Default (defaultConfig)
+import Him.Config.Default (allPlugins, defaultConfig, plugins)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
-import Him.Commands.Git qualified as Git
 import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
 import Him.Commands.Picker qualified as Picker
-import Him.Commands.Lsp qualified as Lsp
 import Him.Commands.Syntax qualified as Syntax
 import Him.Info (refreshInfo)
-import Him.UserConfig (UserConfig (..), applyEditorOptions, userOptions, applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
+import Him.UserConfig (UserConfig (..), applyEditorOptions, applyUserConfigWith, userOptions, applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Control.Monad.IO.Class (liftIO)
 import System.Directory (doesFileExist)
@@ -79,11 +77,12 @@ run files = do
     runtime <- newRuntime (cfgSyntaxProviders config) (cfgServers config) (atomically . writeTChan events)
     -- Start what the first document needs (its git state) before any key.
     let opened = applyEditorOptions userConfig (openAll size docs)
-    start <- execStateT housekeeping opened {edStatus = Status Error <$> (problem <|> themeProblem)}
+    start <- execStateT (housekeeping config) (withPlugins config opened) {edStatus = Status Error <$> (problem <|> themeProblem)}
     mapM_ (Runtime.perform runtime) (edEffects start)
     configRef <- newIORef config
+    userRef <- newIORef userConfig
     themeRef <- newIORef theme
-    eventLoop (Session configRef themeRef trueColor) runtime suspend events start {edEffects = []}
+    eventLoop (Session configRef userRef themeRef trueColor) runtime suspend events start {edEffects = []}
     Runtime.shutdown runtime
 
 -- | The config: the user's file on top of the defaults. On a problem, the
@@ -119,10 +118,11 @@ loadNamedTheme trueColor name =
       mapM_ (\w -> logMsg ("theme " <> T.unpack name <> ": " <> T.unpack w)) warnings
       pure (Right theme)
 
--- | What the loop keeps besides the editor: the config and the theme
--- (both replaced by :config-reload and :theme), and whether the terminal
+-- | What the loop keeps besides the editor: the config, the user's config
+-- it was made from (to make it again with other plugins), the theme (all
+-- replaced by :config-reload, :plugin-*, :theme), and whether the terminal
 -- shows 24-bit colour.
-data Session = Session (IORef Config) (IORef Theme) Bool
+data Session = Session (IORef Config) (IORef UserConfig) (IORef Theme) Bool
 
 -- | An editor showing the first document, with the others open behind it.
 openAll :: (Int, Int) -> [Document] -> Editor
@@ -137,12 +137,13 @@ maxBatch :: Int
 maxBatch = 512
 
 eventLoop :: Session -> Runtime -> IO () -> TChan Event -> Editor -> IO ()
-eventLoop (Session configRef themeRef trueColor) runtime suspend events = go Nothing
+eventLoop (Session configRef userRef themeRef trueColor) runtime suspend events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
-      -- Once per batch: hand the language server the text as it is now.
-      flushed <- execStateT Lsp.lspFlush ed0
+      -- Once per batch, e.g. hand the language server the text as it is now.
+      config <- readIORef configRef
+      flushed <- execStateT (mapM_ plBeforeRender (cfgPlugins config)) ed0
       mapM_ (Runtime.perform runtime) (edEffects flushed)
       theme <- readIORef themeRef
       -- After a suspend the terminal was cleared: draw everything.
@@ -161,19 +162,38 @@ eventLoop (Session configRef themeRef trueColor) runtime suspend events = go Not
       case problem of
         Just e -> pure ed {edStatus = Just (Status Error e)}
         Nothing -> do
+          old <- readIORef configRef
           writeIORef configRef config
+          writeIORef userRef uc
           Runtime.setServerTable runtime (cfgServers config)
+          switched <- execStateT (switchPlugins old config) ed
           -- The theme too (its file may have changed); everything is
           -- drawn again in its colours.
           themed <-
             themeOf trueColor uc >>= \case
               Left e -> pure (Just (Status Error e))
               Right theme -> Nothing <$ writeIORef themeRef theme
-          pure (applyEditorOptions uc ed) {edStatus = Just (fromMaybe (Status Info "config reloaded") themed), edRepaint = True}
+          pure (applyEditorOptions uc switched) {edStatus = Just (fromMaybe (Status Info "config reloaded") themed), edRepaint = True}
+
+    -- :plugin-enable / :plugin-disable: the config made again with the
+    -- plugin on or off, and the plugin told.
+    setPlugin ed name on = do
+      old <- readIORef configRef
+      uc <- readIORef userRef
+      let enabled = (if on then Set.insert else Set.delete) name (Set.fromList (map plName (cfgPlugins old)))
+      if name `Set.notMember` allPlugins
+        then pure ed {edStatus = Just (Status Error ("unknown plugin " <> name))}
+        else case applyUserConfigWith enabled uc of
+          Left e -> pure ed {edStatus = Just (Status Error e)}
+          Right config -> do
+            writeIORef configRef config
+            switched <- execStateT (switchPlugins old config) ed
+            pure switched {edStatus = Just (Status Info (name <> (if on then " on" else " off"))), edRepaint = True}
 
     loopEffect ed = \case
       ReloadConfig -> reloadConfig ed
       ChangeTheme t -> changeTheme ed t
+      PluginCommand (Just (name, on)) -> setPlugin ed name on
       Suspend -> do
         suspend
         -- The window may have changed meanwhile.
@@ -218,17 +238,16 @@ eventLoop (Session configRef themeRef trueColor) runtime suspend events = go Not
           execStateT (failWith ("internal error: " <> T.pack (show e))) ed
 
 handleEvent :: Config -> Event -> Command.EditorM ()
-handleEvent _ (EvResize rows cols) = do
+handleEvent config (EvResize rows cols) = do
   modify' (\e -> e {edSize = (rows, cols)})
   -- More lines may be visible now; they need highlighting.
-  housekeeping
+  housekeeping config
 handleEvent config (EvJob result) = do
   Picker.applyJobResult result
-  Git.applyGitResult result
   Syntax.applySyntaxResult result
-  Lsp.applyLspResult result
+  mapM_ (`plJobResult` result) (cfgPlugins config)
   runEffects config
-  housekeeping
+  housekeeping config
 handleEvent config (EvKey key) = do
   -- A key some command waits for (the character after f) is that
   -- command's, not the keymap's.
@@ -272,21 +291,36 @@ afterKey :: Config -> Command.EditorM ()
 afterKey config = do
   runEffects config
   commitOutsideInsert
-  housekeeping
+  housekeeping config
   modify' (refreshInfo config)
 
--- | Keep the current document's background state current (git signs,
--- highlighting): it asks for jobs when something changed.
-housekeeping :: Command.EditorM ()
-housekeeping = do
+-- | Keep the current document's background state current (highlighting,
+-- and whatever the plugins track): it asks for jobs when something
+-- changed.
+housekeeping :: Config -> Command.EditorM ()
+housekeeping config = do
   -- The view moves with the cursor before rendering; follow it here too,
   -- so highlighting asks for the lines that will be shown.
   modify' ensureCursorVisible
-  Git.gitHousekeeping
   Syntax.syntaxHousekeeping
-  Lsp.lspHousekeeping
-  Lsp.completionHousekeeping
+  mapM_ plHousekeeping (cfgPlugins config)
   Picker.pickerHousekeeping
+
+-- | What the editor needs to know about the enabled plugins.
+withPlugins :: Config -> Editor -> Editor
+withPlugins config ed = ed {edSignLane = any plSigns (cfgPlugins config)}
+
+-- | Going from one config's plugins to another's: the ones switched off
+-- clear up, the ones switched on start, and the gutter follows.
+switchPlugins :: Config -> Config -> Command.EditorM ()
+switchPlugins old new = do
+  let names = Set.fromList . map plName . cfgPlugins
+      gone = [p | p <- cfgPlugins old, plName p `Set.notMember` names new]
+      added = [p | p <- cfgPlugins new, plName p `Set.notMember` names old]
+  mapM_ plDisable gone
+  mapM_ plEnable added
+  modify' (withPlugins new)
+  housekeeping new
 
 -- | Carry out the effects the key's action requested that need the config
 -- (ADR-23). An action run this way may request more; a chain is cut off
@@ -308,6 +342,7 @@ runEffects config = go (8 :: Int)
       RunAction _ -> True
       OpenPalette -> True
       OpenConfig -> True
+      PluginCommand Nothing -> True
       _ -> False
     perform = \case
       StartJob _ -> pure ()
@@ -317,6 +352,12 @@ runEffects config = go (8 :: Int)
       Suspend -> pure ()
       ReloadConfig -> pure ()
       ChangeTheme _ -> pure ()
+      LspStopAll -> pure ()
+      PluginCommand (Just _) -> pure ()
+      PluginCommand Nothing ->
+        let on = map plName (cfgPlugins config)
+            describe p = plName p <> (if plName p `elem` on then " (on)" else " (off)")
+         in Command.info ("plugins: " <> T.intercalate ", " (map describe plugins))
       OpenConfig -> do
         path <- liftIO configPath
         exists <- liftIO (doesFileExist path)

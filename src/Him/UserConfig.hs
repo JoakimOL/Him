@@ -27,6 +27,8 @@ module Him.UserConfig
   , loadUserConfig
   , configPath
   , applyUserConfig
+  , applyUserConfigWith
+  , enabledPlugins
   , applyEditorOptions
   , userOptions
   , defaultConfigText
@@ -43,8 +45,9 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Him.Action
-import Him.Config (Bindings, Config (..))
-import Him.Config.Default (allActions, configWith, defaultBindings)
+import Him.Config (Bindings, Config (..), Plugin (..))
+import Data.Set qualified as Set
+import Him.Config.Default (allActions, allPlugins, configWith, defaultBindings, pluginOf, plugins)
 import Him.Editor (Editor (..))
 import Him.Json hiding (path)
 import Him.Lsp.Config (ServerConfig (..), ServerTable, defaultServers)
@@ -59,6 +62,8 @@ data UserConfig = UserConfig
   , ucEditor :: ![(Text, Value)]
   -- ^ Settings by key ('Him.Options.optionSpecs'), already checked.
   , ucTheme :: !(Maybe Text)
+  , ucPlugins :: !(Map Text Bool)
+  -- ^ Plugins switched on or off (@[plugins]@); the rest are on.
   , ucServers :: !(Map Text ServerOverride)
   }
   deriving stock (Eq, Show)
@@ -75,7 +80,7 @@ data ServerOverride = ServerOverride
   deriving stock (Eq, Show)
 
 emptyUserConfig :: UserConfig
-emptyUserConfig = UserConfig Map.empty [] Nothing Map.empty
+emptyUserConfig = UserConfig Map.empty [] Nothing Map.empty Map.empty
 
 -- | The sections of @[keys]@, by mode.
 modeSections :: [(Text, Mode)]
@@ -114,7 +119,16 @@ parseUserConfig src = do
       ("editor", v) -> editor v
       ("keys", v) -> keys v
       ("language-server", v) -> servers v
-      (other, _) -> Left ["unknown section [" <> other <> "] (known: editor, keys, language-server)"]
+      ("plugins", v) -> pluginSection v
+      (other, _) -> Left ["unknown section [" <> other <> "] (known: editor, keys, language-server, plugins)"]
+    pluginSection v = do
+      kvs <- table "[plugins]" v
+      ps <- collect (map pluginKey kvs)
+      Right (\c -> c {ucPlugins = Map.fromList ps})
+    pluginKey = \case
+      (name, JBool b) | Set.member name allPlugins -> Right (name, b)
+      (name, _) | Set.member name allPlugins -> Left ["plugins." <> name <> " must be true or false"]
+      (name, _) -> Left ["unknown plugin " <> name <> " (known: " <> T.intercalate ", " (Set.toList allPlugins) <> ")"]
     editor v = do
       kvs <- table "[editor]" v
       fs <- collect (concatMap editorKey kvs)
@@ -165,8 +179,16 @@ parseUserConfig src = do
 -- | The configuration with the user's changes: bindings on top of the
 -- defaults (validated), servers changed or added.
 applyUserConfig :: UserConfig -> Either Text Config
-applyUserConfig uc = do
-  config <- configWith (ucBindings uc)
+applyUserConfig uc = applyUserConfigWith (enabledPlugins uc) uc
+
+-- | The plugins a config switches on: all but those it turns off.
+enabledPlugins :: UserConfig -> Set.Set Text
+enabledPlugins uc = Set.filter (\name -> Map.findWithDefault True name (ucPlugins uc)) allPlugins
+
+-- | The same with other plugins on (switching them while running).
+applyUserConfigWith :: Set.Set Text -> UserConfig -> Either Text Config
+applyUserConfigWith enabled uc = do
+  config <- configWith enabled (ucBindings uc)
   servers <- applyServers (ucServers uc) defaultServers
   pure config {cfgServers = servers}
 
@@ -220,6 +242,10 @@ defaultConfigText =
     , "# \"no_op\" unbinds a key. All actions are listed at the end."
     ]
       <> concatMap optionBlock optionSections
+      <> [ ""
+         , "[plugins]   # features that can be switched off (also :plugin-disable, :plugin-enable)"
+         ]
+      <> [T.justifyLeft 34 ' ' (plName p <> " = true") <> " # " <> plDoc p | p <- plugins]
       <> concatMap modeBlock modeSections
       <> concatMap serverBlock (Map.toList defaultServers)
       <> [ ""
@@ -252,7 +278,7 @@ defaultConfigText =
       Completing -> "   # insert mode with the completion menu open; also every insert-mode key"
       _ -> ""
     describe inv = case parseInvocation inv >>= \i -> maybe (Left "") Right (lookupAction (invAction i) registry) of
-      Right a -> " # " <> actDoc a
+      Right a -> " # " <> maybe "" (\p -> "(" <> plName p <> ") ") (pluginOf (actName a)) <> actDoc a
       Left _ -> ""
     registry = either (error . T.unpack) id (mkActionRegistry allActions)
     signature a = T.concat [" " <> shape p | p <- actParams a]

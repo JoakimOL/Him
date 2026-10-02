@@ -91,6 +91,9 @@ perform rt = \case
     -- Forget it first, so a restart starts a new one.
     stopped <- modifyMVar (rtServers rt) (\servers -> pure (Map.delete key servers, Map.lookup key servers))
     mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) stopped
+  LspStopAll -> do
+    stopped <- modifyMVar (rtServers rt) (\servers -> pure (Map.empty, Map.elems servers))
+    mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) stopped
   _ -> pure ()
 
 -- | Stop every language server (when the editor quits).

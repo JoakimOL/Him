@@ -92,6 +92,10 @@ complete exTable = do
           candidates <- liftIO (completePath (T.unpack arg))
           offer before candidates
       | Just c <- find ((name `elem`) . exNames) exTable
+      , NameArgs names <- exArgs c -> do
+          let (before, arg) = T.breakOnEnd " " line
+          offer before [n | n <- names, arg `T.isPrefixOf` n]
+      | Just c <- find ((name `elem`) . exNames) exTable
       , exArgs c == ThemeArgs -> do
           let (before, arg) = T.breakOnEnd " " line
           names <- liftIO themeNames

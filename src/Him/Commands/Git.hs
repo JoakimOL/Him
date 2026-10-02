@@ -2,7 +2,8 @@
 -- moving between changes, and staging, unstaging or resetting the selected
 -- lines.
 module Him.Commands.Git
-  ( actions
+  ( gitPlugin
+  , actions
   , gitHousekeeping
   , applyGitResult
   , markGitReload
@@ -22,6 +23,39 @@ import Him.GitState
 import Him.History (Snapshot (..), beginChange)
 import Him.Position (Pos (..))
 import Him.Selection
+import Data.Map.Strict qualified as Map
+import Him.Config (Plugin (..), plugin)
+import Him.Key (KeyCode (..), plain)
+import Him.Mode (Mode (..))
+
+-- | Git signs in the gutter, change navigation and line staging (ADR-25),
+-- as a plugin (ADR-35).
+gitPlugin :: Plugin
+gitPlugin =
+  (plugin "git" "Signs for changed lines, ] g / [ g, staging selected lines (space g)")
+    { plActions = actions
+    , plBindings =
+        Map.fromList
+          [ ( Normal
+            ,
+              [ ("space g s", "git_stage_selection")
+              , ("space g u", "git_unstage_selection")
+              , ("space g S", "git_stage_file")
+              , ("space g U", "git_unstage_file")
+              , ("space g r", "git_reset_selection")
+              , ("] g", "goto_next_change")
+              , ("[ g", "goto_prev_change")
+              ]
+            )
+          ]
+    , plPrefixNames = [([plain (KChar ' '), plain (KChar 'g')], "git")]
+    , plSigns = True
+    , plHousekeeping = gitHousekeeping
+    , plJobResult = applyGitResult
+    , -- Every document is looked up again; signs come back as answers do.
+      plEnable = modify' (mapDocuments (\d -> d {docGit = GitUnknown}))
+    , plDisable = modify' (mapDocuments (\d -> d {docGit = GitUnknown}))
+    }
 
 actions :: [Action]
 actions =
