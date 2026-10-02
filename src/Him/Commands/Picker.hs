@@ -22,11 +22,11 @@ actions :: [Action]
 actions =
   [ simple "file_picker" GBuffers "Open a file from the working directory" $ do
       files <- liftIO (listFiles maxFiles ".")
-      open (newPicker "files" [PickerItem (T.pack f) (PickFile f) "" | f <- files])
+      open (newPicker "files" [pickerItem (T.pack f) (PickFile f) "" | f <- files])
   , simple "buffer_picker" GBuffers "Switch to an open buffer" $ do
       (bs, cur) <- gets buffers
       let label i b = T.pack (show (i + 1)) <> (if i == cur then " * " else "   ") <> displayName (bufDoc b)
-      open ((newPicker "buffers" [PickerItem (label i b) (PickBuffer i) "" | (i, b) <- zip [0 ..] bs]) {pkSelected = cur})
+      open ((newPicker "buffers" [pickerItem (label i b) (PickBuffer i) "" | (i, b) <- zip [0 ..] bs]) {pkSelected = cur})
   , simple "command_palette" GPrompt "List every action with its keys, and run one" (request OpenPalette)
   , simple "picker_close" GPrompt "Close the picker" close
   , simple "picker_accept" GPrompt "Open the selected item" $

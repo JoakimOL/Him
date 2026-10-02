@@ -14,14 +14,14 @@ import Him.Config (Config (..))
 import Him.Key (showKeys)
 import Him.Keymap (keymapBindings)
 import Him.Mode (Mode (..))
-import Him.Picker (PickTarget (..), PickerItem (..))
+import Him.Picker (PickTarget (..), PickerItem, pickerItem)
 
 -- | Items for the palette opened in a mode: keys of that mode are listed;
 -- an action without one shows the keys of the first other mode that has
 -- some (e.g. @insert: tab@).
 paletteItems :: Config -> Mode -> [PickerItem]
 paletteItems config mode =
-  [ PickerItem (actName a <> signature a) (PickAction (actName a) (needsArgs a)) (detail ks a)
+  [ pickerItem (actName a <> signature a) (PickAction (actName a) (needsArgs a)) (detail ks a)
   | (a, ks) <- withKeys
   ]
   where

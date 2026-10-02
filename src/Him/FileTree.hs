@@ -2,40 +2,137 @@
 -- @.gitignore@ and @.ignore@ files ("Him.Ignore").
 module Him.FileTree
   ( listFiles
+  , walkFiles
   , rootIgnorer
   ) where
 
-import Control.Exception (IOException, try)
+import Control.Concurrent (forkIO, getNumCapabilities, killThread)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTQueueIO, newTVarIO, orElse, readTQueue, readTVar, retry, writeTQueue, writeTVar)
+import Control.Exception (IOException, SomeException, bracket, finally, onException, try)
+import Control.Monad (replicateM, replicateM_, when)
 import Data.ByteString qualified as BS
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List (isPrefixOf, sort)
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Text.Encoding (decodeUtf8Lenient)
+import GHC.Foreign qualified as GHC
+import GHC.IO.Encoding (getFileSystemEncoding)
 import Him.Ignore
-import System.Directory (canonicalizePath, doesDirectoryExist, doesPathExist, listDirectory)
+import System.Directory (canonicalizePath, doesPathExist)
 import System.FilePath (makeRelative, takeDirectory, (</>))
+import System.Posix.Directory (closeDirStream, openDirStream)
+import System.Posix.Directory.Internals (DirType, dirEntName, dirEntType, isDirectoryType, isRegularFileType, isSymbolicLinkType, isUnknownType, readDirStreamWith)
+import System.Posix.Files (getFileStatus, getSymbolicLinkStatus, isDirectory, isRegularFile, isSymbolicLink)
 
--- | Files below a directory, sorted, relative to it. Hidden entries
--- (@.git@, dotfiles) and ignored ones are skipped, and an ignored directory
--- is not entered. The walk is breadth first and stops after @limit@ files.
+-- | Files below a directory, sorted, relative to it (see 'walkFiles').
 listFiles :: Int -> FilePath -> IO [FilePath]
 listFiles limit root = do
+  found <- newIORef []
+  _ <- walkFiles limit root (\fs -> atomicModifyIORef' found (\acc -> (fs <> acc, ())))
+  sort <$> readIORef found
+
+-- | Walk the files below a directory, relative to it, handing them to
+-- @emit@ a directory at a time (from several threads; @emit@ must be
+-- thread safe). Hidden entries (@.git@, dotfiles) and ignored ones are
+-- skipped, and an ignored directory is not entered. Links to directories
+-- are followed, as Helix does, but each target only once and never one
+-- that contains the link (a cycle). It stops after @limit@ files and
+-- returns how many it found.
+--
+-- Directories are read by a pool of worker threads (ADR-24), and entry
+-- types come from @readdir@ itself, so most entries cost no @stat@.
+-- Killing the calling thread stops the workers too.
+walkFiles :: Int -> FilePath -> ([FilePath] -> IO ()) -> IO Int
+walkFiles limit root emit = do
   outer <- rootIgnorer root
-  sort . take limit <$> walk limit [("", outer)]
+  queue <- newTQueueIO
+  pending <- newTVarIO (1 :: Int)
+  count <- newIORef 0
+  atomically (writeTQueue queue ("", outer))
+  workers <- max 1 . min 8 <$> getNumCapabilities
+  finished <- newEmptyMVar
+  followed <- newTVarIO Set.empty
+  let next = (Just <$> readTQueue queue) `orElse` (readTVar pending >>= \n -> if n == 0 then pure Nothing else retry)
+      worker =
+        atomically next >>= \case
+          Nothing -> pure ()
+          Just job -> do
+            _ <- try @SomeException (visit job)
+            atomically (modifyTVar' pending (subtract 1))
+            worker
+      visit (dir, ignorer0) = do
+        own <- readRules (root `join` dir)
+        let ignorer = ignorer0 <> [(Below dir, rules) | rules <- own]
+        entries <- either (const []) id <$> try @IOException (readEntries (root `join` dir))
+        kinds <- traverse (\(name, kind) -> (dir `join` name,) <$> resolve followed (root `join` (dir `join` name)) kind) [e | e@(name, _) <- entries, not ("." `isPrefixOf` name)]
+        let kept = [(p, k) | (p, Just k) <- kinds, not (isIgnored ignorer p (k == Dir))]
+            files = [p | (p, File) <- kept]
+            dirs = [(p, ignorer) | (p, Dir) <- kept]
+        before <- atomicModifyIORef' count (\c -> (c + length files, c))
+        let room = limit - before
+        if room <= 0
+          then pure ()
+          else do
+            let taken = take room files
+            if null taken then pure () else emit taken
+            when (length files < room) $
+              atomically (mapM_ (writeTQueue queue) dirs >> modifyTVar' pending (+ length dirs))
+  tids <- replicateM workers (forkIO (worker `finally` putMVar finished ()))
+  replicateM_ workers (takeMVar finished) `onException` mapM_ killThread tids
+  min limit <$> readIORef count
   where
-    walk _ [] = pure []
-    walk n _ | n <= 0 = pure []
-    walk n ((dir, ignorer0) : rest) = do
-      own <- readRules (root `join` dir)
-      let ignorer = ignorer0 <> [(Below dir, rules) | rules <- own]
-      entries <- either (const []) sort <$> (try (listDirectory (root `join` dir)) :: IO (Either IOException [FilePath]))
-      kinds <- traverse (\e -> (dir `join` e,) <$> doesDirectoryExist (root `join` (dir `join` e))) [e | e <- entries, not ("." `isPrefixOf` e)]
-      let kept = [(p, isDir) | (p, isDir) <- kinds, not (isIgnored ignorer p isDir)]
-          files = [p | (p, False) <- kept]
-          dirs = [(p, ignorer) | (p, True) <- kept]
-      (files <>) <$> walk (n - length files) (rest <> dirs)
     join d "" = d
     join "" p = p
     join "." p = p
     join d p = d <> "/" <> p
+
+data Kind = File | Dir
+  deriving stock (Eq)
+
+-- | Entries of a directory with their @readdir@ types.
+readEntries :: FilePath -> IO [(FilePath, DirType)]
+readEntries dir = bracket (openDirStream dir) closeDirStream (go [])
+  where
+    go acc ds =
+      readDirStreamWith (\de -> (,) <$> (dirEntName de >>= peekName) <*> dirEntType de) ds >>= \case
+        Nothing -> pure acc
+        Just (name, kind)
+          | name == "." || name == ".." -> go acc ds
+          | otherwise -> go ((name, kind) : acc) ds
+    peekName cstr = getFileSystemEncoding >>= \enc -> GHC.peekCString enc cstr
+
+-- | A file or a directory to enter; 'Nothing' for anything else. Only
+-- links and file systems that do not report types need a @stat@.
+resolve :: TVar (Set FilePath) -> FilePath -> DirType -> IO (Maybe Kind)
+resolve followed path kind
+  | isDirectoryType kind = pure (Just Dir)
+  | isRegularFileType kind = pure (Just File)
+  | isSymbolicLinkType kind = link
+  | isUnknownType kind =
+      try @IOException (getSymbolicLinkStatus path) >>= \case
+        Right st | isDirectory st -> pure (Just Dir)
+        Right st | isSymbolicLink st -> link
+        Right st | isRegularFile st -> pure (Just File)
+        _ -> pure Nothing
+  | otherwise = pure Nothing
+  where
+    link =
+      try @IOException (getFileStatus path) >>= \case
+        Right st | isRegularFile st -> pure (Just File)
+        Right st | isDirectory st -> linkedDirectory
+        _ -> pure Nothing
+    -- Enter a linked directory unless it contains the link (a cycle) or
+    -- another link to it was entered already.
+    linkedDirectory = do
+      target <- canonicalizePath path
+      here <- canonicalizePath (takeDirectory path)
+      let cycle' = (target <> "/") `isPrefixOf` (here <> "/")
+      fresh <- atomically $ do
+        seen <- readTVar followed
+        if Set.member target seen then pure False else True <$ writeTVar followed (Set.insert target seen)
+      pure (if fresh && not cycle' then Just Dir else Nothing)
 
 -- | Rules from outside the walk that still apply to it: the ignore files of
 -- the root's ancestors up to the enclosing git repository's root, and that

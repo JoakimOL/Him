@@ -206,6 +206,14 @@ openBufferTests = do
   writeFile (tree <> "/.gitignore") "/sub/c.txt\n"
   writeFile (tree <> "/.git/info/exclude") "d.txt\n"
   listedInRepo <- listFiles 100 (tree <> "/sub")
+  -- Links: a link to a directory is followed; a link back up is not.
+  let ltree = dir <> "/him-test-links"
+  createDirectoryIfMissing True (ltree <> "/real")
+  writeFile (ltree <> "/real/r.txt") ""
+  createDirectoryLink (ltree <> "/real") (ltree <> "/alias")
+  createDirectoryLink ltree (ltree <> "/real/loop")
+  listedLinks <- listFiles 100 ltree
+  removeDirectoryRecursive ltree
   removeDirectoryRecursive tree
   -- Directory listings.
   let dtree = dir <> "/him-test-dired"
@@ -323,6 +331,8 @@ openBufferTests = do
     , test "listFiles stops at the limit" (assertEqual ["a.txt", "b.txt"] listedFew)
     , test "listFiles honours .gitignore and .ignore at every level" $
         assertEqual ["a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt", "sub/keep.log"] listedIgnoring
+    , test "listFiles follows a directory link once and never a cycle" $
+        assertEqual ["alias/r.txt", "real/r.txt"] listedLinks
     , test "listFiles below a repository root uses the root's ignore files" $
         assertEqual ["keep.log", "y.log"] listedInRepo
     ]
@@ -823,16 +833,16 @@ pickerTests =
   , test "an exact first word or file name wins a tie" $
       assertEqual ["goto_line <line>", "x/b.hs"] (map (piLabel . head' . matches' (items ["goto_line_end", "goto_line <line>", "goto_line_start"])) ["goto_line"] <> map (piLabel . head' . matches' (items ["x/ab.hs", "x/b.hs.bak", "x/b.hs"])) ["b.hs"])
   , test "a label match beats a detail match" $
-      assertEqual ["xy", "other"] (map piLabel (matches "xy" [PickerItem "other" (PickFile "") "xy here", PickerItem "xy" (PickFile "") ""]))
+      assertEqual ["xy", "other"] (map piLabel (matches "xy" [pickerItem "other" (PickFile "") "xy here", pickerItem "xy" (PickFile "") ""]))
   , test "a new query selects the best match" $
       assertEqual (Just "b") (piLabel <$> selectedItem (setQuery "b" (moveSelection 2 (newPicker "t" (items ["a", "b", "c"])))))
   ]
   where
-    items = map (\l -> PickerItem l (PickFile (T.unpack l)) "")
+    items = map (\l -> pickerItem l (PickFile (T.unpack l)) "")
     matches' xs q = matches q xs
     head' = \case
       x : _ -> x
-      [] -> PickerItem "" (PickFile "") ""
+      [] -> pickerItem "" (PickFile "") ""
 
 actionTests :: [Test]
 actionTests =
