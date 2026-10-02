@@ -13,6 +13,8 @@ module Him.Picker
   , setQuery
   , addItems
   , matchLimit
+  , rank
+  , syncLimit
   , fuzzyScore
   ) where
 
@@ -71,11 +73,13 @@ data Picker = Picker
   -- dropped); 0 for a picker filled at once.
   , pkLoading :: !Bool
   -- ^ Items are still arriving.
+  , pkStale :: !Bool
+  -- ^ The matches are for an earlier query; a background filter is running.
   }
   deriving stock (Eq, Show)
 
 newPicker :: Text -> [PickerItem] -> Picker
-newPicker title items = refilter (Picker title (Seq.fromList items) "" [] 0 0 0 False)
+newPicker title items = refilter (Picker title (Seq.fromList items) "" [] 0 0 0 False False)
 
 -- | Change the query, filter again, and select the best match.
 setQuery :: Text -> Picker -> Picker
@@ -90,6 +94,11 @@ refilter :: Picker -> Picker
 refilter p =
   let (ms, n) = rank (pkQuery p) (toList (pkItems p))
    in p {pkMatches = ms, pkMatchCount = n, pkSelected = max 0 (min (pkSelected p) (length ms - 1))}
+
+-- | Pickers with more items than this filter in a background job when the
+-- query is not empty (ADR-24); smaller ones filter at once.
+syncLimit :: Int
+syncLimit = 20000
 
 -- | At most this many matches are kept and shown.
 matchLimit :: Int

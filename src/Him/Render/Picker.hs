@@ -36,7 +36,7 @@ drawPicker theme ed area f = case edPicker ed of
           -- Scroll the list so the selected item is visible.
           first = max 0 (sel - listRows + 1)
           visible = zip [first ..] (take listRows (drop first ms))
-          count = T.pack (show (pkMatchCount p) <> "/" <> show (length (pkItems p))) <> if pkLoading p then "…" else ""
+          count = T.pack (show (pkMatchCount p) <> "/" <> show (length (pkItems p))) <> if pkLoading p || pkStale p then "…" else ""
           titled = T.take inner (" " <> pkTitle p <> " ")
           border l r fill t = l <> t <> T.replicate (inner - T.length t) fill <> r
           fit t = T.take inner t <> T.replicate (inner - T.length t) " "

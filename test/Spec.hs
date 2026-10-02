@@ -29,6 +29,11 @@ import Data.Text.Encoding qualified as TE
 import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesPathExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
 import Him.FileTree (listFiles)
 import Him.Picker
+import Him.Effect (Effect (..), Job (..), JobResult (..))
+import Him.Runtime (newRuntime)
+import Him.Runtime qualified as Runtime
+import Control.Concurrent.STM (atomically, newTChanIO, readTChan, writeTChan)
+import System.Timeout (timeout)
 import Him.Ignore
 import Him.Palette (paletteItems)
 import Him.Json hiding (path)
@@ -151,6 +156,21 @@ rebindTests = do
     , test "the default keymaps cover every mode" (assertEqual [minBound .. maxBound] (Map.keys (cfgKeymaps (either (error . T.unpack) id defaultConfig))))
     ]
 
+-- | Like the main loop: start the jobs the editor asked for on a real
+-- runtime and handle their results as events, until nothing arrives for a
+-- while (results may ask for more jobs).
+settle :: Config -> Editor -> IO Editor
+settle config ed0 = do
+  events <- newTChanIO
+  runtime <- newRuntime (atomically . writeTChan events)
+  let loop ed = do
+        mapM_ (Runtime.perform runtime) (edEffects ed)
+        next <- timeout 300000 (atomically (readTChan events))
+        case next of
+          Nothing -> pure ed {edEffects = []}
+          Just ev -> execStateT (handleEvent config ev) ed {edEffects = []} >>= loop
+  loop ed0
+
 -- | Opening, switching, closing and saving buffers, on real files.
 openBufferTests :: IO [Test]
 openBufferTests = do
@@ -187,7 +207,15 @@ openBufferTests = do
   pickedBuffer <- keys "space b down ret" opened
   pickerTyped <- keys "space b 2 backspace" opened
   pickerEsc <- keys "space b esc" opened
-  pickedFile <- foldlM run start ([plain (KChar ' '), plain (KChar 'f')] <> map charKey "test/Spec.hs" <> [plain KEnter])
+  scanned <- settle config =<< foldlM run start [plain (KChar ' '), plain (KChar 'f')]
+  -- A large picker filters in a background job.
+  let many = [pickerItem (T.pack ("dir/file" <> show i <> (if i `mod` 1000 == 0 then "_needle" else ""))) (PickFile "") "" | i <- [1 .. syncLimit + 5000 :: Int]]
+      bigPicker = start {edPicker = Just (newPicker "files" many) {pkGeneration = 7}, edMode = Picking}
+  typedBig <- foldlM run bigPicker (map charKey "needle")
+  filteredBig <- settle config typedBig
+  staleDropped <- execStateT (handleEvent config (EvJob (PickerFiltered 7 "need" [] 0))) filteredBig
+  otherScan <- execStateT (handleEvent config (EvJob (FilesFound 99 ["x"]))) filteredBig
+  pickedFile <- settle config =<< foldlM run scanned (map charKey "test/Spec.hs" <> [plain KEnter])
   -- listFiles on a small tree with a hidden directory.
   let tree = dir <> "/him-test-tree"
   createDirectoryIfMissing True (tree <> "/sub/deeper")
@@ -298,6 +326,15 @@ openBufferTests = do
     , test "space b picks a buffer" (assertEqual (a, (0, 2), Normal) (docPath (edDoc pickedBuffer), bufferIndex pickedBuffer, edMode pickedBuffer))
     , test "typing narrows the picker, backspace widens it" (assertEqual (Just ("", 2)) ((\p -> (pkQuery p, length (pkMatches p))) <$> edPicker pickerTyped))
     , test "esc closes the picker" (assertEqual (Nothing, Normal, b) (pkTitle <$> edPicker pickerEsc, edMode pickerEsc, docPath (edDoc pickerEsc)))
+    , test "space f scans in the background" $
+        assertEqual (Just (False, True)) ((\p -> (pkLoading p, any ((== "test/Spec.hs") . piLabel) (toList (pkItems p)))) <$> edPicker scanned)
+    , test "typing in a large picker marks it stale and asks for a filter job" $
+        assertEqual (Just True, True)
+          (pkStale <$> edPicker typedBig, any (\case StartJob (FilterPicker 7 "needle" _) -> True; _ -> False) (edEffects typedBig))
+    , test "the filter job's answer is applied" $
+        assertEqual (Just (False, 25)) ((\p -> (pkStale p, pkMatchCount p)) <$> edPicker filteredBig)
+    , test "an answer for an older query or another scan is dropped" $
+        assertEqual (edPicker filteredBig, edPicker filteredBig) (edPicker staleDropped, edPicker otherScan)
     , test "space f opens the chosen file" (assertEqual (Just "test/Spec.hs", (1, 2)) (docPath (edDoc pickedFile), bufferIndex pickedFile))
     , test ":o of a directory lists it" $
         assertEqual (Just dcanon, [T.pack dcanon <> ":", "../", "sub/", "a.txt", "b.txt"], 2, Directory)

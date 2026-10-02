@@ -3,26 +3,29 @@
 module Him.Commands.Picker
   ( actions
   , pickerInsert
+  , applyJobResult
   ) where
 
-import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (gets, modify')
+import Data.Sequence qualified as Seq
 import Data.Text qualified as T
 import Him.Action
-import Him.Effect (Effect (..))
+import Him.Effect (Effect (..), Job (..), JobKey (..), JobResult (..))
 import Him.Command
 import Him.Commands.File (openFile)
 import Him.Document (displayName)
 import Him.Editor
-import Him.FileTree (listFiles)
 import Him.Mode (Mode (..))
 import Him.Picker
 
 actions :: [Action]
 actions =
   [ simple "file_picker" GBuffers "Open a file from the working directory" $ do
-      files <- liftIO (listFiles maxFiles ".")
-      open (newPicker "files" [pickerItem (T.pack f) (PickFile f) "" | f <- files])
+      -- The picker opens at once and fills as the scan streams in (ADR-24).
+      gen <- gets edNextId
+      modify' (\e -> e {edNextId = gen + 1})
+      open (newPicker "files" []) {pkGeneration = gen, pkLoading = True}
+      request (StartJob (ScanFiles gen "."))
   , simple "buffer_picker" GBuffers "Switch to an open buffer" $ do
       (bs, cur) <- gets buffers
       let label i b = T.pack (show (i + 1)) <> (if i == cur then " * " else "   ") <> displayName (bufDoc b)
@@ -45,19 +48,57 @@ actions =
   , simple "picker_next" GPrompt "Select the next item" (onPicker (moveSelection 1))
   , simple "picker_previous" GPrompt "Select the previous item" (onPicker (moveSelection (-1)))
   , simple "picker_backspace" GPrompt "Delete the last character of the query" $
-      onPicker (\p -> setQuery (T.dropEnd 1 (pkQuery p)) p)
+      changeQuery (T.dropEnd 1)
   ]
   where
     open p = modify' (\e -> e {edPicker = Just p, edMode = Picking})
-    close = modify' (\e -> e {edPicker = Nothing, edMode = Normal})
+    close = do
+      modify' (\e -> e {edPicker = Nothing, edMode = Normal})
+      request (CancelJob ScanJob)
+      request (CancelJob FilterJob)
 
 -- | Typing narrows the picker.
 pickerInsert :: Char -> EditorM ()
-pickerInsert c = onPicker (\p -> setQuery (T.snoc (pkQuery p) c) p)
+pickerInsert c = changeQuery (`T.snoc` c)
 
 onPicker :: (Picker -> Picker) -> EditorM ()
 onPicker f = modify' (\e -> e {edPicker = f <$> edPicker e})
 
--- | The picker lists at most this many files.
-maxFiles :: Int
-maxFiles = 50000
+-- | Change the query. A large picker keeps showing its last matches
+-- (marked stale) while a background job ranks the items (ADR-24).
+changeQuery :: (T.Text -> T.Text) -> EditorM ()
+changeQuery f =
+  gets edPicker >>= \case
+    Nothing -> pure ()
+    Just p -> refresh p {pkQuery = f (pkQuery p), pkSelected = 0}
+
+-- | Bring a picker's matches up to date with its query and items: at once
+-- when it is small or the query is empty, otherwise in a job.
+refresh :: Picker -> EditorM ()
+refresh p
+  | T.null (pkQuery p) || Seq.length (pkItems p) < syncLimit = setPicker (setQuery (pkQuery p) p) {pkSelected = pkSelected p}
+  | otherwise = do
+      setPicker p {pkStale = True}
+      request (StartJob (FilterPicker (pkGeneration p) (pkQuery p) (pkItems p)))
+  where
+    setPicker p' = modify' (\e -> e {edPicker = Just p'})
+
+-- | A background job reported back; results for another picker, or for an
+-- older query, are dropped.
+applyJobResult :: JobResult -> EditorM ()
+applyJobResult result =
+  gets edPicker >>= \case
+    Just p | Just p' <- apply p -> p'
+    _ -> pure ()
+  where
+    apply p = case result of
+      FilesFound gen files
+        | gen == pkGeneration p ->
+            Just (refresh p {pkItems = pkItems p <> Seq.fromList [pickerItem (T.pack f) (PickFile f) "" | f <- files]})
+      ScanFinished gen
+        | gen == pkGeneration p -> Just (modify' (\e -> e {edPicker = Just p {pkLoading = False}}))
+      PickerFiltered gen query best total
+        | gen == pkGeneration p && query == pkQuery p ->
+            Just $ modify' $ \e ->
+              e {edPicker = Just p {pkMatches = best, pkMatchCount = total, pkStale = False, pkSelected = min (pkSelected p) (max 0 (length best - 1))}}
+      _ -> Nothing

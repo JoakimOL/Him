@@ -11,6 +11,7 @@ import Control.Monad (unless, when)
 import Control.Monad.Trans.State.Strict (execStateT, get, gets, modify')
 import Data.Map.Strict qualified as Map
 import Data.Char (digitToInt, isDigit)
+import Data.List (partition)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Set qualified as Set
 import Data.Text qualified as T
@@ -24,7 +25,10 @@ import Him.Commands.Search (refreshSearchPreview)
 import Him.Config.Default (defaultConfig)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
+import Him.Commands.Picker qualified as Picker
 import Him.Info (refreshInfo)
+import Him.Runtime (Runtime, newRuntime)
+import Him.Runtime qualified as Runtime
 import Him.Palette (paletteItems)
 import Him.Picker (newPicker)
 import Him.Mode (Mode (..))
@@ -56,7 +60,8 @@ run files = do
     size <- fromMaybe (24, 80) <$> getWindowSize
     onResize (atomically . writeTChan events . uncurry EvResize)
     startInputReader events
-    eventLoop config events (openAll size docs)
+    runtime <- newRuntime (atomically . writeTChan events)
+    eventLoop config runtime events (openAll size docs)
 
 -- | An editor showing the first document, with the others open behind it.
 openAll :: (Int, Int) -> [Document] -> Editor
@@ -70,8 +75,8 @@ openAll size docs = case docs of
 maxBatch :: Int
 maxBatch = 512
 
-eventLoop :: Config -> TChan Event -> Editor -> IO ()
-eventLoop config events = go Nothing
+eventLoop :: Config -> Runtime -> TChan Event -> Editor -> IO ()
+eventLoop config runtime events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
@@ -97,13 +102,19 @@ eventLoop config events = go Nothing
       -- A bug in a command should not take the editor (and unsaved work)
       -- down with it.
       try (execStateT (handleEvent config ev) ed) >>= \case
-        Right ed' -> pure ed'
+        Right ed' -> do
+          -- Start or cancel the background jobs the event asked for.
+          mapM_ (Runtime.perform runtime) (edEffects ed')
+          pure ed' {edEffects = []}
         Left e -> do
           logMsg ("command failed: " <> show (e :: SomeException))
           execStateT (failWith ("internal error: " <> T.pack (show e))) ed
 
 handleEvent :: Config -> Event -> Command.EditorM ()
 handleEvent _ (EvResize rows cols) = modify' (\e -> e {edSize = (rows, cols)})
+handleEvent config (EvJob result) = do
+  Picker.applyJobResult result
+  runEffects config
 handleEvent config (EvKey key) = do
   ed <- get
   let pending = edPending ed
@@ -137,15 +148,23 @@ handleEvent config (EvKey key) = do
 runEffects :: Config -> Command.EditorM ()
 runEffects config = go (8 :: Int)
   where
-    go 0 = modify' (\e -> e {edEffects = []})
-    go n =
-      gets edEffects >>= \case
-        [] -> pure ()
-        effects -> do
-          modify' (\e -> e {edEffects = []})
-          mapM_ perform effects
+    go 0 = modify' (\e -> e {edEffects = filter (not . immediate) (edEffects e)})
+    go n = do
+      (now, later) <- gets (partition immediate . edEffects)
+      if null now
+        then pure ()
+        else do
+          modify' (\e -> e {edEffects = later})
+          mapM_ perform now
           go (n - 1)
+    -- Jobs are left for the main loop, which owns the runtime.
+    immediate = \case
+      RunAction _ -> True
+      OpenPalette -> True
+      _ -> False
     perform = \case
+      StartJob _ -> pure ()
+      CancelJob _ -> pure ()
       RunAction inv -> either failWith boundRun (bindInvocation (cfgActions config) inv)
       OpenPalette -> modify' $ \e ->
         e {edPicker = Just (newPicker "commands" (paletteItems config (keymapMode e))), edMode = Picking}

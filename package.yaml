@@ -81,5 +81,6 @@ tests:
     - bytestring
     - containers
     - directory
+    - stm
     - text
     - transformers
