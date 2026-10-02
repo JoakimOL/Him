@@ -104,22 +104,33 @@ keyThroughKeymap config key = do
       setPending ks = modify' (\e -> e {edPending = ks})
       clearCount = modify' (\e -> e {edCount = Nothing})
   when (null pending) $ modify' (\e -> e {edStatus = Nothing})
-  case countDigit ed keymap key of
-    Just n -> modify' (\e -> e {edCount = Just n})
+  replay <- case countDigit ed keymap key of
+    Just n -> False <$ modify' (\e -> e {edCount = Just n})
     Nothing -> case resolve keymap keys of
-      NeedMore -> setPending keys
+      NeedMore -> False <$ setPending keys
       Found bound -> do
         setPending []
         clearCount
         case (edCount ed, boundCounted bound) of
           (Just n, Just counted) -> counted n
           _ -> boundRun bound
-      NoMatch -> do
-        setPending []
-        clearCount
-        -- Only a key typed on its own falls back (a failed chord is dropped).
-        when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
-  afterKey config
+        pure False
+      NoMatch
+        -- A started sequence that does not go on, of keys that mean
+        -- something on their own (the first j of a "j j" bound in insert
+        -- mode): they act as typed, and this key starts afresh.
+        | not (null pending)
+        , Just typed <- traverse (cfgFallback config (edMode ed)) pending -> do
+            setPending []
+            sequence_ typed
+            pure True
+        | otherwise -> do
+            setPending []
+            clearCount
+            -- Only a key typed on its own falls back (a failed chord is dropped).
+            when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
+            pure False
+  if replay then keyThroughKeymap config key else afterKey config
 
 -- | What follows every key: effects, undo grouping, background state, the
 -- info box.

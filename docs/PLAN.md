@@ -1274,7 +1274,7 @@ work is match mode and `I` / `A` (ADR-40), the AI chat plugin (ADR-41) with Clau
 Code as its default provider over MCP (ADR-42), and a sweep of the repository and the
 documents.
 
-- **State:** milestones 1–40 (§5) and ADR-1…44 (§3). `make test` runs 561 tests (pure
+- **State:** milestones 1–40 (§5) and ADR-1…44 (§3). `make test` runs 564 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).

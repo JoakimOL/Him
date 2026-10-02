@@ -12,7 +12,7 @@ module Him.Info
   ) where
 
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text qualified as T
 import Him.Action
 import Him.Config (Config (..))
@@ -26,6 +26,9 @@ refreshInfo :: Config -> Editor -> Editor
 refreshInfo config ed = ed {edInfo = box}
   where
     box = case (edPending ed, edMode ed, edPrompt ed) of
+      -- Keys that are typed when the chord does not go on ("j j" in
+      -- insert mode) are typing, not a menu to show.
+      (ks@(_ : _), mode, _) | all (isJust . cfgFallback config mode) ks -> Nothing
       (_ : _, _, _) -> keyInfo config ed
       ([], CmdLine, ExPrompt) -> exInfo (cfgExCommands config) ed
       _ -> Nothing

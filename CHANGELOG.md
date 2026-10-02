@@ -8,6 +8,8 @@ and this project adheres to the
 
 ## Unreleased
 
+- Insert-mode chords such as `"j j" = "normal_mode"`: a first key the chord doesn't continue from is typed as usual.
+- REPL and chat buffers are transcripts: only the input can change.
 - Claude Code chat provider (the default): him's tools served over MCP (`him --mcp-bridge`), no API key needed.
 - AI chat plugin: a chat beside the code (Claude API over curl); the model's edits are applied as pending edits and approved or denied in the editor.
 - Match mode (`m m`, `m s`, `m r`, `m d`, `m i`, `m a`); `I` and `A`.

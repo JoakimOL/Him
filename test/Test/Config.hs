@@ -206,7 +206,7 @@ rebindTests = do
       configWith allPlugins
         ( Map.fromList
             [ (Normal, [("C-d", "move_line_down 2"), ("j", "no_op"), ("space i", "insert_text \"// \""), ("Q", "ex q!"), ("g 3", "goto_line 3"), ("F", "search_text two")])
-            , (Insert, [("C-a", "set_mode normal")])
+            , (Insert, [("C-a", "set_mode normal"), ("j j", "normal_mode")])
             ]
         )
   let start t = newEditor (24, 80) (newDocument Nothing (buf t))
@@ -222,6 +222,9 @@ rebindTests = do
   gotoStill <- headAfter "a\nb\nc\nd" "g e g g"
   searchKey <- headAfter "one two" "F"
   insertExit <- typeKeys "i C-a" (start "")
+  jjExit <- typeKeys "i a j j" (start "")
+  jTyped <- typeKeys "i a j o j k" (start "")
+  jPending <- typeKeys "i j" (start "")
   palette <- typeKeys "space ?" (start "a\nb")
   paletteDone <- typeKeys "space ? g o t o _ f i l e _ s t a r t ret" =<< typeKeys "j" (start "a\nb")
   let paletteRan = rangeHead (primary (docSelection (edDoc paletteDone)))
@@ -248,6 +251,9 @@ rebindTests = do
     , test "default chords on the same prefix still work" (assertEqual (Pos 0 0) gotoStill)
     , test "search_text selects the match" (assertEqual (Pos 0 6) searchKey)
     , test "set_mode" (assertEqual Normal (edMode insertExit))
+    , test "an insert-mode chord (j j) runs" (assertEqual (Normal, "a") (edMode jjExit, B.toText (docBuffer (edDoc jjExit))))
+    , test "a chord's first key not followed by the rest is typed" (assertEqual (Insert, "ajojk") (edMode jTyped, B.toText (docBuffer (edDoc jTyped))))
+    , test "a chord's first key waits for the next" (assertEqual ("", [plain (KChar 'j')], Nothing) (B.toText (docBuffer (edDoc jPending)), edPending jPending, edInfo jPending))
     , test "space ? opens the palette" (assertEqual (Just "commands", Picking) (pkTitle <$> edPicker palette, edMode palette))
     , test "the palette runs the chosen action" (assertEqual (Pos 0 0, Normal) (paletteRan, edMode paletteDone))
     , test "an action with arguments is completed on the : line" (assertEqual (CmdLine, "action goto_line ") (edMode paletteArgs, edCmdLine paletteArgs))
