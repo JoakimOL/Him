@@ -14,9 +14,9 @@ import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Him.Effect (Effect (..))
-import Him.Command (failWith)
+import Him.EditorM (failWith)
 import Him.Config (Config (..), Plugin (..))
-import Him.Commands.Search (refreshSearchPreview)
+import Him.Actions.Search (refreshSearchPreview)
 import Him.Config.Default (allPlugins)
 import Him.UserConfig (UserConfig (..), applyEditorOptions, applyUserConfigWith, userOptions)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)

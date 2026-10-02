@@ -1,6 +1,6 @@
 -- | Going places with the language server: definitions and references,
 -- document and workspace symbols, diagnostics.
-module Him.Commands.Lsp.Navigation
+module Him.Actions.Lsp.Navigation
   ( symbols
   , symbolKindName
   , goToLocations
@@ -17,8 +17,8 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
-import Him.Command
-import Him.Commands.File (openFile)
+import Him.EditorM
+import Him.Actions.File (openFile)
 import Him.Document (Document (..))
 import Him.Editor hiding (Severity (..))
 import Him.Json hiding (path)
@@ -30,7 +30,7 @@ import Him.Picker (PickTarget (..), Picker (..), PickerSource (..), labelWidth, 
 import System.FilePath (makeRelative)
 import Him.Position (Pos (..))
 import Him.Selection (Range (..), point, primary, rangeHead, single)
-import Him.Commands.Lsp.Core
+import Him.Actions.Lsp.Core
 
 -- | Document symbols, flattened: depth, name, kind, position (server
 -- units). Both the nested and the flat form are read.

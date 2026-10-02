@@ -1,5 +1,5 @@
 -- | Effects: what an action asks for beyond changing the editor state
--- (ADR-23). Actions only queue them ('Him.Command.request'), so they stay
+-- (ADR-23). Actions only queue them ('Him.EditorM.request'), so they stay
 -- state changes that tests can inspect; the main loop carries them out.
 --
 -- Some are handled right after the key with the config at hand

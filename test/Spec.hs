@@ -16,8 +16,8 @@ import Him.Buffer qualified as B
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Him.Config (Config (..), Plugin (..))
-import Him.Commands.Git (gitPlugin)
-import Him.Commands.Lsp (lspPlugin)
+import Him.Actions.Git (gitPlugin)
+import Him.Actions.Lsp (lspPlugin)
 import Him.Config.Default (allPlugins, allActions, configWith, defaultConfig)
 import Him.Document
 import Him.Edit
@@ -25,7 +25,7 @@ import Him.Editor
 import Him.Event (Event (..))
 import Him.Ex (ExCommand (..), parseExLine)
 import Him.Search (Direction (..), Match (..), compileNeedle, findMatch, selectMatches)
-import Him.Commands.Search (refreshSearchPreview)
+import Him.Actions.Search (refreshSearchPreview)
 import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
@@ -33,11 +33,11 @@ import System.Directory (findExecutable, getHomeDirectory, canonicalizePath, cre
 import Him.FileTree (WalkOptions (..), defaultWalk, listFiles)
 import Him.Options
 import Him.Picker
-import Him.Commands.Picker (pickerHousekeeping)
-import Him.Commands.Picker qualified as Picker
+import Him.Actions.Picker (pickerHousekeeping)
+import Him.Actions.Picker qualified as Picker
 import System.IO.Unsafe (unsafePerformIO)
 import Him.Effect (Effect (..), Job (..), JobResult (..))
-import Him.Command (EditorM)
+import Him.EditorM (EditorM)
 import Him.Runtime (Runtime, newRuntime)
 import Him.Runtime qualified as Runtime
 import Control.Concurrent.STM (TChan, atomically, newTChanIO, readTChan, writeTChan)
@@ -55,7 +55,7 @@ import Him.Lsp.Protocol
 import Him.Lsp.State (Attachment (..), Completion (..), DocLsp (..), ServerInfo (..), ShownDiagnostic (..), Sync (..), shownDiagnostics)
 import Him.Lsp.Sync (syncMessages)
 import Him.Lsp.Edit
-import Him.Commands.Lsp (lspFlush)
+import Him.Actions.Lsp (lspFlush)
 import GHC.Clock (getMonotonicTime)
 import Him.Syntax.TreeSitter (findRuntime, readQuery, treeSitter)
 import System.FilePath ((</>))
@@ -64,7 +64,7 @@ import Data.Maybe (isJust)
 import Him.Language (detectLanguage, langName, languages)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Him.GitState
-import Him.Commands.Git (gitHousekeeping)
+import Him.Actions.Git (gitHousekeeping)
 import Data.IntMap.Strict qualified as IntMap
 import Him.Palette (paletteItems)
 import Him.Json hiding (path)

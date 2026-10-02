@@ -3,7 +3,7 @@
 -- questions (hover, definition, references) and applying the answers, and
 -- diagnostics. Messages are built and read as pure data; the runtime only
 -- moves them ("Him.Lsp.Server").
-module Him.Commands.Lsp
+module Him.Actions.Lsp
   ( lspPlugin
   , actions
   , lspHousekeeping
@@ -22,7 +22,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Him.Action hiding (text)
-import Him.Command
+import Him.EditorM
 import Him.Document (Document (..))
 import Him.Effect (Effect (..), JobResult (..))
 import Him.Options (Options (..))
@@ -37,10 +37,10 @@ import Him.Picker (PickTarget (..), Picker (..), PickerSource (..), newPicker, p
 import Him.Position (Pos (..))
 import Him.Lsp.Edit
 import Him.Selection (Range (..), primary, rangeHead)
-import Him.Commands.Lsp.Core
-import Him.Commands.Lsp.Navigation
-import Him.Commands.Lsp.Edits
-import Him.Commands.Lsp.Completion
+import Him.Actions.Lsp.Core
+import Him.Actions.Lsp.Navigation
+import Him.Actions.Lsp.Edits
+import Him.Actions.Lsp.Completion
 
 -- | The language-server client (ADR-29) as a plugin (ADR-35).
 lspPlugin :: Plugin

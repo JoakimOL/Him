@@ -704,6 +704,19 @@ Making these generic (state as `Dynamic`, plugin-provided gutter lanes) would co
 type safety for no user-visible gain yet. Syntax highlighting could become a plugin the
 same way.
 
+**ADR-36: Module names say what modules hold (2026-10-02).**
+Since ADR-17, the modules under `Him.Commands.*` hold *actions*, and `Him.Command`
+holds the `EditorM` monad and its helpers. They are now `Him.Actions.*` and
+`Him.EditorM`. The same pass made three more cuts:
+- `Him.App` became the terminal frontend, and `Him.Session` the frontend-free event
+  handling.
+- `Him.Actions.Lsp` was split by feature.
+- One `changeDocument` / `replaceBuffer` helper replaced four hand-built undoable
+  replacements.
+
+The old names stay in the older ADRs and log entries, which describe the code as it
+was then.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -727,7 +740,7 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Buffer.Rope` | ✅ | Blocks (a `Text` plus line starts) in a weight-balanced tree with line counts: split, append, line lookup, block iteration. |
 | `Him.Native` + `cbits/text.c` | ✅ | `unsafe` FFI on `Text` arrays: line starts, newline count, forward and backward search. |
 | `Him.Search` | ✅ | `compileNeedle` (smart case) and `findMatch` (direction, wrap-around), on top of `Him.Buffer.findForwardFrom` / `findBackwardBefore`. |
-| `Him.Commands.Search` | ✅ | `/ ? n N *`, the search prompt, and `refreshSearchPreview`. |
+| `Him.Actions.Search` | ✅ | `/ ? n N *`, the search prompt, and `refreshSearchPreview`. |
 | `Him.Buffer` | ✅ | Abstract text storage (`Seq Text`), path, dirty flag. |
 | `Him.Position`, `Him.Selection` | ✅ | `Pos`, `Range {anchor, head}`, `Selection` (sorted, merged NonEmpty ranges + primary; `fromRanges`, `normalize`, primary operations). |
 | `Him.Motion` | ✅ | Pure motions: char, line (desired column), word, line/file start/end. |
@@ -735,30 +748,30 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Editor`, `Him.Mode`, `Him.View` | ✅ | Editor state (the buffer zipper, ADR-19; `InfoBox`; the open picker), modes (`Normal`, `Insert`, `Select`, `CmdLine`, `Picking`), viewport + scrolloff. |
 | `Him.Info` | ✅ | `refreshInfo`: the info box after a prefix key or on the `:` line (ADR-20). |
 | `Him.Ignore`, `Him.FileTree` | ✅ | The gitignore matcher (pure), and the ignore-aware breadth-first file walk for the picker (ADR-21). |
-| `Him.Directory`, `Him.Commands.Directory` | ✅ | Directory listings as read-only documents (`loadPath`, `loadDirectory`, `entryAt`, `selectEntry`), and their actions (ADR-22). |
+| `Him.Directory`, `Him.Actions.Directory` | ✅ | Directory listings as read-only documents (`loadPath`, `loadDirectory`, `entryAt`, `selectEntry`), and their actions (ADR-22). |
 | `Him.Diff` | ✅ | Myers line diff with trimming; `applyHunks`, `mapLine` (ADR-25). |
-| `Him.GitState`, `Him.Git`, `Him.Commands.Git` | ✅ | A document's git state, gutter signs and `applySelected` (pure); the `git` commands; housekeeping, change navigation, stage/unstage/reset actions (ADR-25). |
-| `Him.Syntax`, `Him.Syntax.Span`, `Him.Language`, `Him.Commands.Syntax` | ✅ | The provider interface, spans, language detection, and highlighting housekeeping (ADR-26). |
+| `Him.GitState`, `Him.Git`, `Him.Actions.Git` | ✅ | A document's git state, gutter signs and `applySelected` (pure); the `git` commands; housekeeping, change navigation, stage/unstage/reset actions (ADR-25). |
+| `Him.Syntax`, `Him.Syntax.Span`, `Him.Language`, `Him.Actions.Syntax` | ✅ | The provider interface, spans, language detection, and highlighting housekeeping (ADR-26). |
 | `Him.Syntax.TreeSitter`, `Him.GrammarBuild` + `cbits/tree-sitter`, `cbits/ts_shim.c` | ✅ | The tree-sitter provider and the grammar builder (`him --build-grammars`) (ADR-27). |
 | `Him.Regex` | ✅ | Backtracking regex subset and Lua patterns (ADR-28). |
-| `Him.Lsp.Protocol`, `Him.Lsp.State`, `Him.Lsp.Config`, `Him.Lsp.Server`, `Him.Commands.Lsp` | ✅ | The LSP client: pure protocol and editor state, server table, server processes, and the editor-side actions and housekeeping (ADR-29). |
-| `Him.Commands.Lsp.{Core,Navigation,Edits,Completion}` | ✅ | `Commands.Lsp` split by feature: requests, attaching and syncing; definitions, references, symbols, diagnostics; edits, code actions, format, rename; completion and signature help. `Commands.Lsp` keeps the plugin, the actions and the result dispatch. |
+| `Him.Lsp.Protocol`, `Him.Lsp.State`, `Him.Lsp.Config`, `Him.Lsp.Server`, `Him.Actions.Lsp` | ✅ | The LSP client: pure protocol and editor state, server table, server processes, and the editor-side actions and housekeeping (ADR-29). |
+| `Him.Actions.Lsp.{Core,Navigation,Edits,Completion}` | ✅ | `Actions.Lsp` split by feature: requests, attaching and syncing; definitions, references, symbols, diagnostics; edits, code actions, format, rename; completion and signature help. `Actions.Lsp` keeps the plugin, the actions and the result dispatch. |
 | `Him.Lsp.Sync`, `Him.Lsp.Edit` | ✅ | Sync messages (incremental `didChange`, `didSave`, `didClose`); parsing and applying text and workspace edits. |
 | `Him.Render.Completion` | ✅ | The completion menu. |
 | `Him.Effect`, `Him.Runtime` | ✅ | Effects as data (`RunAction`, `OpenPalette`, `StartJob`, `CancelJob`) and the background-job runtime (ADR-23). |
 | `Him.Invocation` | ✅ | Pure invocation parsing/rendering (re-exported by `Him.Action`). |
 | `Him.Process`, `Him.Json` | ✅ | External programs with stdin/stdout/stderr; a JSON value type, parser and encoder. |
 | `Him.Palette` | ✅ | The command palette's rows: every action with its parameters, keys (from the config) and doc. |
-| `Him.Picker`, `Him.Commands.Picker` | ✅ | Pure picker (fuzzy matching, selection); `space f` / `space b` and the picker keys; `listFiles`. |
+| `Him.Picker`, `Him.Actions.Picker` | ✅ | Pure picker (fuzzy matching, selection); `space f` / `space b` and the picker keys; `listFiles`. |
 | `Him.Action` | ✅ | Actions (name, group, doc, typed parameters), the registry, invocation parsing (`name arg "quoted arg"`), and binding to a runnable `Bound` (ADR-17). |
-| `Him.Command`, `Him.Keymap` | ✅ | `EditorM` and helpers for writing actions; per-mode keymap tries, generic in what they bind (`Keymap a`). |
+| `Him.EditorM`, `Him.Keymap` | ✅ | `EditorM` and helpers for writing actions; per-mode keymap tries, generic in what they bind (`Keymap a`). |
 | `Him.Ex` | ✅ | `:`-command parser. |
 | `Him.Render`, `Him.Render.*` | ✅ | Frame, layout, components, diffing. Components: `Gutter` (line numbers), `TextArea`, `StatusLine`, `CommandLine`, `Info` and `Picker` (popups over the text area). `layout` depends on the editor, because the gutter width follows the line count. |
 | `Him.File` | ✅ | Load/save (UTF-8, line endings, trailing newline). |
 | `Him.History` | ✅ | Undo/redo snapshots: `beginChange` (called by `edit`), `commit` (called by the main loop outside insert mode), `undo`, `redo`. |
 | `Him.Document` | ✅ | Buffer + selection + path + dirty flag + line ending/trailing newline. (Split out of `Buffer` so the buffer stays pure text.) |
 | `Him.Config` | ✅ | `Config { cfgActions, cfgKeymaps, cfgFallback }`, held by the main loop rather than the `Editor`, which avoids a module cycle. `Bindings`, `overrideBindings` and `buildConfig`, which validates every binding. |
-| `Him.Commands.*` | ✅ | Action lists: `Motion`, `Edit` (modes and text), `Search`, `CommandLine`; `File` holds the ex commands. |
+| `Him.Actions.*` | ✅ | Action lists: `Motion`, `Edit` (modes and text), `Search`, `CommandLine`; `File` holds the ex commands. |
 | `Him.TextWidth` | ✅ | Tab expansion (width 4), `charWidth` (a compact East-Asian-wide/emoji table; control chars are 2 wide and shown as `^X`), char↔display-column mapping. |
 | `Him.Toml`, `Him.UserConfig` | ✅ | The TOML subset reader; the user's config file: checking, applying, the dumped defaults (ADR-32). |
 | `Him.Options` | ✅ | The settings (`Options`, `edOptions`) and the table that checks, applies and dumps them (ADR-34). |
@@ -890,7 +903,7 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
   `Him.Edit` where you can). Wrap it with `simple name group doc run`, or with
   `action name group doc spec run` when it takes arguments. The spec is built from
   `int`, `text`, `choice` and `optional`, e.g. `optional "1" 1 (int "count")`. Add it to
-  an action list in `Him.Commands.*` (each list is part of `allActions`). The name is
+  an action list in `Him.Actions.*` (each list is part of `allActions`). The name is
   public, because bindings and config files use it, so choose it carefully.
 - **Users rebind keys** in their config file (ADR-32); `him --dump-default-config` shows
   everything. New editor settings go in `Him.UserConfig` (parse, apply, dump).
@@ -899,14 +912,14 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
   startup, `buildConfig` rejects unknown actions and bad arguments, and a test checks the
   defaults.
 - **Add a `:` command:** add an `ExCommand` (names, doc, `[Text] -> EditorM ()`) to
-  `Him.Commands.File` or a new list, and include it in `exCommands` in `Him.Config.Default`.
+  `Him.Actions.File` or a new list, and include it in `exCommands` in `Him.Config.Default`.
 - **Add a `:` command:** give it `PathArgs` if its arguments are paths, so `tab`
   completes them. It shows up in the `:` menu automatically.
 - **Name a key prefix:** add it to `prefixNames` in `Him.Config.Default`, which gives the
   info box a title such as "goto".
 - **Add a picker:** build `PickerItem`s with a `PickTarget` (add a constructor for a
   new kind of target), open them with `newPicker`, and handle the target in
-  `picker_accept` (`Him.Commands.Picker`).
+  `picker_accept` (`Him.Actions.Picker`).
 - **Add a render component:** write `Theme -> Editor -> Rect -> Frame -> Frame` in
   `Him.Render.<Name>`, give it a `Rect` in `layout`, and compose it in `render`
   (`Him.Render`).
@@ -950,7 +963,7 @@ numbers are provisional.*
        (`Command.editAll`, Git `replaceLines`, Lsp `applyToDocument`, File `reloaded`);
      - give each subsystem its own job runners and result handlers instead of one big
        `Runtime.runJob`;
-     - rename `Him.Command` → `Him.EditorM` and `Him.Commands.*` → `Him.Actions.*`;
+     - rename `Him.EditorM` → `Him.EditorM` and `Him.Actions.*` → `Him.Actions.*`;
      - split `test/Spec.hs` into `test/Test/*`.
   6. [ ] **A REPL plugin** (the user's request, 2026-10-02): it opens a split with a
      REPL (a process: `ghci`, `python3`, … per language, configurable). You can type

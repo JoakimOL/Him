@@ -9,7 +9,7 @@ module Him.Ex
 import Data.List (find)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Him.Command (EditorM, failWith)
+import Him.EditorM (EditorM, failWith)
 
 data ExCommand = ExCommand
   { exNames :: ![Text]

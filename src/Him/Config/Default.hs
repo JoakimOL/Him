@@ -2,7 +2,7 @@
 --
 -- To add a keybinding, add a @(keys, action)@ pair to the right mode below;
 -- the action may take arguments (@"move_line_down 5"@). To add an action,
--- add it to one of the @Him.Commands.*@ modules (or a new one, listed in
+-- add it to one of the @Him.Actions.*@ modules (or a new one, listed in
 -- 'allActions').
 module Him.Config.Default
   ( defaultConfig
@@ -21,18 +21,18 @@ import Data.Text (Text)
 import Data.List (find)
 import Data.Text qualified as T
 import Him.Action (Action (..), Invocation (..), parseInvocation)
-import Him.Command (EditorM, failWith, request)
+import Him.EditorM (EditorM, failWith, request)
 import Him.Effect (Effect (..))
 import Him.Ex (ExArgs (..), ExCommand (..))
-import Him.Commands.CommandLine qualified as CommandLine
-import Him.Commands.Directory qualified as Directory
-import Him.Commands.Edit qualified as Edit
-import Him.Commands.Git qualified as Git
-import Him.Commands.Lsp qualified as Lsp
-import Him.Commands.File qualified as File
-import Him.Commands.Motion qualified as Motion
-import Him.Commands.Picker qualified as Picker
-import Him.Commands.Search qualified as Search
+import Him.Actions.CommandLine qualified as CommandLine
+import Him.Actions.Directory qualified as Directory
+import Him.Actions.Edit qualified as Edit
+import Him.Actions.Git qualified as Git
+import Him.Actions.Lsp qualified as Lsp
+import Him.Actions.File qualified as File
+import Him.Actions.Motion qualified as Motion
+import Him.Actions.Picker qualified as Picker
+import Him.Actions.Search qualified as Search
 import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))

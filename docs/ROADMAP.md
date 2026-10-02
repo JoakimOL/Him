@@ -58,7 +58,7 @@ What's already on the machine:
 
 1. **Effects as data.** Actions stay pure state changes.
    - `Him.Editor` gets `edEffects :: [Effect]`. Actions call `request :: Effect ->
-     EditorM ()` (new, in `Him.Command`).
+     EditorM ()` (new, in `Him.EditorM`).
    - `Effect` (new module `Him.Effect`) is plain data:
      - `RunAction Invocation`: run synchronously in `handleEvent`, which has the config
        (`bindText (cfgActions config)` from `Him.Action`);
@@ -77,8 +77,8 @@ What's already on the machine:
      already renders once per burst.
 3. **Document identity and versions.**
    - `docId :: Int` is assigned when a document is opened (`edNextId` in `Editor`).
-   - `docVersion :: Int` is bumped in `editAll` (`Him.Command`) and in undo/redo
-     (`history` in `Him.Commands.Edit`).
+   - `docVersion :: Int` is bumped in `editAll` (`Him.EditorM`) and in undo/redo
+     (`history` in `Him.Actions.Edit`).
    - Every job result carries `(docId, version)`; a stale result is dropped. This is
      needed because buffers switch (the zipper, ADR-19) while jobs run.
 4. **`Him.Process`.** Run a command with stdin text and capture stdout, stderr and the
@@ -95,7 +95,7 @@ What's already on the machine:
   - `PickerItem` gains `piDetail :: Text`, matched after the label and drawn dimmed in
     `Him.Render.Picker`.
   - `PickTarget` gains `PickAction Text` (an invocation).
-- A new `command_palette` action in `Him.Commands.Picker`:
+- A new `command_palette` action in `Him.Actions.Picker`:
   - **Items:** `registryActions` (`Him.Action`, already sorted by group).
   - **Keys:** for each action, the keys bound to it per mode, from `keymapBindings`
     (`Him.Keymap`) over `cfgKeymaps`. They are rendered with `showKeys`, e.g.
@@ -131,7 +131,7 @@ What's already on the machine:
   - score only new items when a batch arrives.
   - Only if per-keystroke matching at 200k still exceeds ~10 ms: move filtering into a
     job keyed by `(gen, query)`, keeping the last results until it answers.
-- Raise `maxFiles` (`Him.Commands.Picker`) to e.g. 500k, since streaming makes a limit
+- Raise `maxFiles` (`Him.Actions.Picker`) to e.g. 500k, since streaming makes a limit
   mostly a memory guard.
 - **ADR-24** (async picker), plus benchmark log rows with before/after numbers.
 
@@ -244,7 +244,7 @@ What's already on the machine:
    - file extensions, file names, shebangs;
    - comment token;
    - LSP command and root markers (for phase 4).
-   Detection happens on open (`Him.Commands.File.openFile`, `App.run`). A config file
+   Detection happens on open (`Him.Actions.File.openFile`, `App.run`). A config file
    can extend the table later.
 4. **Tree-sitter provider (`Him.Syntax.TreeSitter`).**
    - **Runtime:** copy the vendored runtime into `cbits/tree-sitter/` (`src/`,
@@ -346,21 +346,21 @@ What's already on the machine:
 
 - **New:** `Him.Effect`, `Him.Runtime`, `Him.Process`, `Him.Json`, `Him.Diff`, `Him.Git`,
   `Him.Language`, `Him.Syntax`, `Him.Syntax.TreeSitter`, `Him.Regex`,
-  `Him.Lsp.{Transport,Client,Position}`, and `Him.Commands.{Git,Lsp}`.
+  `Him.Lsp.{Transport,Client,Position}`, and `Him.Actions.{Git,Lsp}`.
 - **New C:** `cbits/tree-sitter/` (vendored) and `cbits/ts_shim.c`.
 - **Changed:**
   - `src/Him/App.hs` (effects, runtime, `EvJob`/`EvLsp`);
   - `Him.Editor` (`edEffects`, `edNextId`, `edLsp`);
   - `Him.Document` (`docId`, `docVersion`, `docGit`, `docHighlights`, `docLanguage`);
-  - `Him.Command` (`request`, version bump);
+  - `Him.EditorM` (`request`, version bump);
   - `Him.Event`;
-  - `Him.Picker`, `Him.Commands.Picker`, `Him.FileTree`;
+  - `Him.Picker`, `Him.Actions.Picker`, `Him.FileTree`;
   - `Him.Render.{Gutter,TextArea,Frame,Picker,Info}`, `Him.Render.Theme`;
   - `Him.Config` / `Him.Config.Default` (providers, bindings: `space ?`, `space g …`,
     `] g`, `space k`, `g d`, …);
   - `package.yaml` (`process`, the tree-sitter C sources).
 - **Reused:** `Him.Action` (`registryActions`, `bindText`, `actParams`), `Him.Keymap`
-  (`keymapBindings`, `children`), `Him.Ignore`/`Him.FileTree`, `Him.Commands.File.openFile`,
+  (`keymapBindings`, `children`), `Him.Ignore`/`Him.FileTree`, `Him.Actions.File.openFile`,
   `Him.Edit.applyEdits` (applying LSP edits), `InfoBox`/`drawInfo`, and `Picker`/`drawPicker`.
 
 ## Verification

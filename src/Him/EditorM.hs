@@ -1,6 +1,6 @@
 -- | The monad actions run in, and helpers for writing actions. Keys are
 -- bound to actions (see "Him.Action" and "Him.Keymap").
-module Him.Command
+module Him.EditorM
   ( EditorM
     -- * Helpers for writing actions
   , getDoc

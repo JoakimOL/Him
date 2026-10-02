@@ -1,6 +1,6 @@
 -- | Pickers: a list to choose from, narrowed by typing a fuzzy query
 -- (Helix's @space f@ and @space b@). Pure; the actions that open and
--- drive a picker are in "Him.Commands.Picker".
+-- drive a picker are in "Him.Actions.Picker".
 module Him.Picker
   ( Picker (..)
   , PickerItem (..)

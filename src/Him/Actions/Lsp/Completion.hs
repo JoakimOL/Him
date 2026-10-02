@@ -1,6 +1,6 @@
 -- | Completion while typing (the menu, accepting an item and its imports)
 -- and signature help.
-module Him.Commands.Lsp.Completion
+module Him.Actions.Lsp.Completion
   ( signatureLines
   , wordBeforeCursor
   , requestCompletion
@@ -22,7 +22,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
-import Him.Command
+import Him.EditorM
 import Him.Document (Document (..))
 import Him.Options (Options (..))
 import Him.Editor hiding (Severity (..))
@@ -35,7 +35,7 @@ import Him.Picker (fuzzyScore)
 import Him.Position (Pos (..))
 import Him.Lsp.Edit
 import Him.Selection (Range (..), mapRanges, point, primary, rangeHead)
-import Him.Commands.Lsp.Core
+import Him.Actions.Lsp.Core
 
 -- | The active signature, and the first line of its documentation.
 signatureLines :: Value -> [Text]

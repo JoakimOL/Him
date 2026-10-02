@@ -22,16 +22,16 @@ import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
 import Him.Action (Bound (..), bindInvocation)
 import Him.Effect (Effect (..))
-import Him.Command (failWith)
-import Him.Command qualified as Command
+import Him.EditorM (failWith)
+import Him.EditorM qualified as Command
 import Him.Config (Config (..), Plugin (..))
 import Him.Config.Default (defaultConfig, plugins)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
-import Him.Commands.File qualified as File
-import Him.Commands.Motion qualified as Motion
-import Him.Commands.Picker qualified as Picker
-import Him.Commands.Syntax qualified as Syntax
+import Him.Actions.File qualified as File
+import Him.Actions.Motion qualified as Motion
+import Him.Actions.Picker qualified as Picker
+import Him.Actions.Syntax qualified as Syntax
 import Him.Info (refreshInfo)
 import Him.UserConfig (UserConfig (..), applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
 import Control.Monad.IO.Class (liftIO)

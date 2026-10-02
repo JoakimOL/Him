@@ -41,7 +41,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Read qualified as TR
-import Him.Command (EditorM)
+import Him.EditorM (EditorM)
 import Him.Invocation
 
 -- | Groups order and label actions in documentation and help. They are not

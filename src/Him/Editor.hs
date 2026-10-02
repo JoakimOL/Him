@@ -67,7 +67,7 @@ data PromptKind
     RenamePrompt !(Int, Int)
   deriving stock (Eq, Show)
 
--- | File operations in a directory listing ("Him.Commands.Directory").
+-- | File operations in a directory listing ("Him.Actions.Directory").
 -- The first field is always the listed directory.
 data FileAction
   = NewFile !FilePath

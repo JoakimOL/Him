@@ -1,5 +1,5 @@
 -- | @:@ commands for files, buffers and quitting.
-module Him.Commands.File
+module Him.Actions.File
   ( exCommands
   , actions
   , openFile
@@ -13,12 +13,12 @@ import Him.Action
 import Him.Effect (Effect (..))
 import Him.Buffer (lineCount)
 import Him.Buffer qualified as Buffer
-import Him.Command
+import Him.EditorM
 import Him.Document (Document (..), changeDocument, clampSelection, displayName, isReadOnly, newDocument)
 import Him.Options (Options (..))
 import Him.Editor
 import Him.Ex (ExArgs (..), ExCommand (..))
-import Him.Commands.Git (markGitReload)
+import Him.Actions.Git (markGitReload)
 import Him.Directory (listingDir, loadPath)
 import Him.Lsp.Sync (closeEffects)
 import Him.File (loadDocument, saveDocument)

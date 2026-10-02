@@ -20,7 +20,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Action
-import Him.Command (EditorM)
+import Him.EditorM (EditorM)
 import Him.Ex (ExCommand)
 import Him.Effect (JobResult)
 import Him.Lsp.Config (ServerTable, defaultServers)

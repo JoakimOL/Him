@@ -1,7 +1,7 @@
 -- | Git in the editor (ADR-25): keeping each document's git state current,
 -- moving between changes, and staging, unstaging or resetting the selected
 -- lines.
-module Him.Commands.Git
+module Him.Actions.Git
   ( gitPlugin
   , actions
   , gitHousekeeping
@@ -14,7 +14,7 @@ import Data.IntSet qualified as IntSet
 import Data.Text qualified as T
 import Him.Action
 import Him.Buffer qualified as Buffer
-import Him.Command
+import Him.EditorM
 import Him.Diff
 import Him.Document (DocKind (..), Document (..), replaceBuffer)
 import Him.Effect (Effect (..), Job (..), JobResult (..))

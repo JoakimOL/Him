@@ -1,5 +1,5 @@
 -- | The @:@ command line: entering it, editing it, and running it.
-module Him.Commands.CommandLine
+module Him.Actions.CommandLine
   ( actions
   , cmdlineInsert
   ) where
@@ -11,10 +11,10 @@ import Data.List (find, isPrefixOf, sort)
 import Data.Text qualified as T
 import System.Directory (doesDirectoryExist, listDirectory)
 import Him.Action
-import Him.Command
-import Him.Commands.Directory (runFileAction)
-import Him.Commands.Lsp qualified as Lsp
-import Him.Commands.Search (cancelSearch, executeSearch, executeSelect)
+import Him.EditorM
+import Him.Actions.Directory (runFileAction)
+import Him.Actions.Lsp qualified as Lsp
+import Him.Actions.Search (cancelSearch, executeSearch, executeSelect)
 import Him.Editor (Editor (..), PromptKind (..))
 import Him.Ex (ExArgs (..), ExCommand (..), runExLine)
 import Him.Theme.Load (themeNames)

@@ -1,5 +1,5 @@
 -- | Actions that change modes or text.
-module Him.Commands.Edit
+module Him.Actions.Edit
   ( actions
   , insertChar
   ) where
@@ -8,7 +8,7 @@ import Control.Monad.Trans.State.Strict (gets)
 import Data.Text qualified as T
 import Him.Action
 import Him.Buffer (nextPos)
-import Him.Command
+import Him.EditorM
 import Him.Effect (Effect (..))
 import Him.Document (Document (..))
 import Him.Edit

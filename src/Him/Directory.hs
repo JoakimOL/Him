@@ -1,7 +1,7 @@
 -- | Directory listings (ADR-22): a directory opens as a read-only document
 -- whose lines are its entries, like Emacs's dired. The ordinary motions
 -- and search work on it; the keys of the 'Him.Mode.Directory' layer open
--- entries ("Him.Commands.Directory").
+-- entries ("Him.Actions.Directory").
 --
 -- Line 0 is the directory's path, line 1 is @../@, then subdirectories and
 -- files, each sorted by name. Subdirectories end in @/@.

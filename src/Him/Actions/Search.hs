@@ -1,6 +1,6 @@
 -- | Search actions: @/@ and @?@ prompts with an incremental preview, @n@ and
 -- @N@ to repeat, @*@ to search for the selection.
-module Him.Commands.Search
+module Him.Actions.Search
   ( actions
   , startSearch
   , executeSearch
@@ -14,7 +14,7 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Action
-import Him.Command
+import Him.EditorM
 import Him.Document (Document (..))
 import Him.Edit (selectionText)
 import Him.Editor

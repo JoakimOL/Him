@@ -1,6 +1,6 @@
 -- | Pickers: @space f@ (files under the working directory) and @space b@
 -- (open buffers), and the keys that drive an open picker.
-module Him.Commands.Picker
+module Him.Actions.Picker
   ( actions
   , pickerInsert
   , applyJobResult
@@ -13,9 +13,9 @@ import Data.Sequence qualified as Seq
 import Data.Text qualified as T
 import Him.Action
 import Him.Effect (Effect (..), Job (..), JobKey (..), JobResult (..))
-import Him.Command
-import Him.Commands.File (openFile)
-import Him.Commands.Lsp qualified as Lsp
+import Him.EditorM
+import Him.Actions.File (openFile)
+import Him.Actions.Lsp qualified as Lsp
 import Him.Lsp.Protocol (Encoding (..), fromLspColumn)
 import Him.Buffer qualified as Buffer
 import Him.Document (Document (..), displayName)

@@ -1,6 +1,6 @@
 -- | Changing text with the language server: its edits to one document or
 -- the workspace, code actions, formatting, renaming.
-module Him.Commands.Lsp.Edits
+module Him.Actions.Lsp.Edits
   ( applyToDocument
   , applyWorkspaceEdit
   , runCodeAction
@@ -16,8 +16,8 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
-import Him.Command
-import Him.Commands.File (openFile)
+import Him.EditorM
+import Him.Actions.File (openFile)
 import Him.Document (Document (..), clampSelection, replaceBuffer)
 import Him.Options (Options (..))
 import Him.Editor hiding (Severity (..))
@@ -29,7 +29,7 @@ import Control.Monad.IO.Class (liftIO)
 import Him.Lsp.Edit
 import Him.Selection (Range (..), primary, rangeEnd, rangeHead, rangeStart)
 import System.Directory (makeAbsolute)
-import Him.Commands.Lsp.Core
+import Him.Actions.Lsp.Core
 
 -- | Apply a server's edits to a document as one undoable change.
 applyToDocument :: Encoding -> [TextEdit] -> Document -> Document

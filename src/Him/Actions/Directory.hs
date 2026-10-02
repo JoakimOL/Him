@@ -2,7 +2,7 @@
 -- the cursor, go up, refresh, open a listing from anywhere, and create,
 -- rename and delete files (the names are asked for on the command line,
 -- see 'runFileAction').
-module Him.Commands.Directory
+module Him.Actions.Directory
   ( actions
   , runFileAction
   ) where
@@ -15,8 +15,8 @@ import Data.Containers.ListUtils (nubOrd)
 import Data.List (isPrefixOf)
 import Data.Text qualified as T
 import Him.Action
-import Him.Command
-import Him.Commands.File (openFile)
+import Him.EditorM
+import Him.Actions.File (openFile)
 import Him.Directory
 import Him.Document (DirEntry (..), Document (..))
 import Him.Options (Options (..))

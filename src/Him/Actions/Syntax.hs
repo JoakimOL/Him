@@ -2,7 +2,7 @@
 -- provider for its language, and ask for spans of the lines around the
 -- view whenever the text changes or the view leaves the lines covered.
 -- Which provider does the work is invisible here ("Him.Syntax").
-module Him.Commands.Syntax
+module Him.Actions.Syntax
   ( syntaxHousekeeping
   , applySyntaxResult
   , highlightMargin
@@ -10,7 +10,7 @@ module Him.Commands.Syntax
 
 import Control.Monad.Trans.State.Strict (get, modify')
 import Him.Buffer qualified as Buffer
-import Him.Command
+import Him.EditorM
 import Him.Document (DocKind (..), Document (..))
 import Him.Effect (Effect (..), Job (..), JobResult (..))
 import Him.Editor
@@ -23,7 +23,7 @@ import Him.View (View (..))
 highlightMargin :: Int
 highlightMargin = 100
 
--- | After every event (like 'Him.Commands.Git.gitHousekeeping'). At most
+-- | After every event (like 'Him.Actions.Git.gitHousekeeping'). At most
 -- one highlight job per document is in flight; when the text moved on
 -- meanwhile, the next round asks again.
 syntaxHousekeeping :: EditorM ()

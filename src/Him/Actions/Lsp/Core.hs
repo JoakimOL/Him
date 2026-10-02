@@ -1,7 +1,7 @@
 -- | The LSP client's plumbing: sending requests about the cursor, keeping
 -- documents attached and the server's text current, positions and
 -- encodings, and stopping servers.
-module Him.Commands.Lsp.Core
+module Him.Actions.Lsp.Core
   ( severityName
   , ask
   , sendRequest
@@ -23,7 +23,7 @@ import Data.Char (isAlphaNum)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Him.Buffer qualified as Buffer
-import Him.Command
+import Him.EditorM
 import Him.Document (DocKind (..), Document (..))
 import Him.Effect (Effect (..), Job (..))
 import Him.Editor hiding (Severity (..))

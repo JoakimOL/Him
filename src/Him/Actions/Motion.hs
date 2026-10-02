@@ -1,5 +1,5 @@
 -- | Actions that move or reshape the selection.
-module Him.Commands.Motion
+module Him.Actions.Motion
   ( actions
   , awaitedKey
   ) where
@@ -13,7 +13,7 @@ import Him.Key (Key (..), KeyCode (..), Modifier (..))
 import Him.View (View (..))
 import Data.Text (Text)
 import Him.Action
-import Him.Command
+import Him.EditorM
 import Him.Document (Document (..))
 import Him.Motion
 import Him.Options (Options (..))
