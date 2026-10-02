@@ -567,6 +567,11 @@ To make that work, `Keymap` became generic (`Keymap a`, a `Functor`): `Keymap Te
 while reading, `Keymap Bound` while running. User bindings go on top of the defaults
 with `overrideBindings`, and `no_op` switches a key off.
 
+Counts fall out of this design. `5 j` stores the digits in `edCount`, and when the
+binding has no arguments and the action's first parameter is `int "count"`, the count is
+passed in as that argument. The decision is made once, in `bindInvocation`, which stores
+a `boundCounted :: Maybe (Int -> EditorM ())` next to `boundRun`.
+
 **▶ Task 5b.** Write `parseInvocation :: Text -> Either Text Invocation` (words, plus
 double-quoted strings with `\"` and `\\`) and its inverse, and test that they
 round-trip.
@@ -1043,7 +1048,6 @@ Each has a concrete next step.
 
 The editor is deliberately unfinished. Good next exercises, in increasing difficulty:
 
-- **Counts** (`3w`, `5j`): parse digits into `edPending`, then repeat the command.
 - **A config file:** bindings are already `Map Mode [(keys, invocation)]` (3.6), so
   parse `keys = action args` lines per mode and call `configWith`.
 - **Multiple buffers** and `:e`: turn `edDoc` into a list plus an index.

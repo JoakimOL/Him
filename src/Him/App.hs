@@ -10,7 +10,9 @@ import Control.Exception (SomeException, try)
 import Control.Monad (unless, when)
 import Control.Monad.Trans.State.Strict (execStateT, get, gets, modify')
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Char (digitToInt, isDigit)
+import Data.Maybe (fromMaybe, isJust)
+import Data.Set qualified as Set
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
 import Him.Action (Bound (..))
@@ -25,7 +27,8 @@ import Him.Mode (Mode (..))
 import Him.Editor
 import Him.Event (Event (..))
 import Him.File (loadDocument)
-import Him.Keymap (Resolved (..), emptyKeymap, resolve)
+import Him.Key (Key (..), KeyCode (..))
+import Him.Keymap (Keymap, Resolved (..), emptyKeymap, resolve)
 import Him.Log (logMsg)
 import Him.Render (ensureCursorVisible, render)
 import Him.Render.Diff (diffFrames)
@@ -99,17 +102,41 @@ handleEvent config (EvKey key) = do
       keys = pending <> [key]
       keymap = Map.findWithDefault emptyKeymap (edMode ed) (cfgKeymaps config)
       setPending ks = modify' (\e -> e {edPending = ks})
+      clearCount = modify' (\e -> e {edCount = Nothing})
   when (null pending) $ modify' (\e -> e {edStatus = Nothing})
-  case resolve keymap keys of
-    NeedMore -> setPending keys
-    Found bound -> do
-      setPending []
-      boundRun bound
-    NoMatch -> do
-      setPending []
-      -- Only a key typed on its own falls back (a failed chord is dropped).
-      when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
+  case countDigit ed keymap key of
+    Just n -> modify' (\e -> e {edCount = Just n})
+    Nothing -> case resolve keymap keys of
+      NeedMore -> setPending keys
+      Found bound -> do
+        setPending []
+        clearCount
+        case (edCount ed, boundCounted bound) of
+          (Just n, Just counted) -> counted n
+          _ -> boundRun bound
+      NoMatch -> do
+        setPending []
+        clearCount
+        -- Only a key typed on its own falls back (a failed chord is dropped).
+        when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
   commitOutsideInsert
+
+-- | A digit typed before a key sequence, in normal or select mode, adds to
+-- the count (@1 2 j@ moves 12 lines). @0@ only continues a count, and a
+-- digit the keymap binds keeps its binding.
+countDigit :: Editor -> Keymap Bound -> Key -> Maybe Int
+countDigit ed keymap key = case key of
+  Key (KChar c) mods
+    | Set.null mods
+    , isDigit c
+    , null (edPending ed)
+    , edMode ed `elem` [Normal, Select]
+    , c /= '0' || isJust (edCount ed)
+    , NoMatch <- resolve keymap [key] ->
+        Just (min maxCount (maybe 0 (* 10) (edCount ed) + digitToInt c))
+  _ -> Nothing
+  where
+    maxCount = 1000000
 
 -- | Once the editor is out of insert mode, the edits made since the last
 -- commit become one undo step. A whole insert session therefore undoes at

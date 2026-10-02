@@ -699,6 +699,15 @@ integrationTests = do
   starSearch <- selectionAfter "one two\none" "e * n"
   notFound <- typeKeys "/ z z ret" (start "abc")
   deleteMatch <- textAfter "one two three" "/ t w o ret d"
+  countDown <- selectionAfter "a\nb\nc\nd\ne" "3 j"
+  countTwelve <- selectionAfter (T.intercalate "\n" (replicate 20 "x")) "1 2 j"
+  countWords <- textAfter "one two three four" "2 w d"
+  countLines <- textAfter "a\nb\nc\nd" "2 x d"
+  countIgnored <- textAfter "a\nb\nc" "3 u"
+  countCleared <- selectionAfter "a\nb\nc\nd\ne" "3 esc j"
+  countPending <- typeKeys "4 2" (start "abc")
+  zeroAlone <- typeKeys "0" (start "abc")
+  countInsert <- textAfter "" "i 3 esc"
   pendingG <- typeKeys "g" (start "abc")
   badChord <- typeKeys "g z" (start "abc")
   pure
@@ -739,6 +748,15 @@ integrationTests = do
     , test "* then n searches for the selection" (assertEqual (Pos 1 0, Pos 1 2) starSearch)
     , test "a missing pattern is reported" (assertEqual (Just (Status Error "pattern not found: zz")) (edStatus notFound))
     , test "d deletes the match" (assertEqual "one  three" deleteMatch)
+    , test "a count repeats a motion" (assertEqual (Pos 3 0, Pos 3 0) countDown)
+    , test "counts have several digits" (assertEqual (Pos 12 0, Pos 12 0) countTwelve)
+    , test "2 w d deletes the second word's selection" (assertEqual "one three four" countWords)
+    , test "2 x selects two lines" (assertEqual "c\nd" countLines)
+    , test "a count on an action without one is ignored" (assertEqual "a\nb\nc" countIgnored)
+    , test "an unbound key clears the count" (assertEqual (Pos 1 0, Pos 1 0) countCleared)
+    , test "the count is shown while typed" (assertEqual (Just 42) (edCount countPending))
+    , test "0 does not start a count" (assertEqual Nothing (edCount zeroAlone))
+    , test "digits type in insert mode" (assertEqual "3" countInsert)
     , test "g waits for the next key" (assertEqual [plain (KChar 'g')] (edPending pendingG))
     , test "an unknown chord is dropped" (assertEqual ([], "abc") (edPending badChord, B.toText (docBuffer (edDoc badChord))))
     ]

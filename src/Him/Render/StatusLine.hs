@@ -35,4 +35,4 @@ drawStatusLine theme ed rect =
       | otherwise = "…" <> T.takeEnd (room - 1) name
     file = " " <> shortName <> dirty
     Pos l c = rangeHead (primary (docSelection doc))
-    right = showKeys (edPending ed) <> "  " <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "
+    right = maybe "" (T.pack . show) (edCount ed) <> showKeys (edPending ed) <> "  " <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "

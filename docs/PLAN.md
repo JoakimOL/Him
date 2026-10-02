@@ -191,8 +191,13 @@ positional parameters. A binding is text: the action's name plus arguments, such
 scale. A `Value` sum type checked inside each action at run time, which reports errors
 only when the key is pressed. Arguments stored per key in the keymap and passed on each
 press, which is the same thing with an extra lookup.
-*Later:* a count prefix (`5 j`) can fill an action's `count` parameter, and `:` could
-gain a command that runs any action by its invocation text.
+**Counts** (`5 j`, `1 2 j`, `2 w`): in normal and select mode, digits typed before a key
+sequence build `edCount`, which the status line shows. A binding without arguments
+whose action's first parameter is `int "count"` runs with the count (`boundCounted`).
+Other bindings ignore it, as does a binding that already gives arguments
+(`move_line_down 20`). `0` only continues a count, and a digit that the keymap binds
+keeps its binding. The count is capped at 1,000,000.
+*Later:* `:` could gain a command that runs any action by its invocation text.
 
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
@@ -274,7 +279,8 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **15. Rendering pass.** Row reuse, terminal scroll regions, cell-level diff, and an
   ASCII fast path.
 - [x] **16. Action layer.** Keys bind to actions with typed arguments, validated at
-  startup; user bindings override the defaults (ADR-17).
+  startup; user bindings override the defaults (ADR-17). Count prefixes fill an
+  action's `count` parameter.
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -293,7 +299,7 @@ Implemented (defined in `Him.Config.Default`):
 
 | Mode | Keys |
 |---|---|
-| Normal | `h j k l`, arrows, `home`/`end`; `w b e` (select words), `x` (select line, repeat to extend), `;` (collapse), `v` (select mode), `d` (delete), `c` (change); `y` (yank), `p` / `P` (paste after / before); `u` / `U` (undo / redo); `g g` / `g e` (first / last line), `g h` / `g l` (line start / end); `i a o`; `:` |
+| Normal | counts (`5 j`, `3 w`, `2 x`) on `h j k l`, arrows, `w b e`, `x`; `h j k l`, arrows, `home`/`end`; `w b e` (select words), `x` (select line, repeat to extend), `;` (collapse), `v` (select mode), `d` (delete), `c` (change); `y` (yank), `p` / `P` (paste after / before); `u` / `U` (undo / redo); `g g` / `g e` (first / last line), `g h` / `g l` (line start / end); `i a o`; `:` |
 | Select | same as normal, but motions extend; `v` / `esc` → normal |
 | Insert | printable chars, `ret` (keeps indent), `tab`, `backspace`, `del`, arrows, `esc` |
 | Normal (search) | `/` / `?` (search forward / backward, with preview), `n` / `N` (next / previous match), `*` (selection becomes the pattern) |
@@ -374,7 +380,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (204 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (213 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

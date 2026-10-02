@@ -44,6 +44,8 @@ data Editor = Editor
   , edStatus :: !(Maybe Status)
   , edPending :: ![Key]
   -- ^ Keys of an unfinished key sequence (e.g. the @g@ of @g g@).
+  , edCount :: !(Maybe Int)
+  -- ^ A count typed before a key, e.g. the @5@ of @5 j@.
   , edCmdLine :: !Text
   -- ^ Text typed on the command line.
   , edPrompt :: !PromptKind
@@ -65,6 +67,7 @@ newEditor size doc =
     , edSize = size
     , edStatus = Nothing
     , edPending = []
+    , edCount = Nothing
     , edCmdLine = ""
     , edPrompt = ExPrompt
     , edPreviewPending = False

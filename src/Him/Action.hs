@@ -240,12 +240,22 @@ quoteArg t
 data Bound = Bound
   { boundInvocation :: !Invocation
   , boundRun :: EditorM ()
+  , boundCounted :: Maybe (Int -> EditorM ())
+  -- ^ How to run it with a count typed before the key (@5 j@). Present when
+  -- the binding gives no arguments and the action's first parameter is an
+  -- integer named @count@; other bindings ignore a count.
   }
 
 bindInvocation :: ActionRegistry -> Invocation -> Either Text Bound
 bindInvocation reg inv = case lookupAction (invAction inv) reg of
   Nothing -> Left ("unknown action: " <> invAction inv)
-  Just a -> Bound inv <$> actBind a (invArgs inv)
+  Just a -> do
+    run <- actBind a (invArgs inv)
+    let counted = case (invArgs inv, actParams a) of
+          ([], Param "count" PInt _ : _) ->
+            Just (\n -> either (const run) id (actBind a [T.pack (show n)]))
+          _ -> Nothing
+    pure (Bound inv run counted)
 
 -- | Parse and bind a binding's text.
 bindText :: ActionRegistry -> Text -> Either Text Bound
