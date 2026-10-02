@@ -20,8 +20,10 @@ import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Commands.Git (markGitReload)
 import Him.Directory (listingDir, loadPath)
 import Him.Lsp.Sync (closeEffects)
-import Him.File (saveDocument)
-import System.Directory (canonicalizePath, getCurrentDirectory, setCurrentDirectory)
+import Him.File (loadDocument, saveDocument)
+import Him.History (Snapshot (..), beginChange)
+import Him.Selection (Range (..), mapRanges)
+import System.Directory (canonicalizePath, doesFileExist, getCurrentDirectory, setCurrentDirectory)
 
 actions :: [Action]
 actions =
@@ -69,9 +71,71 @@ exCommands =
         Right inv -> request (RunAction inv)
   , ExCommand ["show-directory", "pwd"] "Show the working directory" NoArgs $ \_ ->
       liftIO getCurrentDirectory >>= info . T.pack
+  , ExCommand ["reload", "rl"] "Load the file again from disk (refuses with unsaved changes)" NoArgs $ \_ -> reloadCurrent False
+  , ExCommand ["reload!", "rl!"] "Load the file again from disk, discarding unsaved changes" NoArgs $ \_ -> reloadCurrent True
+  , ExCommand ["reload-all", "rla"] "Load every unmodified buffer again from disk" NoArgs $ \_ -> reloadAll
   , ExCommand ["buffer-next", "bn", "bnext"] "Go to the next buffer" NoArgs $ \_ -> modify' (switchBuffer 1)
   , ExCommand ["buffer-previous", "bp", "bprev"] "Go to the previous buffer" NoArgs $ \_ -> modify' (switchBuffer (-1))
   ]
+
+-- | Read a document's file again: 'Left' with why not.
+reloadDocument :: Bool -> Document -> EditorM (Either T.Text (Maybe Document))
+reloadDocument force d = case (isReadOnly d, docPath d) of
+  (True, _) -> pure (Left "a directory listing is refreshed with g r")
+  (_, Nothing) -> pure (Left "no file to reload")
+  (_, Just path)
+    | docDirty d && not force -> pure (Left "unsaved changes (use :reload! to discard them)")
+    | otherwise -> do
+        exists <- liftIO (doesFileExist path)
+        if not exists
+          then pure (Left (T.pack path <> " no longer exists"))
+          else
+            liftIO (loadDocument path) >>= \case
+              Left e -> pure (Left e)
+              Right fresh
+                | docBuffer fresh == docBuffer d && not (docDirty d) -> pure (Right Nothing)
+                | otherwise -> pure (Right (Just (reloaded fresh d)))
+
+-- | The document with its file's new text: one undoable change; the
+-- cursors stay where they were (clamped), and the git state is read again.
+-- Its identity stays, so highlighting and the language server follow
+-- through the version bump.
+reloaded :: Document -> Document -> Document
+reloaded fresh d =
+  let buf = docBuffer fresh
+      clamp r = r {rangeAnchor = Buffer.clampPos buf (rangeAnchor r), rangeHead = Buffer.clampPos buf (rangeHead r)}
+   in markGitReload
+        d
+          { docBuffer = buf
+          , docSelection = mapRanges clamp (docSelection d)
+          , docDirty = False
+          , docSavedBuffer = buf
+          , docLineEnding = docLineEnding fresh
+          , docTrailingNewline = docTrailingNewline fresh
+          , docVersion = docVersion d + 1
+          , docHistory = beginChange (Snapshot (docBuffer d) (docSelection d)) (docHistory d)
+          }
+
+reloadCurrent :: Bool -> EditorM ()
+reloadCurrent force =
+  getDoc >>= reloadDocument force >>= \case
+    Left e -> failWith e
+    Right Nothing -> info "already up to date"
+    Right (Just d) -> do
+      modifyDoc (const d)
+      info ("reloaded " <> displayName d)
+
+-- | Reload every buffer with a file and no unsaved changes.
+reloadAll :: EditorM ()
+reloadAll = do
+  (bs, _) <- gets buffers
+  results <- mapM (\b -> (docId (bufDoc b),) <$> reloadDocument False (bufDoc b)) [b | b <- bs, not (isReadOnly (bufDoc b)), docPath (bufDoc b) /= Nothing]
+  mapM_ (\(i, r) -> either (const (pure ())) (mapM_ (\d -> modify' (modifyDocument i (const d)))) r) results
+  let changed = length [() | (_, Right (Just _)) <- results]
+      skipped = length [() | (_, Left _) <- results]
+  info $
+    "reloaded " <> T.pack (show changed) <> " buffer(s)"
+      <> if skipped > 0 then ", skipped " <> T.pack (show skipped) <> " (unsaved changes or missing files)" else ""
 
 -- | Close the current buffer, telling its language server.
 closeCurrent :: EditorM ()

@@ -358,9 +358,39 @@ openBufferTests = do
   targetKept <- doesPathExist (outside <> "/keep.txt")
   removeDirectoryRecursive outside
   removeDirectoryRecursive otree
+  -- Reloading files changed by someone else.
+  let fileR = dir <> "/him-test-reload.txt"
+      fileS = dir <> "/him-test-reload2.txt"
+      linesOf = B.toLines . docBuffer . edDoc
+  writeFile fileR "one\ntwo\n"
+  writeFile fileS "x\n"
+  docR <- either (fail . T.unpack) pure =<< loadDocument fileR
+  let startR = (newEditor (24, 80) docR) {edDoc = (edDoc (newEditor (24, 80) docR)) {docSelection = single (point (Pos 1 2))}}
+  writeFile fileR "one\nTWO\nthree\n"
+  reloadedR <- ex "reload" startR
+  undoneR <- keys "u" reloadedR
+  dirtyR <- keys "i X esc" startR
+  refusedR <- ex "reload" dirtyR
+  forcedR <- ex "reload!" dirtyR
+  upToDate <- ex "reload" reloadedR
+  withS <- ex ("o " <> T.pack fileS) dirtyR
+  writeFile fileS "y\n"
+  allReloaded <- ex "rla" withS
+  removeFile fileS
+  goneS <- ex "reload" allReloaded
+  mapM_ removeFile [fileR]
   mapM_ removeFile [fileA, fileB]
   pure
-    [ test "zipper: open, switch and close" $
+    [ test ":reload reads the file again; the cursor stays" $
+        assertEqual (["one", "TWO", "three"], Pos 1 2, False) (linesOf reloadedR, rangeHead (primary (docSelection (edDoc reloadedR))), docDirty (edDoc reloadedR))
+    , test "a reload can be undone" (assertEqual ["one", "two"] (linesOf undoneR))
+    , test ":reload refuses unsaved changes" (assertEqual (Just (Status Error "unsaved changes (use :reload! to discard them)"), "twXo") (edStatus refusedR, B.lineAt 1 (docBuffer (edDoc refusedR))))
+    , test ":reload! discards them" (assertEqual (["one", "TWO", "three"], False) (linesOf forcedR, docDirty (edDoc forcedR)))
+    , test "an unchanged file is up to date" (assertEqual (Just (Status Info "already up to date")) (edStatus upToDate))
+    , test ":reload-all reloads clean buffers and skips modified ones" $
+        assertEqual (["y"], Just (Status Info "reloaded 1 buffer(s), skipped 1 (unsaved changes or missing files)")) (linesOf allReloaded, edStatus allReloaded)
+    , test "a deleted file is not reloaded" (assertEqual (Just (Status Error (T.pack fileS <> " no longer exists")), ["y"]) (edStatus goneS, linesOf goneS))
+    , test "zipper: open, switch and close" $
         let e0 = newEditor (24, 80) (newDocument (Just "1") (buf "1"))
             e1 = openBuffer (newDocument (Just "2") (buf "2")) e0
             e2 = openBuffer (newDocument (Just "3") (buf "3")) (switchBuffer 1 e1)
