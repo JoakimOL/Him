@@ -578,6 +578,10 @@ binding has no arguments and the action's first parameter is `int "count"`, the 
 passed in as that argument. The decision is made once, in `bindInvocation`, which stores
 a `boundCounted :: Maybe (Int -> EditorM ())` next to `boundRun`.
 
+That design paid off later: the config file (ADR-32) is little more than a TOML reader
+that produces the same `Bindings` pairs, plus `him --dump-default-config`, which prints
+the defaults through the same tables.
+
 **▶ Task 5b.** Write `parseInvocation :: Text -> Either Text Invocation` (words, plus
 double-quoted strings with `\"` and `\\`) and its inverse, and test that they
 round-trip.

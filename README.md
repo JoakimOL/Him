@@ -50,6 +50,10 @@ Helix's runtime.
 
 `C-z` suspends the editor (`fg` brings it back).
 
+Keys, editor settings and language servers can be changed in `~/.config/him/config.toml`.
+`him --dump-default-config > ~/.config/him/config.toml` gives a file with every default to
+start from (or use `:config-open` inside him); `:config-reload` applies changes.
+
 Debug logging: `HIM_LOG=/tmp/him.log make run ARGS=file.txt`.
 
 ## Layout

@@ -545,6 +545,37 @@ keys (`ISIG`), so Ctrl-Z arrives as a key. It is bound to `suspend`, which queue
 3. marks the editor `edRepaint`, so the next frame is drawn without diffing against the
    old one, and reads the window size again in case it changed meanwhile.
 
+**ADR-32: The config file is TOML, layered on the defaults.**
+`~/.config/him/config.toml` (or `$XDG_CONFIG_HOME/him/config.toml`, or `$HIM_CONFIG`)
+has three sections:
+- `[editor]`: `scrolloff` and `show-hidden-files`.
+- `[keys.<mode>]`: `"keys" = "action invocation"`. The modes are normal, select,
+  insert, command, picker, directory and completion.
+- `[language-server.<language>]`: `command`, `args`, `roots`, `language-id` and
+  `enabled`.
+
+How it is read:
+- **Format:** TOML, because Helix users know it. `Him.Toml` reads the subset a config
+  needs into the JSON value type, and its errors name the line.
+- **Keys:** the action layer (ADR-17) did most of the work. Bindings are the same
+  `Bindings` text as the defaults, put on top of them with `overrideBindings` and
+  validated with them, so a bad key or action is reported with mode and keys.
+  `no_op` unbinds a key.
+- **Strict checking:** unknown sections, modes and settings are errors, because a
+  silently ignored typo is worse. Every error is collected.
+- **Failure:** a broken file starts the defaults, and the status row names the first
+  problem, so the user can fix it in him (`:config-open`).
+- **Defaults to start from:** `him --dump-default-config` prints every default as a
+  config file: the bindings per mode, commented with what they do; the servers; and a
+  list of all actions with their parameters. Read back, it equals the defaults
+  (tested).
+- **Changing it while running:** `:config-open` opens the file, pre-filled with the
+  defaults if missing; saving creates the directory. `:config-reload` replaces the
+  loop's config, the runtime's server table and the editor settings.
+
+*Alternative:* a custom `keys = action` line format. It is simpler to parse, but it
+leaves no room to grow and is unfamiliar.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -599,6 +630,7 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Config` | ✅ | `Config { cfgActions, cfgKeymaps, cfgFallback }`, held by the main loop rather than the `Editor`, which avoids a module cycle. `Bindings`, `overrideBindings` and `buildConfig`, which validates every binding. |
 | `Him.Commands.*` | ✅ | Action lists: `Motion`, `Edit` (modes and text), `Search`, `CommandLine`; `File` holds the ex commands. |
 | `Him.TextWidth` | ✅ | Tab expansion (width 4), `charWidth` (a compact East-Asian-wide/emoji table; control chars are 2 wide and shown as `^X`), char↔display-column mapping. |
+| `Him.Toml`, `Him.UserConfig` | ✅ | The TOML subset reader; the user's config file: checking, applying, the dumped defaults, the path (ADR-32). |
 | `Him.Config.Default` | ✅ | `allActions`, `defaultBindings`, `defaultConfig`, and `configWith` (the defaults with user bindings on top). **This is where bindings are added.** |
 
 ## 5. Development goals / milestones
@@ -675,13 +707,14 @@ Each milestone ends with something runnable, and with this file updated.
   and Ctrl-Z to suspend (ADR-31).
 - [x] **28. Reload.** `:reload`, `:reload!`, `:reload-all`: the file is read again as one
   undoable change, keeping the cursor; modified buffers are refused unless forced.
+- [x] **29. Config file.** `config.toml` with keys, editor settings and language servers;
+  `him --dump-default-config`, `:config-open`, `:config-reload` (ADR-32).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
 - [ ] Highlight all matches
 - [ ] Undo tree / change sets instead of snapshots
 - [ ] Named registers and the system clipboard
-- [ ] User config file for keymaps (only the file parser is left: it produces `Bindings`)
 - [ ] Syntax highlighting (a styling pass at render time)
 - [ ] More pickers (global search, symbols) and a scrollable `:help` listing of actions
 
@@ -718,6 +751,8 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
   `int`, `text`, `choice` and `optional`, e.g. `optional "1" 1 (int "count")`. Add it to
   an action list in `Him.Commands.*` (each list is part of `allActions`). The name is
   public, because bindings and config files use it, so choose it carefully.
+- **Users rebind keys** in their config file (ADR-32); `him --dump-default-config` shows
+  everything. New editor settings go in `Him.UserConfig` (parse, apply, dump).
 - **Add a keybinding:** add `("g h", "goto_line_start")` or `("C-d", "move_line_down 20")`
   entries to that mode's list in `Him.Config.Default`. Chords are parsed by `Him.Key`. At
   startup, `buildConfig` rejects unknown actions and bad arguments, and a test checks the
@@ -788,8 +823,8 @@ numbers are provisional.*
   - [x] Phase 4, LSP client (milestone 24, ADR-29). Diagnostics, hover, definition,
     references, completion.
   - **Roadmap complete.** Follow-ups, roughly by value: incremental parsing (3b),
-    which can now reuse `Buffer.changeBetween`; highlighting in the preview; a config
-    file for keys,
+    which can now reuse `Buffer.changeBetween`; highlighting in the preview; a theme
+    section in the config file,
     languages and servers; syntax injections; regex search on `Him.Regex`; and a full
     benchmark run on an idle machine (see above).
 - **Next suggestions:**
@@ -833,7 +868,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (452 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (470 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.
