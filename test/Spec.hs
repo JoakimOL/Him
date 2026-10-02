@@ -38,6 +38,7 @@ import Him.Ignore
 import Him.Diff
 import Him.Syntax
 import Him.Regex
+import Him.Lsp.Protocol
 import Him.Syntax.TreeSitter (findRuntime, readQuery, treeSitter)
 import System.FilePath ((</>))
 import Data.List (find)
@@ -426,6 +427,7 @@ main = do
     , group "git (in a temporary repository)" gitIO
     , group "Him.Syntax" syntaxTests
     , group "Him.Regex" regexTests
+    , group "Him.Lsp.Protocol" lspProtocolTests
     , group "highlighting through a provider" syntaxIO
     , group "Him.Syntax.TreeSitter (with the installed grammars)" treeSitterIO
     , group "Him.Process" processes
@@ -935,6 +937,47 @@ gitTests = do
     , test "reset puts the index version of the selected line back" (assertEqual ["one", "two", "three", "four"] (B.toLines (docBuffer (edDoc reset))))
     , test "outside a repository there is no git state" (assertEqual GitOutside (docGit (edDoc outside)))
     ]
+
+lspProtocolTests :: [Test]
+lspProtocolTests =
+  [ test "framing: messages split anywhere come out whole" $
+      let msgs = [JObject [("id", JInt n), ("x", JString "æ漢\r\n")] | n <- [1 .. 3]]
+          stream = BS.concat (map frameMessage msgs)
+          feedAll = go emptyFramer
+          go f (c : cs) = let (out, f') = feedFramer f c in out <> go f' cs
+          go _ [] = []
+          expected = map renderJson msgs
+       in assertEqual [] [n | n <- [0 .. BS.length stream], let (a, z) = BS.splitAt n stream, feedAll [a, z] /= expected]
+  , test "framing: byte by byte" $
+      assertEqual [renderJson (JArray [])] (fst (foldl (\(out, f) b -> let (o, f') = feedFramer f (BS.singleton b) in (out <> o, f')) ([], emptyFramer) (BS.unpack (frameMessage (JArray [])))))
+  , test "framing: header case and extra headers" $
+      assertEqual (["{}"], emptyFramer) (feedFramer emptyFramer "content-length: 2\r\nContent-Type: x\r\n\r\n{}")
+  , test "URIs round-trip with odd characters" $
+      let p = "/tmp/a b/æ#%.hs" in assertEqual (Just p, "file:///tmp/a%20b/%C3%A6%23%25.hs") (uriToPath (pathToUri p), pathToUri p)
+  , test "columns in UTF-8, UTF-16 and UTF-32" $
+      let line = "aé😀b"
+       in assertEqual ([1, 3, 7], [1, 2, 4], [1, 2, 3], 3) (map (toLspColumn Utf8 line) [1, 2, 3], map (toLspColumn Utf16 line) [1, 2, 3], map (toLspColumn Utf32 line) [1, 2, 3], fromLspColumn Utf16 line 4)
+  , test "classifying messages" $
+      assertEqual
+        [Reply 1 (Right JNull), Reply 2 (Left "bad"), ServerRequest (JInt 7) "workspace/configuration" JNull, Notification "x" JNull]
+        (map classify [JObject [("id", JInt 1), ("result", JNull)], JObject [("id", JInt 2), ("error", JObject [("message", JString "bad")])], JObject [("id", JInt 7), ("method", JString "workspace/configuration")], JObject [("method", JString "x")]])
+  , test "diagnostics" $
+      assertEqual
+        (Just ("/a.c", [Diagnostic (1, 2) (1, 5) SevWarning "unused" "clang"]))
+        (parseDiagnostics (JObject [("uri", JString "file:///a.c"), ("diagnostics", JArray [JObject [("range", rng 1 2 1 5), ("severity", JInt 2), ("message", JString "unused"), ("source", JString "clang")]])]))
+  , test "locations and location links" $
+      assertEqual [Location "/a" (3, 4), Location "/b" (5, 6)]
+        (parseLocations (JArray [JObject [("uri", JString "file:///a"), ("range", rng 3 4 3 5)], JObject [("targetUri", JString "file:///b"), ("targetSelectionRange", rng 5 6 5 7), ("targetRange", rng 0 0 9 0)]]))
+  , test "hover contents" $
+      assertEqual ["```haskell", "f :: Int", "```"] (parseHover (JObject [("contents", JObject [("kind", JString "markdown"), ("value", JString "\n```haskell\nf :: Int\n```\n")])]))
+  , test "snippets become plain text" $
+      assertEqual ["foo(x, y)", "if  then", "a$b", "choice"] (map stripSnippet ["foo(${1:x}, ${2:y})$0", "if $1 then", "a\\$b", "${1|choice,other|}"])
+  , test "completion items" $
+      assertEqual [("print", "print()", Just ((0, 0), (0, 2)))]
+        [(ciLabel c, ciInsert c, ciReplace c) | c <- parseCompletion (JObject [("items", JArray [JObject [("label", JString "print"), ("insertTextFormat", JInt 2), ("textEdit", JObject [("range", rng 0 0 0 2), ("newText", JString "print($0)")])]])])]
+  ]
+  where
+    rng a b c d = JObject [("start", JObject [("line", JInt a), ("character", JInt b)]), ("end", JObject [("line", JInt c), ("character", JInt d)])]
 
 regexTests :: [Test]
 regexTests =
