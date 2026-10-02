@@ -870,6 +870,36 @@ Reverting the selected changes is the same as applying the unselected ones. The 
 index version goes in with `git hash-object -w --stdin` and `git update-index
 --cacheinfo`. No patches are built, so partial hunks cannot produce an invalid patch.
 
+### 5.9 Highlighting: one interface, tree-sitter behind it (ADR-26–28)
+
+The requirement was "the code shouldn't care whether it is tree-sitter or TextMate".
+In Haskell that is a record of functions:
+
+```haskell
+data SyntaxProvider = SyntaxProvider { spName :: Text, spStart :: Language -> IO (Maybe SyntaxSession) }
+data SyntaxSession  = SyntaxSession  { ssUpdate :: Int -> Buffer -> [TextChange] -> IO ()
+                                     , ssHighlight :: Int -> Int -> IO (IntMap [LineSpan])
+                                     , ssClose :: IO () }
+```
+
+The editor asks for spans of the lines around the view, in a background job, and draws
+them. The tests plug in a provider that only knows the word `let`, and everything
+works: jobs, versions, rendering, the theme. Only then does tree-sitter come in.
+
+**A war story.** The first tree-sitter build crashed the test suite with "corrupted size
+vs. prev_size", but only for Haskell, only for longer files, and only after the
+highlight query had been compiled. The search narrowed the cause in steps:
+1. A plain C program with our runtime and Helix's `haskell.so` crashed the same way,
+   so it was not the Haskell bindings.
+2. The grammar built from source at `-O0` worked, but at `-O3` it crashed.
+3. AddressSanitizer pointed at `array_push` in the grammar's scanner.
+
+The grammar's old `array.h` reallocates through an `(Array *)` cast, and strict
+aliasing lets the compiler keep the stale pointer. The lesson: native code from
+elsewhere is part of your program's memory safety. him now builds its own grammars
+(`him --build-grammars`, with `-fno-strict-aliasing`) instead of trusting prebuilt
+ones.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with

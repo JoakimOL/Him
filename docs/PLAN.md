@@ -44,7 +44,9 @@ selections onto it later is harder.
 **ADR-2: GHC boot libraries only.**
 Allowed: `base`, `unix`, `bytestring`, `text`, `containers`, `transformers`, `directory`,
 `filepath`, `stm`, `array`, `process`. (`process` since milestone 21, for git and
-language servers; `filepath` since milestone 19.) (`filepath` is used since milestone 19.) Each one is added to `package.yaml` only when a module first uses
+language servers; `filepath` since milestone 19.) **Amended by ADR-27:** the
+tree-sitter C runtime is vendored in `cbits/tree-sitter`; it is the one C dependency
+beyond the small shims. (`filepath` is used since milestone 19.) Each one is added to `package.yaml` only when a module first uses
 it (`-Wunused-packages` enforces this).
 *Alternatives:* `vty`/`brick` (large and opinionated), `text-rope` (see ADR-3).
 
@@ -383,6 +385,64 @@ directly. Every action would change, and tests would need a full runtime.
 partial hunks is fragile; computing the diff ourselves sees every keystroke. Linking
 libgit2 is not a boot library.
 
+**ADR-26: One syntax-highlighting interface, with injected providers.**
+- **The interface:** the editor knows only `Him.Syntax`. A `SyntaxProvider` has
+  `spStart :: Language -> IO (Maybe SyntaxSession)`, and a session has `ssUpdate`
+  (version, buffer, edits if known), `ssHighlight` (spans for a range of lines) and
+  `ssClose`.
+- **Spans:** spans are per line, carrying dotted scope names
+  (`keyword.control.import`), which both tree-sitter captures and TextMate scopes use.
+  The theme resolves a scope by its longest known prefix (`scopeStyle`).
+- **Configuration:** providers are listed in `cfgSyntaxProviders` and tried in order.
+  `Him.Language` detects the language (file name, extension, shebang) and maps it to
+  each provider's grammar name.
+- **Jobs:** sessions live in the runtime. A `SyntaxStart` job picks the provider; then
+  `Highlight` jobs, at most one per document in flight, return spans for the view plus
+  100 lines either side. The document keeps the last spans (`docSyntax`), so typing
+  shows at most one burst of staleness. The row key includes the spans.
+- **Adding a provider** (e.g. TextMate) means one module that builds the record, plus
+  one entry in `syntaxProviders` in `Him.Config.Default`. Nothing else changes. Tests
+  inject a fake provider, which proves the editor works against the interface alone.
+
+**ADR-27: Tree-sitter: vendored runtime, grammars built for him.**
+- **Runtime:** the C runtime (v0.26.9, MIT) is in `cbits/tree-sitter`, copied unchanged
+  from the local cargo registry (no download). It is compiled through
+  `cbits/ts_runtime.c`, which sets the feature macros for that unit only.
+  `cbits/ts_shim.c` runs one query over a byte range and returns every capture in one
+  array.
+- **Provider:** `Him.Syntax.TreeSitter` dlopens `grammars/NAME.so` and reads
+  `queries/LANG/highlights.scm`. It resolves `; inherits:` in place, and evaluates
+  `#eq?`, `#match?`, `#any-of?` (and negations, plus `#lua-match?`) in Haskell.
+  Unknown predicates drop the match; directives and `#is?`/`#is-not?` are ignored.
+- **Precedence:** the innermost node wins; on the same node the *last* pattern wins.
+  That is Helix's documented rule, which its queries are written for.
+- **Grammars are built by him, not borrowed.** Many grammar repositories ship an old
+  `tree_sitter/array.h`. Its `array_push` reallocates through an `(Array *)` cast and
+  then writes through the typed pointer. Under strict aliasing at `-O3`, the compiler
+  may keep the old pointer. Helix's `haskell.so` (GCC 16) corrupted the heap on ordinary
+  files. This was reproduced in plain C and located with AddressSanitizer
+  (`scanner.c:651`, `advance`). 168 of 198 grammar sources here use that `array.h`.
+  So only grammars from `$HIM_RUNTIME` or `~/.config/him/runtime` are loaded.
+  `him --build-grammars [SOURCES] [NAMES]` compiles grammar sources (by default Helix's
+  `runtime/grammars/sources`) with `-O2 -fno-strict-aliasing` into
+  `~/.config/him/runtime/grammars`; 299 of 301 built here. Queries still come from
+  Helix's runtime.
+- **Cost** (`bench/HighlightBench.hs`, log 24): a 7,241-line Rust file parses in 22 ms,
+  and a 260-line window highlights in 3 ms. Loading a grammar and its query takes
+  30–160 ms, once per document. All of it runs in jobs. Every edit re-parses fully for
+  now; incremental parsing (roadmap 3b) would use the edits.
+
+*Alternative:* the Hackage `tree-sitter` package. It is not a boot library, was last
+tested with GHC 9.2, bundles an old runtime and its own grammars, and targets AST
+extraction, not highlight queries.
+
+**ADR-28: A small regex engine of our own.** `Him.Regex` is a backtracking matcher:
+literals and escapes, `.`, classes with `\d \w \s`, anchors and `\b`, groups
+(including `(?:…)`), alternation, and greedy or lazy `* + ? {m,n}`. Lua patterns are
+translated (`compileLua`). There are no backreferences or lookaround. It is used for
+query predicates; all 205 `#match?` patterns in Helix's queries compile. It is the
+starting point for regex search.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -416,6 +476,9 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Directory`, `Him.Commands.Directory` | ✅ | Directory listings as read-only documents (`loadPath`, `loadDirectory`, `entryAt`, `selectEntry`), and their actions (ADR-22). |
 | `Him.Diff` | ✅ | Myers line diff with trimming; `applyHunks`, `mapLine` (ADR-25). |
 | `Him.GitState`, `Him.Git`, `Him.Commands.Git` | ✅ | A document's git state, gutter signs and `applySelected` (pure); the `git` commands; housekeeping, change navigation, stage/unstage/reset actions (ADR-25). |
+| `Him.Syntax`, `Him.Syntax.Span`, `Him.Language`, `Him.Commands.Syntax` | ✅ | The provider interface, spans, language detection, and highlighting housekeeping (ADR-26). |
+| `Him.Syntax.TreeSitter`, `Him.GrammarBuild` + `cbits/tree-sitter`, `cbits/ts_shim.c` | ✅ | The tree-sitter provider and the grammar builder (`him --build-grammars`) (ADR-27). |
+| `Him.Regex` | ✅ | Backtracking regex subset and Lua patterns (ADR-28). |
 | `Him.Effect`, `Him.Runtime` | ✅ | Effects as data (`RunAction`, `OpenPalette`, `StartJob`, `CancelJob`) and the background-job runtime (ADR-23). |
 | `Him.Invocation` | ✅ | Pure invocation parsing/rendering (re-exported by `Him.Action`). |
 | `Him.Process`, `Him.Json` | ✅ | External programs with stdin/stdout/stderr; a JSON value type, parser and encoder. |
@@ -492,6 +555,9 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **22. Git** (roadmap phase 2). Gutter signs for added/changed/removed lines,
   staged ones dimmer; `] g` / `[ g`; stage, unstage or reset the selected lines or the
   file from the editor (ADR-25).
+- [x] **23. Syntax highlighting** (roadmap phase 3). One provider interface (ADR-26);
+  the tree-sitter provider with a vendored runtime and grammars built by
+  `him --build-grammars` (ADR-27); `Him.Regex` (ADR-28).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -596,11 +662,14 @@ numbers are provisional.*
   - [x] Phase 0, foundation (milestone 21, ADR-23).
   - [x] Phase 1, command palette and async picker (milestone 21, ADR-24).
   - [x] Phase 2, git signs and staging (milestone 22, ADR-25).
-  - [ ] Phase 3, syntax highlighting. **Next.** Start with the common provider API
-    (`Him.Syntax`, with a fake provider in tests), scopes and the theme, and the language
-    table. Then vendor tree-sitter (`cbits/tree-sitter/` from the cargo registry copy)
-    and write the provider.
-  - [ ] Phase 4, LSP client.
+  - [x] Phase 3, syntax highlighting (milestone 23, ADR-26/27/28). Still open in it:
+    3b incremental parsing (a change log in the buffer, `ts_tree_edit`), and 3c
+    injections (code blocks in Markdown, `<script>` in HTML).
+  - [ ] Phase 4, LSP client. **Next.** Start with `Him.Lsp.Transport` (Content-Length
+    framing over `process` pipes, tested with arbitrary chunk splits) and
+    `Him.Lsp.Position`, then the lifecycle and diagnostics. The servers here are
+    `haskell-language-server-wrapper`, `clangd`, `rust-analyzer` and
+    `typescript-language-server`.
 - **Next suggestions:**
   1. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
      matcher. `s` would get regexes for free.
@@ -621,6 +690,9 @@ numbers are provisional.*
   - Git: the signs refresh when a buffer becomes current, on save and after staging, but
     not when the files change outside the editor while it is shown. A diff of a huge file
     with an edit in the middle takes about 50 ms (in the background).
+  - Highlighting needs `him --build-grammars` once (see ADR-27). Without built grammars,
+    files are shown plain, and nothing says why except `$HIM_LOG`.
+  - Syntax sessions are not closed when their buffer is closed.
   - The file picker skips hidden entries and lists at most 500,000 files. It does not
     read the global gitignore (ADR-21).
   - A directory listing does not refresh by itself; `g r` lists it again.
@@ -633,7 +705,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (359 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (379 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.
