@@ -1,0 +1,69 @@
+-- | Keeping the current document's highlighting current (ADR-26): find a
+-- provider for its language, and ask for spans of the lines around the
+-- view whenever the text changes or the view leaves the lines covered.
+-- Which provider does the work is invisible here ("Him.Syntax").
+module Him.Commands.Syntax
+  ( syntaxHousekeeping
+  , applySyntaxResult
+  , highlightMargin
+  ) where
+
+import Control.Monad.Trans.State.Strict (get, modify')
+import Him.Buffer qualified as Buffer
+import Him.Command
+import Him.Document (DocKind (..), Document (..))
+import Him.Effect (Effect (..), Job (..), JobResult (..))
+import Him.Editor
+import Him.Language (detectLanguage, langName, languages)
+import Him.Syntax
+import Him.View (View (..))
+
+-- | Lines highlighted above and below the visible ones, so scrolling a
+-- little needs no new request.
+highlightMargin :: Int
+highlightMargin = 100
+
+-- | After every event (like 'Him.Commands.Git.gitHousekeeping'). At most
+-- one highlight job per document is in flight; when the text moved on
+-- meanwhile, the next round asks again.
+syntaxHousekeeping :: EditorM ()
+syntaxHousekeeping = do
+  ed <- get
+  let d = edDoc ed
+      si = docSyntax d
+      setSyntax s = modifyDoc (\doc -> doc {docSyntax = s})
+      top = viewTop (edView ed)
+      bottom = top + fst (edSize ed)
+  case siStatus si of
+    SyntaxUnknown -> case (docKind d, docPath d) of
+      (TextDoc, Just path)
+        | Just language <- detectLanguage languages path (Buffer.lineAt 0 (docBuffer d)) -> do
+            setSyntax si {siStatus = SyntaxStarting, siLanguage = Just (langName language)}
+            request (StartJob (SyntaxStart (docId d) language))
+      _ -> setSyntax si {siStatus = SyntaxNone}
+    SyntaxActive _
+      | not (siPending si)
+      , siVersion si /= docVersion d || top < siFrom si || bottom > siTo si -> do
+          let from = max 0 (top - highlightMargin)
+              to = bottom + highlightMargin
+          setSyntax si {siPending = True}
+          request (StartJob (Highlight (docId d) (docVersion d) (docBuffer d) from to))
+    _ -> pure ()
+
+-- | A syntax job reported back. Spans for an older version are still
+-- shown (they are at most one burst of typing behind) until newer ones
+-- arrive.
+applySyntaxResult :: JobResult -> EditorM ()
+applySyntaxResult = \case
+  SyntaxStarted doc started -> modify' $ modifyDocument doc $ \d ->
+    let si = docSyntax d
+     in d {docSyntax = si {siStatus = maybe SyntaxNone SyntaxActive started, siPending = False, siVersion = -1}}
+  Highlighted doc version from to spans -> modify' $ modifyDocument doc $ \d ->
+    let si = docSyntax d
+     in d
+          { docSyntax =
+              if version >= siVersion si
+                then si {siSpans = spans, siVersion = version, siFrom = from, siTo = to, siPending = False}
+                else si {siPending = False}
+          }
+  _ -> pure ()

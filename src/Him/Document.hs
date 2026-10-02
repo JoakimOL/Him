@@ -15,6 +15,7 @@ import Data.Text qualified as T
 import Him.Buffer (Buffer)
 import Him.GitState (GitInfo (..))
 import Him.History (History, emptyHistory)
+import Him.Syntax (SyntaxInfo, noSyntax)
 import Him.Position (Pos (..))
 import Him.Selection (Selection, point, single)
 
@@ -57,6 +58,8 @@ data Document = Document
   , docTrailingNewline :: !Bool
   -- ^ Whether the file ends with a line ending (written back on save).
   , docHistory :: !History
+  , docSyntax :: !SyntaxInfo
+  -- ^ Highlighting ("Him.Syntax").
   , docGit :: !GitInfo
   -- ^ The file's state in git ("Him.GitState"), for gutter signs and staging.
   , docSavedBuffer :: !Buffer
@@ -78,6 +81,7 @@ newDocument path buf =
     , docLineEnding = LF
     , docTrailingNewline = True
     , docHistory = emptyHistory
+    , docSyntax = noSyntax
     , docGit = GitUnknown
     , docSavedBuffer = buf
     }

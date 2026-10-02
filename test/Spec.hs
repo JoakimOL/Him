@@ -30,12 +30,15 @@ import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirec
 import Him.FileTree (listFiles)
 import Him.Picker
 import Him.Effect (Effect (..), Job (..), JobResult (..))
-import Him.Runtime (newRuntime)
+import Him.Runtime (Runtime, newRuntime)
 import Him.Runtime qualified as Runtime
-import Control.Concurrent.STM (atomically, newTChanIO, readTChan, writeTChan)
+import Control.Concurrent.STM (TChan, atomically, newTChanIO, readTChan, writeTChan)
 import System.Timeout (timeout)
 import Him.Ignore
 import Him.Diff
+import Him.Syntax
+import Him.Language (detectLanguage, langName, languages)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Him.GitState
 import Him.Commands.Git (gitHousekeeping)
 import Data.IntMap.Strict qualified as IntMap
@@ -59,7 +62,7 @@ import Him.View (View (..), scrollToCursor)
 import Him.TextWidth (charIndexAtCol, charWidth, displayCol, glyphs, isWide)
 import Him.Render (render)
 import Him.Render.Frame (Cell (..), Frame (..), ScrollInfo (..), continuation)
-import Him.Render.Theme (Theme (..), defaultTheme)
+import Him.Render.Theme (Theme (..), defaultTheme, scopeStyle)
 import Data.Foldable (toList)
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
@@ -165,8 +168,19 @@ rebindTests = do
 -- while (results may ask for more jobs).
 settle :: Config -> Editor -> IO Editor
 settle config ed0 = do
+  rt <- testRuntime config
+  settleWith config rt ed0
+
+-- | A runtime and its event channel, to share between 'settleWith' calls
+-- (state such as highlighters lives in the runtime, as in the editor).
+testRuntime :: Config -> IO (Runtime, TChan Event)
+testRuntime config = do
   events <- newTChanIO
-  runtime <- newRuntime (atomically . writeTChan events)
+  runtime <- newRuntime (cfgSyntaxProviders config) (atomically . writeTChan events)
+  pure (runtime, events)
+
+settleWith :: Config -> (Runtime, TChan Event) -> Editor -> IO Editor
+settleWith config (runtime, events) ed0 = do
   let loop ed = do
         mapM_ (Runtime.perform runtime) (edEffects ed)
         next <- timeout 300000 (atomically (readTChan events))
@@ -384,6 +398,7 @@ main = do
   rebinding <- rebindTests
   processes <- processTests
   gitIO <- gitTests
+  syntaxIO <- syntaxIOTests
   bufferIO <- openBufferTests
   loading <- loadingTests
   runTests
@@ -403,6 +418,8 @@ main = do
     , group "Him.Diff" diffTests'
     , group "Him.GitState" gitStateTests
     , group "git (in a temporary repository)" gitIO
+    , group "Him.Syntax" syntaxTests
+    , group "highlighting through a provider" syntaxIO
     , group "Him.Process" processes
     , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests
@@ -909,6 +926,76 @@ gitTests = do
     , test "unstaging the line empties the index diff" (assertEqual ("", Just [Hunk 1 1 1 1, Hunk 3 0 3 1]) (cachedAfter, fst (hunksOf unstaged)))
     , test "reset puts the index version of the selected line back" (assertEqual ["one", "two", "three", "four"] (B.toLines (docBuffer (edDoc reset))))
     , test "outside a repository there is no git state" (assertEqual GitOutside (docGit (edDoc outside)))
+    ]
+
+syntaxTests :: [Test]
+syntaxTests =
+  [ test "flatten: the earlier span wins an overlap" $
+      assertEqual [LineSpan 0 4 "a", LineSpan 4 6 "b"] (flatten [LineSpan 0 4 "a", LineSpan 2 6 "b"])
+  , test "flatten: a later span is cut around an earlier one inside it" $
+      assertEqual [LineSpan 0 2 "outer", LineSpan 2 4 "inner", LineSpan 4 8 "outer"] (flatten [LineSpan 2 4 "inner", LineSpan 0 8 "outer"])
+  , test "flatten: adjacent spans of one scope merge" (assertEqual [LineSpan 0 6 "k"] (flatten [LineSpan 0 3 "k", LineSpan 3 6 "k"]))
+  , test "languages by extension, file name and shebang" $
+      assertEqual [Just "rust", Just "make", Just "python", Just "bash", Nothing]
+        [ langName <$> detectLanguage languages "src/main.rs" ""
+        , langName <$> detectLanguage languages "dir/Makefile" ""
+        , langName <$> detectLanguage languages "script" "#!/usr/bin/env python3"
+        , langName <$> detectLanguage languages "run" "#!/bin/bash -e"
+        , langName <$> detectLanguage languages "notes.xyz" "hello"
+        ]
+  , test "scopes resolve by their longest known prefix" $
+      assertEqual
+        [scopeStyle defaultTheme "keyword.control", scopeStyle defaultTheme "comment", Nothing]
+        [scopeStyle defaultTheme "keyword.control.import", scopeStyle defaultTheme "comment.line.double-slash", scopeStyle defaultTheme "nothing.like.this"]
+  ]
+
+-- | A provider for the tests: highlights the word "let" in Haskell files,
+-- through the same interface tree-sitter uses.
+fakeProvider :: SyntaxProvider
+fakeProvider = SyntaxProvider "fake" $ \language ->
+  if langName language /= "haskell"
+    then pure Nothing
+    else do
+      current <- newIORef B.empty
+      pure . Just $
+        SyntaxSession
+          { ssUpdate = \_ b _ -> writeIORef current b
+          , ssHighlight = \from to -> do
+              b <- readIORef current
+              pure $
+                IntMap.fromList
+                  [ (l, [LineSpan i (i + 3) "keyword" | i <- occurrences "let" (B.lineAt l b)])
+                  | l <- [from .. min to (B.lineCount b - 1)]
+                  ]
+          , ssClose = pure ()
+          }
+  where
+    occurrences needle hay = [T.length before | (before, _) <- T.breakOnAll needle hay]
+
+-- | Highlighting through an injected provider.
+syntaxIOTests :: IO [Test]
+syntaxIOTests = do
+  base <- either (fail . T.unpack) pure defaultConfig
+  let decline = SyntaxProvider "declines" (const (pure Nothing))
+      config = base {cfgSyntaxProviders = [decline, fakeProvider]}
+      start path t = execStateT (handleEvent config (EvResize 10 40)) (newEditor (10, 40) (newDocument (Just path) (buf t)))
+      run ed k = execStateT (handleEvent config (EvKey k)) ed
+      keys ks ed = foldlM run ed (fromMaybe (error ks) (parseKeys (T.pack ks)))
+      syntaxOf ed = docSyntax (edDoc ed)
+  rt <- testRuntime config
+  opened <- settleWith config rt =<< start "a.hs" "let a = 1\nin a"
+  edited <- settleWith config rt =<< keys "i l e t space esc" opened
+  plainFile <- settle config =<< start "a.txt" "let a = 1"
+  let frame = render defaultTheme Nothing opened
+      cellStyleAt row col = fmap cellStyle (Seq.lookup col =<< Seq.lookup row (frameCells frame))
+  pure
+    [ test "the first provider that accepts the language is used" (assertEqual (SyntaxActive "fake") (siStatus (syntaxOf opened)))
+    , test "spans arrive for the visible lines" (assertEqual (Just [LineSpan 0 3 "keyword"], Just []) (IntMap.lookup 0 (siSpans (syntaxOf opened)), IntMap.lookup 1 (siSpans (syntaxOf opened))))
+    , test "an edit is highlighted again" (assertEqual (Just [LineSpan 0 3 "keyword", LineSpan 4 7 "keyword"]) (IntMap.lookup 0 (siSpans (syntaxOf edited))))
+    , test "a file without a language is not highlighted" (assertEqual SyntaxNone (siStatus (syntaxOf plainFile)))
+    , test "spans are drawn in their scope's style" $
+        -- Column 6: past the gutter and the cursor cell, inside "let".
+        assertEqual (packStyle <$> scopeStyle defaultTheme "keyword") (cellStyleAt 0 6)
     ]
 
 jsonTests :: [Test]

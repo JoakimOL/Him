@@ -20,6 +20,7 @@ import Data.Text qualified as T
 import Him.Action
 import Him.Command (EditorM)
 import Him.Ex (ExCommand)
+import Him.Syntax (SyntaxProvider)
 import Him.Key (Key)
 import Him.Keymap (Keymap, fromBindings, unionKeymap)
 import Him.Mode (Mode (..))
@@ -34,6 +35,9 @@ data Config = Config
   -- ^ For completing and describing @:@ commands.
   , cfgPrefixNames :: Map [Key] Text
   -- ^ Titles for key prefixes in the info box, e.g. @g@ = "goto".
+  , cfgSyntaxProviders :: [SyntaxProvider]
+  -- ^ Highlighters, tried in order for each document's language
+  -- ("Him.Syntax").
   }
 
 -- | Per mode, @(keys, action invocation)@ pairs such as
@@ -79,5 +83,6 @@ buildConfig actions bindings fallback = do
           , cfgFallback = fallback
           , cfgExCommands = []
           , cfgPrefixNames = Map.empty
+          , cfgSyntaxProviders = []
           }
     errs -> Left (T.intercalate "\n" errs)

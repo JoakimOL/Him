@@ -22,6 +22,7 @@ import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as T
+import Him.Syntax.Span (LineSpan)
 import Him.Terminal.Ansi (CursorShape (..), PackedStyle, Style, packStyle, packedDefault)
 
 data Cell = Cell
@@ -52,6 +53,8 @@ data RowKey = RowKey
   , rkWidth :: !Int
   , rkClass :: !Int
   -- ^ How the line is coloured as a whole (e.g. a directory in a listing).
+  , rkSyntax :: ![LineSpan]
+  -- ^ Its highlighting.
   }
   deriving stock (Eq, Show)
 

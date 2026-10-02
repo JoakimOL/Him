@@ -9,7 +9,7 @@ module Him.Runtime
   ) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
-import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Exception (evaluate)
 import Data.Foldable (toList)
 import Data.IORef (atomicModifyIORef', newIORef)
@@ -24,15 +24,23 @@ import Him.Buffer qualified as Buffer
 import Him.Diff (Hunk (..), diffLines, mapLine)
 import Him.Git (loadBase, removeFromIndex, writeIndex)
 import Him.GitState (GitBase (..))
+import Data.IntMap.Strict qualified as IntMap
 import Him.Picker (rank)
+import Him.Syntax (SyntaxProvider, SyntaxSession (..), startSyntax)
 
 data Runtime = Runtime
   { rtPost :: Event -> IO ()
   , rtJobs :: MVar (Map JobKey ThreadId)
+  , rtProviders :: [SyntaxProvider]
+  , rtSessions :: MVar (Map Int SyntaxSession)
+  -- ^ Highlighters by document id. The editor only sees their results.
   }
 
-newRuntime :: (Event -> IO ()) -> IO Runtime
-newRuntime post = Runtime post <$> newMVar Map.empty
+newRuntime :: [SyntaxProvider] -> (Event -> IO ()) -> IO Runtime
+newRuntime providers post = do
+  jobs <- newMVar Map.empty
+  sessions <- newMVar Map.empty
+  pure (Runtime post jobs providers sessions)
 
 -- | Carry out an effect that needs the runtime; others are ignored (the
 -- main loop handles them before).
@@ -40,7 +48,7 @@ perform :: Runtime -> Effect -> IO ()
 perform rt = \case
   StartJob job -> modifyMVar_ (rtJobs rt) $ \jobs -> do
     mapM_ killThread (Map.lookup (jobKey job) jobs)
-    tid <- forkIO (runJob (rtPost rt) job)
+    tid <- forkIO (runJob rt job)
     pure (Map.insert (jobKey job) tid jobs)
   CancelJob key -> modifyMVar_ (rtJobs rt) $ \jobs -> do
     mapM_ killThread (Map.lookup key jobs)
@@ -51,8 +59,8 @@ perform rt = \case
 maxFiles :: Int
 maxFiles = 500000
 
-runJob :: (Event -> IO ()) -> Job -> IO ()
-runJob post = \case
+runJob :: Runtime -> Job -> IO ()
+runJob rt = \case
   ScanFiles gen root -> do
     -- Files are sent in batches: every 5000 files or 100 ms, whichever
     -- comes first, so the picker fills quickly without an event per file.
@@ -88,3 +96,20 @@ runJob post = \case
   GitWriteIndex doc base ending new -> do
     result <- maybe (removeFromIndex base) (writeIndex base ending) new
     post (EvJob (GitWritten doc result))
+  SyntaxStart doc language -> do
+    started <- startSyntax (rtProviders rt) language
+    modifyMVar_ (rtSessions rt) $ \sessions -> do
+      mapM_ ssClose (Map.lookup doc sessions)
+      pure (maybe (Map.delete doc sessions) (\(_, session) -> Map.insert doc session sessions) started)
+    post (EvJob (SyntaxStarted doc (fst <$> started)))
+  Highlight doc version buffer from to -> do
+    session <- Map.lookup doc <$> readMVar (rtSessions rt)
+    case session of
+      Nothing -> post (EvJob (SyntaxStarted doc Nothing))
+      Just s -> do
+        ssUpdate s version buffer []
+        spans <- ssHighlight s from to
+        _ <- evaluate (IntMap.size spans)
+        post (EvJob (Highlighted doc version from to spans))
+  where
+    post = rtPost rt

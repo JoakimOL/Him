@@ -27,6 +27,7 @@ import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
 import Him.Commands.Git qualified as Git
 import Him.Commands.Picker qualified as Picker
+import Him.Commands.Syntax qualified as Syntax
 import Him.Info (refreshInfo)
 import Him.Runtime (Runtime, newRuntime)
 import Him.Runtime qualified as Runtime
@@ -61,9 +62,9 @@ run files = do
     size <- fromMaybe (24, 80) <$> getWindowSize
     onResize (atomically . writeTChan events . uncurry EvResize)
     startInputReader events
-    runtime <- newRuntime (atomically . writeTChan events)
+    runtime <- newRuntime (cfgSyntaxProviders config) (atomically . writeTChan events)
     -- Start what the first document needs (its git state) before any key.
-    start <- execStateT Git.gitHousekeeping (openAll size docs)
+    start <- execStateT housekeeping (openAll size docs)
     mapM_ (Runtime.perform runtime) (edEffects start)
     eventLoop config runtime events start {edEffects = []}
 
@@ -115,12 +116,16 @@ eventLoop config runtime events = go Nothing
           execStateT (failWith ("internal error: " <> T.pack (show e))) ed
 
 handleEvent :: Config -> Event -> Command.EditorM ()
-handleEvent _ (EvResize rows cols) = modify' (\e -> e {edSize = (rows, cols)})
+handleEvent _ (EvResize rows cols) = do
+  modify' (\e -> e {edSize = (rows, cols)})
+  -- More lines may be visible now; they need highlighting.
+  housekeeping
 handleEvent config (EvJob result) = do
   Picker.applyJobResult result
   Git.applyGitResult result
+  Syntax.applySyntaxResult result
   runEffects config
-  Git.gitHousekeeping
+  housekeeping
 handleEvent config (EvKey key) = do
   ed <- get
   let pending = edPending ed
@@ -146,8 +151,18 @@ handleEvent config (EvKey key) = do
         when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
   runEffects config
   commitOutsideInsert
-  Git.gitHousekeeping
+  housekeeping
   modify' (refreshInfo config)
+
+-- | Keep the current document's background state current (git signs,
+-- highlighting): it asks for jobs when something changed.
+housekeeping :: Command.EditorM ()
+housekeeping = do
+  -- The view moves with the cursor before rendering; follow it here too,
+  -- so highlighting asks for the lines that will be shown.
+  modify' ensureCursorVisible
+  Git.gitHousekeeping
+  Syntax.syntaxHousekeeping
 
 -- | Carry out the effects the key's action requested that need the config
 -- (ADR-23). An action run this way may request more; a chain is cut off

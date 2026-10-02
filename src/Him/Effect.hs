@@ -15,7 +15,10 @@ module Him.Effect
 
 import Data.Sequence (Seq)
 import Data.Text (Text)
+import Data.IntMap.Strict (IntMap)
 import Him.Buffer (Buffer)
+import Him.Language (Language)
+import Him.Syntax.Span (LineSpan)
 import Him.Diff (Hunk)
 import Him.Document (LineEnding)
 import Him.GitState (GitBase)
@@ -48,9 +51,13 @@ data Job
   | -- | Write a new index version of a document's file ('Nothing' takes the
     -- file out of the index).
     GitWriteIndex !Int !GitBase !LineEnding !(Maybe [Text])
+  | -- | Find a syntax provider for a document's language.
+    SyntaxStart !Int !Language
+  | -- | Highlight lines @[from, to]@ of a document version.
+    Highlight !Int !Int !Buffer !Int !Int
   deriving stock (Eq, Show)
 
-data JobKey = ScanJob | FilterJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int
+data JobKey = ScanJob | FilterJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int | SyntaxJob !Int
   deriving stock (Eq, Ord, Show)
 
 jobKey :: Job -> JobKey
@@ -60,6 +67,8 @@ jobKey = \case
   GitLoad d _ -> GitLoadJob d
   GitDiff d _ _ _ -> GitDiffJob d
   GitWriteIndex d _ _ _ -> GitWriteJob d
+  SyntaxStart d _ -> SyntaxJob d
+  Highlight d _ _ _ _ -> SyntaxJob d
 
 data JobResult
   = FilesFound !Int ![FilePath]
@@ -71,4 +80,8 @@ data JobResult
   | -- | Document id, version, unstaged and staged hunks (buffer lines).
     GitDiffed !Int !Int ![Hunk] ![Hunk]
   | GitWritten !Int !(Either Text ())
+  | -- | Document id, and the provider now highlighting it (if any).
+    SyntaxStarted !Int !(Maybe Text)
+  | -- | Document id, version, the lines covered, and their spans.
+    Highlighted !Int !Int !Int !Int !(IntMap [LineSpan])
   deriving stock (Eq, Show)

@@ -10,6 +10,8 @@ import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Him.Buffer (lineAt, lineCount)
 import Him.Document (DirEntry (..), DocKind (..), Document (..))
+import Him.Syntax (SyntaxInfo (..))
+import Him.Syntax.Span (LineSpan (..))
 import Him.Editor (Editor (..))
 import Him.Mode (Mode (..))
 import Him.Position (Pos (..))
@@ -68,7 +70,13 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
           remember (copyCells (prevRowOf screenRow) screenRow (rectCol rect) (rectWidth rect) p f)
       | otherwise = remember (putCells screenRow (rectCol rect) visible f)
       where
-        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls
+        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls syntax
+        syntax = IntMap.findWithDefault [] line (siSpans (docSyntax doc))
+        -- The syntax style of each highlighted span, under the selection.
+        syntaxStyles = [(lsStart sp, lsEnd sp, packStyle st) | sp <- syntax, Just st <- [scopeStyle theme (lsScope sp)]]
+        baseAt i = case [st | (a, b, st) <- syntaxStyles, a <= i, i < b] of
+          st : _ -> st
+          [] -> base
         cls = lineClass line
         base = case cls of
           1 -> headerStyle
@@ -94,13 +102,13 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
         -- wide or control characters), so no layout is needed.
         plain = T.all (\ch -> ch >= ' ' && ch < '\DEL') text
         lineCells
-          | plain = zipWith (\i ch -> Cell ch (fromMaybe base (styleAt i))) [0 ..] (T.unpack text) <> lineEndCell
+          | plain = zipWith (\i ch -> Cell ch (fromMaybe (baseAt i) (styleAt i))) [0 ..] (T.unpack text) <> lineEndCell
           | otherwise = concatMap charCells (layoutLine text) <> lineEndCell
         visible
           | plain = take (rectWidth rect) (drop left lineCells)
           | otherwise = fixEdges (take (rectWidth rect) (drop left lineCells))
         charCells (i, _, w, c) =
-          let style = fromMaybe base (styleAt i)
+          let style = fromMaybe (baseAt i) (styleAt i)
            in if isWide c
                 then [Cell c style, Cell continuation style]
                 else map (`Cell` style) (glyphs c w)
