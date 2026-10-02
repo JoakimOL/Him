@@ -327,38 +327,43 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
 
 ## 8. Where to pick up
 
-*Last session ended on 2026-10-02, in the middle of the "on par with Helix" optimization
-pass. Strategies 14–20 are in the optimization log in `docs/BENCHMARK.md`.*
+*Last updated 2026-10-02. The action layer (ADR-17, milestone 16) is done. Benchmarking
+is **on hold**: the user was using the machine during the runs, so this session's
+numbers are provisional.*
 
-- **Status vs. Helix** (last full run, after strategy 18; 14 MB file):
-  - **Ahead:** startup 3.3 vs 23 ms, open 17 vs 23 ms, `scroll` 14 vs 652 ms,
-    `jump` 2.4 vs 116 ms, edit_save 9.9 vs 20 ms, `j` latency 1.1 vs 1.9 ms, typing
-    1.1 vs 1.6 ms, search far 10 vs 25 ms, search none 5.5 vs 47 ms, peak RSS everywhere.
-  - **Tied:** `n` 2.5 vs 2.5 ms (p95 3.4 vs 3.0).
-- **In progress:** strategies 19 (single-pass diff) and 20 (packed styles) are
-  committed and tested (173 tests), but the end-to-end benchmark was interrupted. Next:
-  1. `python3 bench/bench.py --runs 5 --scenarios search_next,latency`, then record the
-     effect in log entries 19/20.
-  2. If `n` still ties, profile the `n` path in the editor. The remaining cost is
-     render (0.6 ms) plus diff (about 1 ms) on a slow-clocked core. Ideas: skip the diff
-     for rows whose `RowKey` matches the old row at the same screen position; use a
+- **Benchmarking on hold. Resume here when the machine is idle:**
+  1. Run the full suite again: `python3 bench/bench.py --runs 5`. Then add a dated results
+     section to `docs/BENCHMARK.md` (a draft table is below) and refresh the "final"
+     column of the table in `docs/TUTORIAL.md` §7.8.
+  2. **open_large is unresolved.** Log entry 16 recorded a first paint of 15 ms, but
+     every run this session measured 25–30 ms (Helix 22). A build of `b93060f`, the commit
+     before the action layer, also measured 25.7 and 26.8 ms in the same session as
+     27.9 ms for `9016654`, so the action layer did not cause it. Re-measure on an idle
+     machine. If it is still about 25 ms, profile the path from loading to the first paint.
+  3. **Provisional numbers (machine in use).** The focused run for strategies 19/20
+     (`search_next,latency`): `n` 1.4 ms (Helix 1.9), `j` 0.9 (Helix 1.5), typing 0.8
+     (Helix 1.3). These are recorded in log entries 19/20. A full run at `9016654`
+     (him / vim / helix):
+     - startup: 5.7 / 32.5 / 27.8 ms
+     - open_large first paint: 30.5 / 34.7 / 21.9 ms
+     - scroll: 18.4 / 72.2 / 649 ms
+     - jump: 4.2 / 33.8 / 115 ms
+     - edit_save: 10.7 / 29.9 / 18.8 ms (RSS 25.1 / 37.2 / 66.6 MB)
+     - `j` latency: 0.7 / 0.4 / 1.6 ms; typing 0.7 / 0.3 / 1.4 ms
+     - search_far: 9.7 / 28.7 / 23.0 ms; search_none: 4.3 / 23.4 / 45.4 ms
+     - `n`: 2.0 / 1.3 / 2.1 ms (p95 2.5 / 1.4 / 2.3); 200 × `n`: 13.9 / 58.1 / 93.9 ms
+  4. If `n` still ties Helix on an idle machine, the remaining ideas are: skip the diff
+     for rows whose `RowKey` matches the old row at the same screen position, or use a
      cheaper row representation than `Seq Cell`.
-  3. Then do one full `bench.py` run, and add a dated results entry plus a short
-     tutorial section (part 7) for strategies 14–20.
-- **Requested next feature: an action layer.** Keys bind to *actions*, and actions are
-  features such as search. This prepares a config module that lets users rebind keys from
-  a file. Starting point: `Him.Command` (the named-command registry) and
-  `Him.Config.Default` (bindings as `(keys, name)` pairs) already separate keys from
-  behaviour. The action layer should group commands into user-facing actions, possibly
-  with arguments, and expose a stable naming scheme that a config parser can target.
+- **The action layer is done (ADR-17).** The config-file parser is still to do. It only
+  has to produce `Bindings` (`Map Mode [(keys, invocation)]`) and call
+  `Him.Config.Default.configWith`, which reports every bad binding.
 - **Next suggestions:**
   1. **Multiple selections** (`C`, `s`, `,`). `edit` must map positions across ranges
      (ADR-5b).
   2. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
      matcher.
-  3. **Faster large-file open.** Build line indexes lazily per block, and avoid the
-     decode copy for valid UTF-8.
-  4. Multiple buffers / `:e`, and a config file for keymaps.
+  3. Multiple buffers / `:e`, and a config file for keymaps (the parser only).
 - **Known issues:**
   - Zero-width combining characters are treated as width 1.
   - Case-insensitive search folds ASCII letters only.
@@ -369,7 +374,7 @@ pass. Strategies 14–20 are in the optimization log in `docs/BENCHMARK.md`.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (165 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (204 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

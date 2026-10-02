@@ -529,6 +529,48 @@ exCommands =
   , ... ]
 ```
 
+### 3.6 From commands to actions (ADR-17)
+
+Names alone cannot say "move down **5** lines" or "insert `// `". Commands therefore
+became *actions*. An action is a stable name plus typed parameters, and a binding is
+text that a config file could contain:
+
+```haskell
+normalBindings = [("j", "move_line_down"), ("C-d", "move_line_down 20"), ("space c", "insert_text \"// \"")]
+```
+
+Parameters are described by a tiny applicative. The same value lists the parameters
+(for help) and converts the text arguments:
+
+```haskell
+data ArgSpec a = ArgSpec { specParams :: [Param], specParse :: [Text] -> Either Text (a, [Text]) }
+
+int :: Text -> ArgSpec Int                       -- one positional argument
+optional :: Text -> a -> ArgSpec a -> ArgSpec a  -- may be left out
+
+action "move_line_down" GMovement "Move down" (optional "1" 1 (int "count")) (motion . lineBy)
+action "goto_line" GMovement "Go to a line" (int "line") (motion . gotoLine)
+```
+
+The important design choice is *when* the text is checked. `buildConfig` binds every
+pair once, at startup: it parses the invocation, looks up the action, and converts the
+arguments. The result is a `Keymap Bound`, a trie whose leaves already hold the
+`EditorM ()` to run. A key press does no lookup and no parsing, and a typo in a binding
+is reported before the editor starts. The report names every bad binding:
+
+```
+Normal mode, a: unknown action: fly
+Normal mode, b: goto_line: missing argument <line>
+```
+
+To make that work, `Keymap` became generic (`Keymap a`, a `Functor`): `Keymap Text`
+while reading, `Keymap Bound` while running. User bindings go on top of the defaults
+with `overrideBindings`, and `no_op` switches a key off.
+
+**▶ Task 5b.** Write `parseInvocation :: Text -> Either Text Invocation` (words, plus
+double-quoted strings with `\"` and `\\`) and its inverse, and test that they
+round-trip.
+
 **Checkpoint.** You can open a file, move with `hjkl`/`w b e`, select with `x`/`v`, edit
 in insert mode, and `:wq` (milestones 5–9).
 
@@ -913,7 +955,49 @@ compared cell by cell and style by style with the new frame. On its first run it
 and the bug was in the test: random overlapping writes produced half wide characters,
 which the real renderer never does. The generator now produces only valid frames.
 
-### 7.7 Where it ended up
+### 7.7 The second pass: catching Helix everywhere (strategies 14–20)
+
+After 7.6, him still lost to Helix when opening a large file, on edit-and-save, and
+tied on `n`. Every fix below was measured in isolation first. The full log is in
+`docs/BENCHMARK.md`.
+
+**Opening (51 → 15–30 ms first paint; see `docs/BENCHMARK.md`).**
+1. **Count lines with the scan you already do.** `T.count "\n"` is a general substring
+   search. Counting newlines inside the C scan that finds line starts made
+   `loadDocument` 25 → 5.4 ms.
+2. **SIMD counting and lazy offsets.** The newline count compares 16 bytes at a time
+   and sums the hits with `_mm_sad_epu8`. A block's line-start array is a lazy field, so
+   it is only built when the block is shown or searched. The first paint only needs the
+   count.
+3. **Zero copy (ADR-16).** A regular file is read into one pinned array of exactly its
+   size. If the bytes are valid UTF-8, that array *is* the `Text`. There is no decode
+   step and no copy. Invalid files and pipes still take the lenient and chunked paths,
+   and tests force both.
+
+**Saving (14.7 → 3.9 ms).**
+4. **Write regions, not lines.** The rope already stores many lines contiguously. A
+   region whose line endings match the file is written in one piece, instead of 200,000
+   `encodeUtf8Builder` calls.
+5. **`hPutBuf` from pinned arrays.** A large region from a loaded file goes to the
+   handle directly, without the builder's copy. That saved little, because the rest is
+   the kernel's `write`. It is still logged, because a small effect is a result too.
+
+**Rendering (`n` 2.5 → about 1.4–2.0 ms, measured on a busy machine).** Measured inside the editor on a slow-clocked core,
+the cell diff cost more than rendering itself.
+6. **One pass over the cells.** `drawChanges` walks the old and new row together and
+   builds merged runs as it goes. Before, it used `zip3`, `drop`/`take` per run, and two
+   `reverse`s.
+7. **Unboxed cells.** A `Cell` was a boxed `Char` plus a pointer to a six-field `Style`.
+   Now the style is packed into one `Word64` (two 26-bit colours plus four flags), and
+   `Cell` unpacks to `Char#` and `Word64#`. Comparing two cells is two machine
+   compares.
+
+The lesson of this pass: **look at the end-to-end number, but find the cause with a
+micro-benchmark.** Each micro result (diff 0.23 → 0.18 ms) looks too small to matter.
+Inside the editor, on a CPU that clocks down between keys, the same change took a
+millisecond off every `n`.
+
+### 7.8 Where it ended up
 
 Median of several runs, 200,000-line (14 MB) file, same machine:
 
@@ -960,8 +1044,8 @@ Each has a concrete next step.
 The editor is deliberately unfinished. Good next exercises, in increasing difficulty:
 
 - **Counts** (`3w`, `5j`): parse digits into `edPending`, then repeat the command.
-- **A config file:** bindings are already `(Text, Text)` pairs, so parse `keys = command`
-  lines.
+- **A config file:** bindings are already `Map Mode [(keys, invocation)]` (3.6), so
+  parse `keys = action args` lines per mode and call `configWith`.
 - **Multiple buffers** and `:e`: turn `edDoc` into a list plus an index.
 - **Highlight all matches:** a render pass over the visible rows. Remember to add the
   highlight to `RowKey`.
