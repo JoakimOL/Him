@@ -108,6 +108,14 @@ data InfoBox = InfoBox
 data Await
   = -- | Find a character: forward?, till?, count.
     AwaitFind !Bool !Bool !Int
+  | -- | Match mode (@m@): the character of @m s@, @m d@, @m r@ (its
+    -- first and, with that given, its second), or the object of @m i@ /
+    -- @m a@ (inside?).
+    AwaitSurround
+  | AwaitDeleteSurround
+  | AwaitReplaceSurround
+  | AwaitReplaceSurroundWith !Char
+  | AwaitObject !Bool
   deriving stock (Eq, Show)
 
 -- | A file's text for the picker's preview.

@@ -8,6 +8,8 @@ import Control.Monad.Trans.State.Strict (gets)
 import Data.Text qualified as T
 import Him.Action
 import Him.Buffer (nextPos)
+import Him.Buffer qualified as Buffer
+import Him.Position (Pos (..))
 import Him.EditorM
 import Him.Effect (Effect (..))
 import Him.Document (Document (..))
@@ -26,6 +28,14 @@ actions =
       setMode Insert
   , simple "append_mode" GModes "Insert after the selection" $ do
       modifySelection (\d r -> point (nextPos (docBuffer d) (rangeEnd r)))
+      setMode Insert
+  , simple "insert_at_line_start" GModes "Insert at the start of the line (after its indentation)" $ do
+      modifySelection $ \d r ->
+        let l = posLine (rangeHead r)
+         in point (Pos l (T.length (T.takeWhile (\c -> c == ' ' || c == '\t') (Buffer.lineAt l (docBuffer d)))))
+      setMode Insert
+  , simple "insert_at_line_end" GModes "Insert at the end of the line" $ do
+      modifySelection (\d r -> let l = posLine (rangeHead r) in point (Pos l (Buffer.lineLength l (docBuffer d))))
       setMode Insert
   , simple "open_below" GEditing "Open a new line below and insert" $ do
       edit openLineBelow

@@ -34,6 +34,7 @@ import Him.Actions.Motion qualified as Motion
 import Him.Actions.Picker qualified as Picker
 import Him.Actions.Search qualified as Search
 import Him.Actions.Window qualified as Window
+import Him.Actions.Match qualified as Match
 import Him.Actions.Repl qualified as Repl
 import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
@@ -64,6 +65,7 @@ coreActions =
     <> Picker.actions
     <> Directory.actions
     <> Window.actions
+    <> Match.actions
 
 -- | The actions with these plugins on.
 actionsWith :: [Plugin] -> [Action]
@@ -154,6 +156,14 @@ normalBindings =
        , ("g p", "buffer_previous")
        , ("i", "insert_mode")
        , ("a", "append_mode")
+       , ("m m", "match_brackets")
+       , ("m s", "surround_add")
+       , ("m r", "surround_replace")
+       , ("m d", "surround_delete")
+       , ("m i", "select_textobject_inner")
+       , ("m a", "select_textobject_around")
+       , ("I", "insert_at_line_start")
+       , ("A", "insert_at_line_end")
        , ("o", "open_below")
        , (":", "command_mode")
        , ("/", "search_forward")
@@ -272,6 +282,7 @@ prefixNames =
     [ ([plain (KChar 'g')], "goto")
     , ([plain (KChar ' ')], "space")
     , ([plain (KChar ']')], "next")
+    , ([plain (KChar 'm')], "match")
     , ([ctrlW], "window")
     , ([ctrlW, plain (KChar 'n')], "new split")
     , ([plain (KChar ' '), plain (KChar 'w')], "window")

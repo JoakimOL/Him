@@ -16,6 +16,7 @@ import Him.Action
 import Him.EditorM
 import Him.Document (Document (..))
 import Him.Motion
+import Him.Actions.Match (awaitedMatchKey)
 import Him.Options (Options (..))
 import Him.Buffer (Buffer)
 import Him.Selection (Selection, collapse, keepPrimary, mapRanges, removePrimary, rotatePrimary)
@@ -95,8 +96,9 @@ vertical delta = do
 await :: Bool -> Bool -> Int -> EditorM ()
 await forward till n = modify' (\e -> e {edAwait = Just (AwaitFind forward till n)})
 
--- | The key after @f t F T@: the character to find (@ret@ is a line break);
--- anything else cancels. 'False' when nothing was waiting for a key.
+-- | The key after @f t F T@ (the character to find; @ret@ is a line
+-- break) or after a match-mode command (see "Him.Actions.Match"); anything
+-- else cancels. 'False' when nothing was waiting for a key.
 awaitedKey :: Key -> EditorM Bool
 awaitedKey key =
   gets edAwait >>= \case
@@ -108,6 +110,10 @@ awaitedKey key =
           modify' (\e -> e {edLastFind = Just (forward, till, ch)})
           motion (findChar False forward till ch n)
         Nothing -> pure ()
+      pure True
+    Just waiting -> do
+      modify' (\e -> e {edAwait = Nothing})
+      mapM_ (awaitedMatchKey waiting) (keyChar key)
       pure True
   where
     keyChar (Key code mods)

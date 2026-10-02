@@ -10,6 +10,7 @@ import Test.Syntax
 import Test.Render
 import Test.Integration
 import Test.Windows
+import Test.Match
 import Test.Repl
 
 main :: IO ()
@@ -25,6 +26,7 @@ main = do
   bufferIO <- openBufferTests
   loading <- loadingTests
   windows <- windowTests
+  match <- matchTests
   repl <- replTests
   runTests
     [ group "Him.Key" keyTests
@@ -66,6 +68,7 @@ main = do
     , group "Him.TextWidth" widthTests
     , group "Him.Render" renderTests
     , group "Him.Render.Diff" diffTests
+    , group "match mode (m) and I / A" match
     , group "windows (splits)" windows
     , group "REPL" repl
     , group "keys through the default config" integration
