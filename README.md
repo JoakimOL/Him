@@ -74,5 +74,6 @@ src/Him/…           the library (module map: docs/PLAN.md §4)
 cbits/              C used through FFI: text scans, terminal size, tree-sitter
 test/               the test suite (test/Test/*.hs) with a minimal built-in harness
 bench/              bench.py (vim/helix comparison, Python stdlib only), micro-benchmarks
+dev/                fake-claude: a stand-in for `claude` to check the chat without a model
 docs/               PLAN.md (decisions, status), TUTORIAL.md, BENCHMARK.md, ROADMAP.md
 ```

@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+# A stand-in for `claude -p` with no model behind it, for checking the chat's
+# Claude Code provider by hand (ADR-42). Put it first on PATH as `claude`:
+#   mkdir -p /tmp/fc && cp dev/fake-claude /tmp/fc/claude
+#   PATH=/tmp/fc:$PATH FAKE_CLAUDE_LOG=/tmp/fc.log him a.txt     (a.txt contains "two")
+# It starts the MCP bridge from --mcp-config, and on the first message calls
+# edit_file (a.txt: two -> TWO), waits for the answer, and reports it.
+import json, os, subprocess, sys, time
+log = open(os.environ.get("FAKE_CLAUDE_LOG", "/dev/null"), "a")
+def L(*a): print(time.strftime("%H:%M:%S"), *a, file=log, flush=True)
+args = sys.argv[1:]
+L("args", args)
+cfg = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]["him"]
+bridge = subprocess.Popen([cfg["command"]] + cfg["args"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+n = 0
+def rpc(method, params=None, notify=False):
+    global n
+    msg = {"jsonrpc": "2.0", "method": method}
+    if params is not None: msg["params"] = params
+    if not notify:
+        n += 1; msg["id"] = n
+    bridge.stdin.write(json.dumps(msg) + "\n"); bridge.stdin.flush()
+    if notify: return None
+    line = bridge.stdout.readline()
+    L("rpc", method, "->", line.strip()[:200])
+    return json.loads(line)
+rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "fake", "version": "0"}})
+rpc("notifications/initialized", notify=True)
+rpc("tools/list")
+def out(o): print(json.dumps(o), flush=True)
+out({"type": "system", "subtype": "init", "session_id": "fake-session"})
+turn = 0
+for line in sys.stdin:
+    turn += 1
+    L("user", line.strip()[:200])
+    out({"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}})
+    out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": f"Turn {turn}: editing."}}})
+    if turn == 1:
+        r = rpc("tools/call", {"name": "edit_file", "arguments": {"path": "a.txt", "old_text": "two", "new_text": "TWO"}})
+        text = r["result"]["content"][0]["text"]
+        out({"type": "stream_event", "event": {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}}})
+        out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "Result: " + text}}})
+    out({"type": "result", "subtype": "success", "is_error": False, "result": "ok", "session_id": "fake-session"})
+L("stdin closed; exiting")

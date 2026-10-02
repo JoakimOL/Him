@@ -35,6 +35,7 @@ import Him.Editor
 import Him.Event (Event (..))
 import Him.Json
 import Him.Key (parseKeys)
+import Him.Mode (Mode (..))
 import Him.Session (handleEvent)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, getCurrentDirectory, getTemporaryDirectory, removeDirectoryRecursive, setCurrentDirectory)
 import Test.Harness
@@ -152,17 +153,31 @@ liveTests = do
         , sessClose = pure ()
         }
       config = defaults {cfgChatProviders = [fake], cfgChat = defaultChatConfig {ccProvider = "live"}}
+      -- A turn that fails while its edit waits (the process died).
+      failing = ChatProvider "failing" . pure $ ChatSession
+        { sessSend = \_ _ emit -> emit (ChatToolCall editCall) >> emit (ChatFailed "claude stopped") >> pure (pure ())
+        , sessAnswer = \_ _ _ -> pure ()
+        , sessClose = pure ()
+        }
+      failConfig = defaults {cfgChatProviders = [failing], cfgChat = defaultChatConfig {ccProvider = "failing"}}
+      fileText ed = maybe "" (B.toText . docBuffer) (find ((== Just "a.txt") . docPath) (allDocuments ed))
       typeKeys ks ed = foldlM (\e k -> execStateT (handleEvent config (EvKey k)) e) ed (fromMaybe (error ("bad keys: " <> show ks)) (parseKeys ks))
       transcript ed = maybe "" (B.toText . docBuffer) (find (\d -> case docKind d of ChatDoc _ -> True; _ -> False) (allDocuments ed))
-  (got, disk, done) <-
+  (got, disk, done, modeWhenAsked, failedTurn) <-
     ( do
         setCurrentDirectory dir
         rt <- testRuntime config
         let settleLive = settleUntil config rt 3000
         start <- (\t -> newDocument (Just "a.txt") (buf (fromMaybe t (T.stripSuffix "\n" t)))) <$> TIO.readFile "a.txt"
         asked <- settleLive (T.isInfixOf "[edit #1" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
-        finished <- settleLive (T.isInfixOf "Thanks." . transcript) =<< typeKeys "esc space c a" asked
-        (,,) <$> readIORef answers <*> TIO.readFile "a.txt" <*> pure finished
+        -- The chat leaves insert mode, so the keys work at once (no esc).
+        finished <- settleLive (T.isInfixOf "Thanks." . transcript) =<< typeKeys "space c a" asked
+        approvedDisk <- TIO.readFile "a.txt"
+        TIO.writeFile "a.txt" "one\ntwo\n"
+        rt2 <- testRuntime failConfig
+        let typeFail ks ed = foldlM (\e k -> execStateT (handleEvent failConfig (EvKey k)) e) ed (fromMaybe (error "keys") (parseKeys ks))
+        failed <- settleUntil failConfig rt2 3000 (T.isInfixOf "undone" . transcript) =<< typeFail "space c c h i ret" (newEditor (24, 100) start)
+        (,,,,) <$> readIORef answers <*> pure approvedDisk <*> pure finished <*> pure (edMode asked) <*> pure failed
     )
       `finally` setCurrentDirectory original
   removeDirectoryRecursive dir
@@ -170,6 +185,9 @@ liveTests = do
     [ test "a live edit is answered when it is approved, and saved first" $
         assertEqual ([("c1", False, "The user approved the edit; a.txt is saved.")], "one\nTWO\n") (got, disk)
     , test "after the decision the model goes on in the same turn" (assertEqual True ("Thanks." `T.isInfixOf` transcript done))
+    , test "an edit that arrives while typing in the chat leaves insert mode (the keys work)" (assertEqual Normal modeWhenAsked)
+    , test "a turn that fails while an edit waits undoes the edit" $
+        assertEqual ("one\ntwo", True) (fileText failedTurn, "1 pending edit(s) undone" `T.isInfixOf` transcript failedTurn)
     ]
 
 -- | A recorded stream: thinking (with its signature), text, a tool call

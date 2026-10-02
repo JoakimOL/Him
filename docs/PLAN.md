@@ -946,6 +946,23 @@ of ADR-41.
   - the live approve flow with a fake session that waits for answers like Claude Code.
 
   `him --mcp-bridge` was also checked by hand, with a scripted MCP handshake.
+- **The first live run (by the user) found three faults.** Claude Code's session
+  transcripts (`~/.claude/projects/…/*.jsonl`) showed that it did call
+  `mcp__him__edit_file`; the faults were on him's side:
+  1. **Every message ended the `claude` process.** The runtime cancelled the previous
+     turn before each send, and for this provider cancelling means ending the process.
+     Each message was then a new process resuming the session, which looks "one-shot".
+     Only `ChatCancel` cancels now.
+  2. **Approving did not work while typing.** After `ret` the chat is in insert mode,
+     where `space c a` types text. When edits arrive, the chat now leaves insert mode.
+  3. **An unanswered edit stayed in the buffer** once its turn died, and `read_file`
+     (which reads buffers) showed it to the next turn as if it had been made. A turn
+     that fails or is cancelled now undoes its undecided edits.
+- **Checking it without a model.** `dev/fake-claude` stands in for `claude` with no
+  model behind it. It starts the bridge from `--mcp-config`, calls `edit_file`, waits
+  for the answer, and reports. With it, the real binary was driven in tmux through
+  the whole flow: the edit is shown, approved straight after sending, saved only then,
+  and a second message goes to the same process.
 
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
@@ -1178,7 +1195,7 @@ work is match mode and `I` / `A` (ADR-40), the AI chat plugin (ADR-41) with Clau
 Code as its default provider over MCP (ADR-42), and a sweep of the repository and the
 documents.
 
-- **State:** milestones 1–38 (§5) and ADR-1…42 (§3). `make test` runs 552 tests (pure
+- **State:** milestones 1–38 (§5) and ADR-1…42 (§3). `make test` runs 554 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).
@@ -1190,9 +1207,9 @@ documents.
   models themselves). The default provider, `claude-code`, needs the `claude` program
   and a login; `provider = "anthropic"` needs `ANTHROPIC_API_KEY` (or
   `ANTHROPIC_AUTH_TOKEN`, or `ant auth login`). `[chat]` sets the model and effort.
-  Things to watch on the first live run: Claude Code's stream-json input format for
-  user messages, and that `--tools Grep,Glob` plus `--allowedTools mcp__him__*` gives
-  it exactly him's tools (`Him.Chat.ClaudeCode.claudeArgs`).
+  The first live run worked as far as Claude Code is concerned (it used only him's
+  tools); the faults it found were him's and are fixed (ADR-42). `dev/fake-claude`
+  checks the flow without a model.
 - **Ideas, roughly by value:**
   1. Regex search and `S` (split on a pattern), on `Him.Regex`.
   2. Incremental tree-sitter parsing (the buffer's `changeBetween` is ready) and

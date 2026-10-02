@@ -9,7 +9,7 @@ module Him.Actions.Chat
   ( chatPlugin
   ) where
 
-import Control.Monad (forM, when)
+import Control.Monad (forM, unless, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.List (find, findIndex)
@@ -219,7 +219,8 @@ editorDocument ed
 cancel :: EditorM ()
 cancel =
   gets chatOf >>= \case
-    Just (d, cs) | csStatus cs == ChatWaiting -> do
+    Just (d, cs) | csStatus cs /= ChatIdle -> do
+      dropUndecided (docId d)
       request (ChatCancel (docId d))
       modify' (modifyChat (docId d) (\c -> c {csStatus = ChatIdle}))
       say (docId d) ("\n[stopped]\n\n" <> prompt)
@@ -247,6 +248,7 @@ applyChatResult = \case
     ChatText t -> say i t
     ChatToolCall call -> liveCall i call
     ChatFailed e -> do
+      dropUndecided i
       modify' (modifyChat i (\c -> c {csStatus = ChatIdle}))
       say i ("\n[error: " <> e <> "]\n\n" <> prompt)
     ChatFinished stop message calls -> do
@@ -296,7 +298,10 @@ liveCall i call =
 awaitDecisions :: Int -> EditorM ()
 awaitDecisions i = do
   modify' (modifyChat i (\c -> c {csStatus = ChatDeciding}))
-  say i "[space c a: approve the next edit, space c d: deny it; A / D: all of them]\n"
+  say i "[space c a / d: approve / deny · A / D: all]\n"
+  -- The keys are normal mode's: typing in the chat stops here.
+  ed <- get
+  when (docId (edDoc ed) == i && edMode ed == Insert) (setMode Normal)
   showNextEdit i
 
 -- | Run one tool call: its result, or 'Right' when it became a pending edit.
@@ -389,6 +394,15 @@ finishTurn i = do
   continue i
 
 -- * Deciding
+
+-- | A turn that ended without its edits decided (an error, a cancel):
+-- they are undone, so no unapproved change stays in a buffer.
+dropUndecided :: Int -> EditorM ()
+dropUndecided i = do
+  undecided <- gets (maybe [] (filter ((== Undecided) . peDecision) . csEdits . snd) . chatOf)
+  mapM_ (\pe -> modify' (modifyDocument (peDoc pe) (revertEdit pe))) (reverse undecided)
+  unless (null undecided) (say i ("[" <> T.pack (show (length undecided)) <> " pending edit(s) undone]\n"))
+  modify' (modifyChat i (\c -> c {csEdits = [], csResults = []}))
 
 decideNext :: Bool -> EditorM ()
 decideNext approve =

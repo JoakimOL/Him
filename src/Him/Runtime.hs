@@ -125,9 +125,9 @@ perform rt = \case
     case [p | p <- cfgChatProviders config, cpName p == ccProvider cc] of
       [] -> post (ChatFailed ("no chat provider named " <> ccProvider cc))
       provider : _ -> do
-        -- One turn per chat; a new one replaces it. The session is kept
-        -- (and replaced when the configured provider changes).
-        cancelChatIn rt doc
+        -- The session is kept across turns (and replaced when the configured
+        -- provider changes). A finished turn is not cancelled: for Claude
+        -- Code that would end the process (ADR-42); only ChatCancel does.
         session <- modifyMVar (rtChats rt) $ \m -> case Map.lookup doc m of
           Just e | ceProvider e == cpName provider -> pure (m, ceSession e)
           old -> do
