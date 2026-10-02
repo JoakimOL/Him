@@ -741,6 +741,7 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Syntax.TreeSitter`, `Him.GrammarBuild` + `cbits/tree-sitter`, `cbits/ts_shim.c` | ✅ | The tree-sitter provider and the grammar builder (`him --build-grammars`) (ADR-27). |
 | `Him.Regex` | ✅ | Backtracking regex subset and Lua patterns (ADR-28). |
 | `Him.Lsp.Protocol`, `Him.Lsp.State`, `Him.Lsp.Config`, `Him.Lsp.Server`, `Him.Commands.Lsp` | ✅ | The LSP client: pure protocol and editor state, server table, server processes, and the editor-side actions and housekeeping (ADR-29). |
+| `Him.Commands.Lsp.{Core,Navigation,Edits,Completion}` | ✅ | `Commands.Lsp` split by feature: requests, attaching and syncing; definitions, references, symbols, diagnostics; edits, code actions, format, rename; completion and signature help. `Commands.Lsp` keeps the plugin, the actions and the result dispatch. |
 | `Him.Lsp.Sync`, `Him.Lsp.Edit` | ✅ | Sync messages (incremental `didChange`, `didSave`, `didClose`); parsing and applying text and workspace edits. |
 | `Him.Render.Completion` | ✅ | The completion menu. |
 | `Him.Effect`, `Him.Runtime` | ✅ | Effects as data (`RunAction`, `OpenPalette`, `StartJob`, `CancelJob`) and the background-job runtime (ADR-23). |
