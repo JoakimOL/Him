@@ -718,6 +718,8 @@ The old names stay in the older ADRs and log entries, which describe the code as
 was then.
 
 **ADR-8: No test framework.**
+The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
+Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
 if needed.
@@ -953,7 +955,13 @@ numbers are provisional.*
      time (`:plugin-enable`, `:plugin-disable`, `:plugins`). A disabled plugin has no
      actions, keys, `:` commands, gutter lane, housekeeping or state. This is the core
      of the modularization below, so it comes first:
-  4. [ ] **Modularize for readability:**
+  4. [x] **Modularize for readability** (ADR-36). Done: the `replaceBuffer` helper,
+     the `Actions.Lsp` split, `Him.Session` / `Him.App`, the renames, and the test
+     split (`test/Test/*.hs`; `Spec.hs` only runs the groups). Left for later:
+     - moving the buffer zipper out of `Editor`; splits reshape the editor state
+       anyway, so it is done with them;
+     - per-subsystem job runners; best done when jobs become plugin-generic.
+     The original list:
      - split `Commands.Lsp` (796 lines) into attach/sync, navigation, edits,
        completion and `:lsp-*` commands;
      - split `App` into a frontend-free session (`handleEvent`, effects, housekeeping,
