@@ -75,6 +75,11 @@ rebindTests = do
   gotoStill <- headAfter "a\nb\nc\nd" "g e g g"
   searchKey <- headAfter "one two" "F"
   insertExit <- typeKeys "i C-a" (start "")
+  actionByName <- headAfter "a\nb\nc\nd" ": a c t i o n space g o t o _ l i n e space 3 ret"
+  actionBad <- typeKeys ": a c t i o n space g o t o _ l i n e ret" (start "x")
+  let idsBefore = start "x"
+  idsAfter <- typeKeys ": n ret" idsBefore
+  idsTyped <- typeKeys "i a b esc" idsBefore
   let badConfig =
         configWith
           ( Map.fromList
@@ -92,6 +97,10 @@ rebindTests = do
     , test "default chords on the same prefix still work" (assertEqual (Pos 0 0) gotoStill)
     , test "search_text selects the match" (assertEqual (Pos 0 6) searchKey)
     , test "set_mode" (assertEqual Normal (edMode insertExit))
+    , test ":action runs an action by its invocation" (assertEqual (Pos 2 0) actionByName)
+    , test ":action reports a bad invocation" (assertEqual (Just (Status Error "goto_line: missing argument <line>")) (edStatus actionBad))
+    , test "documents get ids, and edits bump the version" $
+        assertEqual (1, 2, 0, 2) (docId (edDoc idsBefore), docId (edDoc idsAfter), docVersion (edDoc idsBefore), docVersion (edDoc idsTyped))
     , test "every bad binding is reported" $
         assertEqual
           ( Left

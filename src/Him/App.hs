@@ -15,7 +15,8 @@ import Data.Maybe (fromMaybe, isJust)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
-import Him.Action (Bound (..))
+import Him.Action (Bound (..), bindInvocation)
+import Him.Effect (Effect (..))
 import Him.Command (failWith)
 import Him.Command qualified as Command
 import Him.Config (Config (..))
@@ -124,8 +125,26 @@ handleEvent config (EvKey key) = do
         clearCount
         -- Only a key typed on its own falls back (a failed chord is dropped).
         when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
+  runEffects config
   commitOutsideInsert
   modify' (refreshInfo config)
+
+-- | Carry out the effects the key's action requested that need the config
+-- (ADR-23). An action run this way may request more; a chain is cut off
+-- after a few rounds so a loop cannot hang the editor.
+runEffects :: Config -> Command.EditorM ()
+runEffects config = go (8 :: Int)
+  where
+    go 0 = modify' (\e -> e {edEffects = []})
+    go n =
+      gets edEffects >>= \case
+        [] -> pure ()
+        effects -> do
+          modify' (\e -> e {edEffects = []})
+          mapM_ perform effects
+          go (n - 1)
+    perform = \case
+      RunAction inv -> either failWith boundRun (bindInvocation (cfgActions config) inv)
 
 -- | A digit typed before a key sequence, in normal or select mode, adds to
 -- the count (@1 2 j@ moves 12 lines). @0@ only continues a count, and a

@@ -25,6 +25,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Him.Key (Key)
 import Him.Mode (Mode (..))
+import Him.Effect (Effect)
 import Him.Picker (Picker)
 import Him.Search (Direction)
 import Him.Selection (Selection)
@@ -106,6 +107,10 @@ data Editor = Editor
   -- once before the next render, not for every key of a burst.
   , edPicker :: !(Maybe Picker)
   -- ^ The open picker, shown in 'Picking' mode.
+  , edEffects :: ![Effect]
+  -- ^ Effects requested by actions, oldest first ("Him.Effect").
+  , edNextId :: !Int
+  -- ^ The id the next opened document gets ('docId').
   , edShowHidden :: !Bool
   -- ^ Directory listings show dotfiles (@g .@ toggles).
   , edInfo :: !(Maybe InfoBox)
@@ -122,7 +127,7 @@ data Editor = Editor
 newEditor :: (Int, Int) -> Document -> Editor
 newEditor size doc =
   Editor
-    { edDoc = doc
+    { edDoc = doc {docId = 1}
     , edBefore = []
     , edAfter = []
     , edMode = Normal
@@ -135,6 +140,8 @@ newEditor size doc =
     , edPrompt = ExPrompt
     , edPreviewPending = False
     , edPicker = Nothing
+    , edEffects = []
+    , edNextId = 2
     , edShowHidden = False
     , edInfo = Nothing
     , edCompletions = []
@@ -166,7 +173,7 @@ setBuffers :: [Buffered] -> Int -> Editor -> Editor
 setBuffers bs i ed = case splitAt j bs of
   (before, cur : after) ->
     ed {edBefore = reverse before, edDoc = bufDoc cur, edView = bufView cur, edAfter = after}
-  _ -> ed {edBefore = [], edDoc = newDocument Nothing Buffer.empty, edView = initialView, edAfter = []}
+  _ -> scratch ed {edBefore = [], edAfter = []}
   where
     j = max 0 (min (length bs - 1) i)
 
@@ -186,9 +193,14 @@ openBuffer :: Document -> Editor -> Editor
 openBuffer doc ed =
   ed
     { edBefore = Buffered (edDoc ed) (edView ed) : edBefore ed
-    , edDoc = doc
+    , edDoc = doc {docId = edNextId ed}
     , edView = initialView
+    , edNextId = edNextId ed + 1
     }
+
+-- | A new scratch document with a fresh id.
+scratch :: Editor -> Editor
+scratch ed = ed {edDoc = (newDocument Nothing Buffer.empty) {docId = edNextId ed}, edView = initialView, edNextId = edNextId ed + 1}
 
 -- | Close the current buffer and show the next one (or the previous one if
 -- it was the last). Closing the only buffer leaves a new scratch buffer.
@@ -196,4 +208,4 @@ closeBuffer :: Editor -> Editor
 closeBuffer ed = case (edAfter ed, edBefore ed) of
   (next : after, _) -> ed {edDoc = bufDoc next, edView = bufView next, edAfter = after}
   ([], prev : before) -> ed {edDoc = bufDoc prev, edView = bufView prev, edBefore = before}
-  ([], []) -> ed {edDoc = newDocument Nothing Buffer.empty, edView = initialView}
+  ([], []) -> scratch ed

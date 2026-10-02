@@ -173,7 +173,9 @@ showListing dir focus = do
   showHidden <- gets edShowHidden
   liftIO (loadDirectory showHidden dir) >>= \case
     Left e -> failWith ("could not list " <> T.pack dir <> ": " <> e)
-    Right doc -> modify' (\e -> e {edDoc = maybe id selectEntry focus doc, edView = initialView})
+    Right doc -> do
+      replaceText (maybe id selectEntry focus doc)
+      modify' (\e -> e {edView = initialView})
 
 -- | Open a listing as a buffer (or switch to an open one), with the cursor
 -- on an entry.

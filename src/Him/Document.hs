@@ -41,7 +41,12 @@ isReadOnly d = case docKind d of
   TextDoc -> False
 
 data Document = Document
-  { docBuffer :: !Buffer
+  { docId :: !Int
+  -- ^ Identifies the buffer while it is open (assigned by "Him.Editor"), so
+  -- results of background work find their document.
+  , docVersion :: !Int
+  -- ^ Bumped on every change of the text, so stale results are dropped.
+  , docBuffer :: !Buffer
   , docKind :: !DocKind
   , docSelection :: !Selection
   , docPath :: !(Maybe FilePath)
@@ -60,7 +65,9 @@ data Document = Document
 newDocument :: Maybe FilePath -> Buffer -> Document
 newDocument path buf =
   Document
-    { docBuffer = buf
+    { docId = 0
+    , docVersion = 0
+    , docBuffer = buf
     , docKind = TextDoc
     , docSelection = single (point (Pos 0 0))
     , docPath = path

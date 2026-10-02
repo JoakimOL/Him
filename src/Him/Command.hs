@@ -14,6 +14,8 @@ module Him.Command
   , quit
   , getRegister
   , setRegister
+  , request
+  , replaceText
   ) where
 
 import Control.Monad.Trans.State.Strict (StateT, gets, modify')
@@ -21,6 +23,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Him.Document (Document (..), isReadOnly)
 import Him.Edit (Edit, applyEdits)
+import Him.Effect (Effect)
 import Him.Editor
 import Him.History (Snapshot (..), beginChange)
 import Him.Mode (Mode (..))
@@ -62,6 +65,16 @@ getRegister c = gets (Map.findWithDefault [] c . edRegisters)
 setRegister :: Char -> [Text] -> EditorM ()
 setRegister c vs = modify' (\e -> e {edRegisters = Map.insert c vs (edRegisters e)})
 
+-- | Queue an effect for the main loop (see "Him.Effect").
+request :: Effect -> EditorM ()
+request eff = modify' (\e -> e {edEffects = edEffects e <> [eff]})
+
+-- | Replace the current document's text and selection wholesale (undo,
+-- redo, a new directory listing), keeping its identity and bumping its
+-- version.
+replaceText :: Document -> EditorM ()
+replaceText new = modifyDoc (\d -> new {docId = docId d, docVersion = docVersion d + 1})
+
 quit :: EditorM ()
 quit = modify' (\e -> e {edQuit = True})
 
@@ -84,6 +97,7 @@ editAll f = modifyDoc $ \d ->
         { docBuffer = buf
         , docSelection = sel
         , docDirty = True
+        , docVersion = docVersion d + 1
         , docHistory = beginChange (Snapshot (docBuffer d) (docSelection d)) (docHistory d)
         }
 

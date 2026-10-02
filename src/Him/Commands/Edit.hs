@@ -90,6 +90,7 @@ history nothingMsg step = do
           , docSelection = sel
           , docHistory = h
           , docDirty = buf /= docSavedBuffer doc
+          , docVersion = docVersion doc + 1
           }
 
 insertChar :: Char -> EditorM ()

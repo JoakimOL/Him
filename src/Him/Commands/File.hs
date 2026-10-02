@@ -10,6 +10,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (gets, modify')
 import Data.Text qualified as T
 import Him.Action
+import Him.Effect (Effect (..))
 import Him.Buffer (lineCount)
 import Him.Buffer qualified as Buffer
 import Him.Command
@@ -60,6 +61,10 @@ exCommands =
         ([], Just dir) -> changeDirectory dir
         ([], Nothing) -> failWith ":cd needs a directory"
         _ -> failWith ":cd takes one directory"
+  , ExCommand ["action"] "Run an action by name, with arguments (e.g. :action goto_line 12)" NoArgs $ \args ->
+      case parseInvocation (T.unwords args) of
+        Left e -> failWith e
+        Right inv -> request (RunAction inv)
   , ExCommand ["show-directory", "pwd"] "Show the working directory" NoArgs $ \_ ->
       liftIO getCurrentDirectory >>= info . T.pack
   , ExCommand ["buffer-next", "bn", "bnext"] "Go to the next buffer" NoArgs $ \_ -> modify' (switchBuffer 1)
