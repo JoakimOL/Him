@@ -4,7 +4,6 @@ module Him.Render.Completion
   ( drawCompletion
   ) where
 
-import Data.IntMap.Strict qualified as IntMap
 import Data.Text qualified as T
 import Him.Editor
 import Him.Lsp.Protocol (CompletionItem (..))
@@ -50,4 +49,4 @@ drawCompletion theme ed area cursor f = case (edCompletion ed, cursor) of
               )
               f
               (zip [0 ..] visible)
-       in drawn {frameRowKeys = foldr IntMap.delete (frameRowKeys drawn) [top .. top + rows - 1]}
+       in forgetRows top rows drawn

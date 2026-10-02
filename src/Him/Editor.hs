@@ -23,6 +23,16 @@ module Him.Editor
   , modifyDocument
   , previewFor
   , mapDocuments
+    -- * Windows
+  , windowBoxes
+  , focusedTextHeight
+  , focusWindow
+  , splitWindow
+  , closeWindow
+  , onlyWindow
+  , swapWindow
+  , windowEditor
+  , allDocuments
   ) where
 
 import Data.Map.Strict (Map)
@@ -40,8 +50,13 @@ import Him.Search (Direction)
 import Him.Selection (Selection, primary, rangeHead)
 import Him.Buffer (Buffer)
 import Him.Buffer qualified as Buffer
-import Him.Document (DocKind (..), Document (..), newDocument)
+import Him.Document (DocKind (..), Document (..), clampSelection, newDocument)
 import Him.View (View, initialView)
+import Him.Window
+import Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict qualified as IntMap
+import Data.List (find, findIndex)
+import Data.Maybe (fromMaybe)
 
 data Severity = Info | Error
   deriving stock (Eq, Show)
@@ -152,9 +167,15 @@ data Editor = Editor
   , edPopup :: !(Maybe InfoBox)
   -- ^ A box shown until the next key (e.g. hover documentation).
   , edOptions :: !Options
+  -- ^ The settings (@[editor]@ in the config file).
   , edSignLane :: !Bool
   -- ^ The gutter has a sign lane (an enabled plugin draws there).
-  -- ^ The settings (@[editor]@ in the config file).
+  , edLayout :: !Layout
+  -- ^ How the screen is split into windows (ADR-37).
+  , edFocus :: !Int
+  -- ^ The focused window: it shows 'edDoc' through 'edView'.
+  , edWindows :: !(IntMap Window)
+  -- ^ The other windows.
   , edInfo :: !(Maybe InfoBox)
   , edCompletions :: ![Text]
   -- ^ Candidates from the last @tab@ on the command line, shown until the
@@ -193,6 +214,9 @@ newEditor size doc =
     , edPopup = Nothing
     , edOptions = defaultOptions
     , edSignLane = True
+    , edLayout = Leaf 0
+    , edFocus = 0
+    , edWindows = IntMap.empty
     , edInfo = Nothing
     , edCompletions = []
     , edRegisters = Map.empty
@@ -310,3 +334,106 @@ previewFor ed = \case
     attachedTo file d = case docLsp d of
       LspAttached at -> atPath at == file
       _ -> False
+
+-- * Windows (ADR-37)
+
+-- | Every open document, the current one included.
+allDocuments :: Editor -> [Document]
+allDocuments = map bufDoc . fst . buffers
+
+-- | Where each window is: the screen above the command line, divided.
+windowBoxes :: Editor -> [(Int, Box)]
+windowBoxes ed = boxes (Box 0 0 (max 0 (rows - 1)) cols) (edLayout ed)
+  where
+    (rows, cols) = edSize ed
+
+-- | Text rows of the focused window (its box less the status line).
+focusedTextHeight :: Editor -> Int
+focusedTextHeight ed = case lookup (edFocus ed) (windowBoxes ed) of
+  Just b -> max 1 (boxHeight b - 1)
+  Nothing -> max 1 (fst (edSize ed) - 2)
+
+-- | Focus a window: the focused one is put away with its view and
+-- selection, and the other's document becomes current, scrolled and
+-- selected as that window left it.
+focusWindow :: Int -> Editor -> Editor
+focusWindow w ed = case IntMap.lookup w (edWindows ed) of
+  Just win | w /= edFocus ed -> showWindow win ed {edFocus = w, edWindows = IntMap.delete w (IntMap.insert (edFocus ed) (current ed) (edWindows ed))}
+  _ -> ed
+
+-- | The focused window as a 'Window'.
+current :: Editor -> Window
+current ed = Window (docId (edDoc ed)) (edView ed) (docSelection (edDoc ed))
+
+-- | Make a window's document current (if it is still open), with its view
+-- and selection.
+showWindow :: Window -> Editor -> Editor
+showWindow win ed = case findIndex ((== winDoc win) . docId) (allDocuments ed) of
+  Nothing -> ed
+  Just i ->
+    let ed' = gotoBuffer i ed
+        d = edDoc ed'
+     in ed' {edDoc = d {docSelection = clampSelection (docBuffer d) (winSelection win)}, edView = winView win}
+
+-- | Split the focused window: the new one shows the same document, in the
+-- same place, and gets the focus.
+splitWindow :: Axis -> Editor -> Editor
+splitWindow axis ed =
+  ed
+    { edLayout = insertBeside axis (edFocus ed) new (edLayout ed)
+    , edWindows = IntMap.insert (edFocus ed) (current ed) (edWindows ed)
+    , edFocus = new
+    , edNextId = new + 1
+    }
+  where
+    new = edNextId ed
+
+-- | Close the focused window and focus the one before it (or after it,
+-- for the first). 'Nothing' when it is the only one.
+closeWindow :: Editor -> Maybe Editor
+closeWindow ed = case break (== edFocus ed) (leaves (edLayout ed)) of
+  (before, _ : after) -> case reverse before <> after of
+    next : _ -> Just (closeTo next)
+    [] -> Nothing
+  _ -> Nothing
+  where
+    closeTo next =
+      let ed' = showWindow (fromMaybe (current ed) (IntMap.lookup next (edWindows ed))) ed
+       in ed'
+            { edLayout = removeWindow (edFocus ed) (edLayout ed)
+            , edFocus = next
+            , edWindows = IntMap.delete next (edWindows ed)
+            }
+
+-- | Close every window but the focused one.
+onlyWindow :: Editor -> Editor
+onlyWindow ed = ed {edLayout = Leaf (edFocus ed), edWindows = IntMap.empty}
+
+-- | Swap the focused window with its neighbour on a side (the focus moves
+-- with it).
+swapWindow :: Side -> Editor -> Editor
+swapWindow side ed = case neighbour side (edFocus ed) (windowBoxes ed) of
+  Just other -> ed {edLayout = swapWindows (edFocus ed) other (edLayout ed)}
+  Nothing -> ed
+
+-- | The editor as an unfocused window shows it: its document, view and
+-- selection, in normal mode, without popups. For drawing it with the
+-- same components as the focused one.
+windowEditor :: Editor -> Int -> Editor
+windowEditor ed w = case IntMap.lookup w (edWindows ed) of
+  Nothing -> ed
+  Just win ->
+    let d = fromMaybe (edDoc ed) (find ((== winDoc win) . docId) (allDocuments ed))
+     in ed
+          { edDoc = d {docSelection = clampSelection (docBuffer d) (winSelection win)}
+          , edView = winView win
+          , edMode = Normal
+          , edPicker = Nothing
+          , edInfo = Nothing
+          , edPopup = Nothing
+          , edCompletion = Nothing
+          , edPending = []
+          , edCount = Nothing
+          , edStatus = Nothing
+          , edFocus = w
+          }

@@ -37,6 +37,10 @@ data Theme = Theme
   , themeGutter :: Style
   , themeGutterCurrent :: Style
   , themeStatusLine :: Style
+  , themeStatusLineInactive :: Style
+  -- ^ The status lines of windows that are not focused.
+  , themeWindow :: Style
+  -- ^ The border between windows side by side.
   , themeMode :: Mode -> Style
   , themeInfo :: Style
   , themePopup :: Style
@@ -89,6 +93,8 @@ fromScopes name scopes =
     , themeGutter = get "ui.gutter" `patchStyle` get "ui.linenr"
     , themeGutterCurrent = get "ui.gutter.selected" `patchStyle` get "ui.linenr.selected"
     , themeStatusLine = statusLine
+    , themeStatusLineInactive = statusLine `patchStyle` fromMaybe defaultStyle {styleDim = True} (exact "ui.statusline.inactive")
+    , themeWindow = fromMaybe (get "ui.linenr") (exact "ui.window")
     , themeMode = modeStyle
     , themeInfo = text
     , themePopup = popup

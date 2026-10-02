@@ -33,6 +33,7 @@ import Him.Actions.File qualified as File
 import Him.Actions.Motion qualified as Motion
 import Him.Actions.Picker qualified as Picker
 import Him.Actions.Search qualified as Search
+import Him.Actions.Window qualified as Window
 import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))
@@ -61,6 +62,7 @@ coreActions =
     <> File.actions
     <> Picker.actions
     <> Directory.actions
+    <> Window.actions
 
 -- | The actions with these plugins on.
 actionsWith :: [Plugin] -> [Action]
@@ -71,7 +73,7 @@ allActions :: [Action]
 allActions = actionsWith plugins
 
 exCommandsWith :: [Plugin] -> [ExCommand]
-exCommandsWith on = File.exCommands <> pluginCommands <> concatMap plExCommands on
+exCommandsWith on = File.exCommands <> Window.exCommands <> pluginCommands <> concatMap plExCommands on
 
 -- | Switching plugins while running (carried out by the main loop).
 pluginCommands :: [ExCommand]
@@ -159,6 +161,7 @@ normalBindings =
        , ("N", "search_prev")
        , ("*", "search_selection")
        ]
+    <> Window.windowBindings
 
 -- | Select mode is normal mode with these overrides.
 selectBindings :: [(Text, Text)]
@@ -268,8 +271,15 @@ prefixNames =
     [ ([plain (KChar 'g')], "goto")
     , ([plain (KChar ' ')], "space")
     , ([plain (KChar ']')], "next")
+    , ([ctrlW], "window")
+    , ([ctrlW, plain (KChar 'n')], "new split")
+    , ([plain (KChar ' '), plain (KChar 'w')], "window")
+    , ([plain (KChar ' '), plain (KChar 'w'), plain (KChar 'n')], "new split")
     , ([plain (KChar '[')], "previous")
     ]
+
+ctrlW :: Key
+ctrlW = Key (KChar 'w') (Set.singleton Ctrl)
 
 -- | Unbound printable characters are typed in insert and command mode.
 fallback :: Mode -> Key -> Maybe (EditorM ())

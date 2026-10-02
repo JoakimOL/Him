@@ -7,7 +7,7 @@ module Him.Actions.File
 
 import Control.Exception (IOException, try)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.State.Strict (gets, modify')
+import Control.Monad.Trans.State.Strict (gets, modify', put)
 import Data.Text qualified as T
 import Him.Action
 import Him.Effect (Effect (..))
@@ -34,13 +34,13 @@ exCommands :: [ExCommand]
 exCommands =
   [ ExCommand ["write", "w"] "Write the file, optionally to a new path" PathArgs $ \args ->
       () <$ write args
-  , ExCommand ["quit", "q"] "Quit (refuses with unsaved changes in any buffer)" NoArgs $ \_ -> quitChecked
-  , ExCommand ["quit!", "q!"] "Quit, discarding unsaved changes" NoArgs $ \_ -> quit
+  , ExCommand ["quit", "q"] "Close the window; quit with the last one (refuses with unsaved changes in any buffer)" NoArgs $ \_ -> closeOrQuit quitChecked
+  , ExCommand ["quit!", "q!"] "Close the window; quit with the last one, discarding unsaved changes" NoArgs $ \_ -> closeOrQuit quit
   , ExCommand ["quit-all", "qa"] "Quit (refuses with unsaved changes in any buffer)" NoArgs $ \_ -> quitChecked
   , ExCommand ["quit-all!", "qa!"] "Quit, discarding unsaved changes" NoArgs $ \_ -> quit
   , ExCommand ["write-quit", "wq", "x"] "Write the file and quit" PathArgs $ \args -> do
       ok <- write args
-      if ok then quitChecked else pure ()
+      if ok then closeOrQuit quitChecked else pure ()
   , ExCommand ["write-all", "wa"] "Write every modified buffer" NoArgs $ \_ -> () <$ writeAll
   , ExCommand ["write-quit-all", "wqa", "xa"] "Write every modified buffer and quit" NoArgs $ \_ -> do
       ok <- writeAll
@@ -144,6 +144,11 @@ closeCurrent = do
   modify' closeBuffer
 
 -- | Quit unless a buffer has unsaved changes.
+-- | Close the focused window, or with only one left do the given quit
+-- (Helix's @:q@).
+closeOrQuit :: EditorM () -> EditorM ()
+closeOrQuit quitting = gets closeWindow >>= maybe quitting put
+
 quitChecked :: EditorM ()
 quitChecked = do
   dirty <- gets (filter docDirty . map bufDoc . fst . buffers)

@@ -11,7 +11,8 @@ module Him.Render
   ) where
 
 import Him.Document (Document (..))
-import Him.Editor (Editor (..))
+import Him.Editor (Editor (..), windowBoxes, windowEditor)
+import Him.Window (Box (..))
 import Him.Mode (Mode (..))
 import Him.Options (CursorKind (..), Options (..), cursorKindFor)
 import Him.Position (Pos (..))
@@ -28,26 +29,37 @@ import Him.Selection (primary, rangeHead)
 import Him.Terminal.Ansi (CursorShape (..))
 import Him.View (View (..), scrollToCursor)
 
+-- | Where one window's parts go: the gutter and text area, and its status
+-- line below them.
 data Layout = Layout
-  { layoutGutter :: Rect
+  { layoutWindow :: Int
+  , layoutGutter :: Rect
   , layoutText :: Rect
   , layoutStatus :: Rect
-  , layoutCommand :: Rect
   }
 
-layout :: Editor -> Layout
-layout ed =
+-- | Every window's layout, from its box ('windowBoxes').
+windowLayouts :: Editor -> [Layout]
+windowLayouts ed = [layoutIn w box (if w == edFocus ed then ed else windowEditor ed w) | (w, box) <- windowBoxes ed]
+
+layoutIn :: Int -> Box -> Editor -> Layout
+layoutIn w (Box row col height width) ed =
   Layout
-    { layoutGutter = Rect 0 0 textRows gutter
-    , layoutText = Rect 0 gutter textRows (max 1 (cols - gutter))
-    , layoutStatus = Rect (rows - 2) 0 1 cols
-    , layoutCommand = Rect (rows - 1) 0 1 cols
+    { layoutWindow = w
+    , layoutGutter = Rect row col textRows gutter
+    , layoutText = Rect row (col + gutter) textRows (max 1 (width - gutter))
+    , layoutStatus = Rect (row + textRows) col 1 width
     }
   where
-    (rows, cols) = edSize ed
-    textRows = max 0 (rows - 2)
-    -- Drop the gutter on very narrow terminals.
-    gutter = if cols > 20 then gutterWidth ed else 0
+    textRows = max 0 (height - 1)
+    -- Drop the gutter in very narrow windows.
+    gutter = if width > 20 then gutterWidth ed else 0
+
+-- | The focused window's layout.
+layout :: Editor -> Layout
+layout ed = case [l | l <- windowLayouts ed, layoutWindow l == edFocus ed] of
+  l : _ -> l
+  [] -> layoutIn (edFocus ed) (Box 0 0 (max 0 (fst (edSize ed) - 1)) (snd (edSize ed))) ed
 
 -- | Scroll the view so the primary cursor is on screen.
 ensureCursorVisible :: Editor -> Editor
@@ -60,23 +72,41 @@ ensureCursorVisible ed = ed {edView = scrollToCursor (rectHeight r, rectWidth r)
 -- reused (see "Him.Render.TextArea").
 render :: Theme -> Maybe Frame -> Editor -> Frame
 render theme prev ed =
-  frame {frameCursor = cursor, frameCursorShape = shape, frameScroll = Just scroll, frameColors = (themeForeground theme, themeBackground theme)}
+  frame {frameCursor = cursor, frameCursorShape = shape, frameScroll = scroll, frameColors = (themeForeground theme, themeBackground theme)}
   where
     (rows, cols) = edSize ed
-    Layout gutterR textR statusR cmdR = layout ed
-    -- Gutter and text area are full-width rows that move with the view.
-    scroll = ScrollInfo (rectRow textR) (rectHeight textR) (viewTop (edView ed))
+    focused = layout ed
+    textR = layoutText focused
+    cmdR = Rect (rows - 1) 0 1 cols
+    -- The terminal can scroll the focused window's rows only when it spans
+    -- the whole width (scrolling moves whole rows).
+    scroll
+      | rectCol (layoutGutter focused) == 0 && rectCol (layoutStatus focused) == 0 && rectWidth (layoutStatus focused) == cols =
+          Just (ScrollInfo (rectRow textR) (rectHeight textR) (viewTop (edView ed)))
+      | otherwise = Nothing
     frame =
       drawCommandLine theme ed cmdR
-        . drawStatusLine theme ed statusR
         . drawPicker theme ed overlay
         . drawInfo theme ed overlay (cursorPosition ed textR)
         . drawCompletion theme ed overlay (cursorPosition ed textR)
-        . drawTextArea theme prev ed textR
-        . drawGutter theme ed gutterR
-        $ blankFrame rows cols
-    -- Popups cover the text area and the gutter.
-    overlay = Rect 0 0 (rectHeight textR) cols
+        . drawBorders
+        $ foldl' drawWindow (blankFrame rows cols) (windowLayouts ed)
+    drawWindow f l =
+      let isFocused = layoutWindow l == edFocus ed
+          wed = if isFocused then ed else windowEditor ed (layoutWindow l)
+       in drawStatusLine theme isFocused wed (layoutStatus l)
+            . drawTextArea theme isFocused prev wed (layoutText l)
+            . drawGutter theme wed (layoutGutter l)
+            $ f
+    -- A column between windows side by side.
+    drawBorders f =
+      foldl'
+        (\fr (_, Box row col height width) -> if col + width < cols then foldl' (\acc r -> putText r (col + width) (themeWindow theme) "│" acc) fr [row .. row + height - 1] else fr)
+        f
+        (windowBoxes ed)
+    -- Popups cover the windows (not the command line and the status row
+    -- above it).
+    overlay = Rect 0 0 (max 0 (rows - 2)) cols
     cursor = case edMode ed of
       CmdLine -> Just (commandLineCursor ed cmdR)
       Picking -> pickerCursor ed overlay

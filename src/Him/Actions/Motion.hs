@@ -8,7 +8,7 @@ import Control.Monad (replicateM_)
 import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.Set qualified as Set
 import Him.Buffer qualified as Buffer
-import Him.Editor (Await (..), Editor (..))
+import Him.Editor (Await (..), Editor (..), focusedTextHeight)
 import Him.Key (Key (..), KeyCode (..), Modifier (..))
 import Him.View (View (..))
 import Data.Text (Text)
@@ -78,7 +78,7 @@ repeated name grp doc m = action name grp doc count (\n -> replicateM_ n (motion
 page :: Int -> Int -> Int -> EditorM ()
 page direction parts n = do
   ed <- get
-  let height = max 1 (fst (edSize ed) - 2)
+  let height = focusedTextHeight ed
       delta = direction * n * max 1 (height `div` parts)
       lines' = Buffer.lineCount (docBuffer (edDoc ed))
   vertical delta

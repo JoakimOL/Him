@@ -17,6 +17,8 @@ import Him.Editor
 import Him.Language (detectLanguage, langName, languages)
 import Him.Syntax
 import Him.View (View (..))
+import Him.Window (Window (..))
+import Data.IntMap.Strict qualified as IntMap
 
 -- | Lines highlighted above and below the visible ones, so scrolling a
 -- little needs no new request.
@@ -32,8 +34,7 @@ syntaxHousekeeping = do
   let d = edDoc ed
       si = docSyntax d
       setSyntax s = modifyDoc (\doc -> doc {docSyntax = s})
-      top = viewTop (edView ed)
-      bottom = top + fst (edSize ed)
+      (top, bottom) = visibleLines ed
   case siStatus si of
     SyntaxUnknown -> case (docKind d, docPath d) of
       (TextDoc, Just path)
@@ -49,6 +50,20 @@ syntaxHousekeeping = do
           setSyntax si {siPending = True}
           request (StartJob (Highlight (docId d) (docVersion d) (docBuffer d) from to))
     _ -> pure ()
+
+-- | The lines of the current document that windows show: the focused
+-- window's, and those of other windows on the same document when they are
+-- near enough to highlight in one go (ADR-37).
+visibleLines :: Editor -> (Int, Int)
+visibleLines ed
+  | bottom - top <= 2000 = (top, bottom)
+  | otherwise = own
+  where
+    height = focusedTextHeight ed
+    own = (viewTop (edView ed), viewTop (edView ed) + height)
+    others = [(viewTop v, viewTop v + height) | (_, w) <- IntMap.toList (edWindows ed), winDoc w == docId (edDoc ed), let v = winView w]
+    top = minimum (map fst (own : others))
+    bottom = maximum (map snd (own : others))
 
 -- | A syntax job reported back. Spans for an older version are still
 -- shown (they are at most one burst of typing behind) until newer ones

@@ -56,6 +56,7 @@ data ActionGroup
   | GHistory
   | GSearch
   | GBuffers
+  | GWindows
   | GGit
   | GLsp
   | GPrompt
@@ -72,6 +73,7 @@ groupName = \case
   GHistory -> "history"
   GSearch -> "search"
   GBuffers -> "buffers"
+  GWindows -> "windows"
   GGit -> "git"
   GLsp -> "language server"
   GPrompt -> "prompt"

@@ -1,4 +1,5 @@
--- | The status line: mode, file name, pending keys, cursor position.
+-- | The status line of a window: mode, file name, pending keys, cursor
+-- position. An unfocused window's is dimmer and has no mode.
 module Him.Render.StatusLine
   ( drawStatusLine
   ) where
@@ -13,17 +14,17 @@ import Him.Render.Frame
 import Him.Render.Theme
 import Him.Selection (primary, primaryIndex, rangeCount, rangeHead)
 
-drawStatusLine :: Theme -> Editor -> Rect -> Frame -> Frame
-drawStatusLine theme ed rect =
+drawStatusLine :: Theme -> Bool -> Editor -> Rect -> Frame -> Frame
+drawStatusLine theme focused ed rect =
   putText row (rectCol rect + rectWidth rect - T.length right) style right
     . putText row (rectCol rect + T.length mode) style file
-    . putText row (rectCol rect) (themeMode theme (keymapMode ed)) mode
+    . putText row (rectCol rect) (if focused then themeMode theme (keymapMode ed) else style) mode
     . fillRect rect style
   where
     row = rectRow rect
-    style = themeStatusLine theme
+    style = if focused then themeStatusLine theme else themeStatusLineInactive theme
     doc = edDoc ed
-    mode = " " <> modeLabel (keymapMode ed) <> " "
+    mode = if focused then " " <> modeLabel (keymapMode ed) <> " " else " "
     dirty = if docDirty doc then " [+]" else ""
     bufs = case bufferIndex ed of
       (_, 1) -> ""

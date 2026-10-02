@@ -6,6 +6,7 @@ module Him.Render.TextArea
   ) where
 
 import Data.IntMap.Strict qualified as IntMap
+import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Him.Buffer (lineAt, lineCount)
 import Him.Document (DirEntry (..), DocKind (..), Document (..))
@@ -26,8 +27,8 @@ import Him.View (View (..))
 
 -- | Draws the visible lines. Rows whose 'RowKey' is the same as in the
 -- previous frame are copied from it instead of being laid out again.
-drawTextArea :: Theme -> Maybe Frame -> Editor -> Rect -> Frame -> Frame
-drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 1]
+drawTextArea :: Theme -> Bool -> Maybe Frame -> Editor -> Rect -> Frame -> Frame
+drawTextArea theme focused prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 1]
   where
     prevFrame = case prev of
       Just p | frameRows p == frameRows frame0 && frameCols p == frameCols frame0 -> Just p
@@ -50,7 +51,8 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
     bottom = top + rectHeight rect
     onScreen = [r | r <- ranges sel, posLine (rangeEnd r) >= top, posLine (rangeStart r) < bottom]
     shown = [(rangeStart r, rangeEnd r, r == prim) | r <- onScreen, edMode ed /= Insert || not (isCollapsed r)]
-    secondaryHeads = [rangeHead r | r <- onScreen, r /= prim]
+    -- An unfocused window has no terminal cursor: its primary is drawn too.
+    secondaryHeads = [rangeHead r | r <- onScreen, r /= prim || not focused]
     -- Packed once per frame, not per cell.
     textStyle = packStyle (themeText theme)
     dirStyle = packStyle (themeDirectory theme)
@@ -77,7 +79,7 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
     drawRow f r
       | line >= lineCount buf = putText screenRow (rectCol rect) (themeTilde theme) "~" f
       | Just p <- prevFrame
-      , IntMap.lookup (prevRowOf screenRow) (frameRowKeys p) == Just key =
+      , Map.lookup (prevRowOf screenRow, rectCol rect) (frameRowKeys p) == Just key =
           remember (copyCells (prevRowOf screenRow) screenRow (rectCol rect) (rectWidth rect) p f)
       | otherwise = remember (putCells screenRow (rectCol rect) visible f)
       where
@@ -101,7 +103,7 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
           1 -> headerStyle
           2 -> dirStyle
           _ -> textStyle
-        remember fr = fr {frameRowKeys = IntMap.insert screenRow key (frameRowKeys fr)}
+        remember fr = fr {frameRowKeys = Map.insert (screenRow, rectCol rect) key (frameRowKeys fr)}
         line = top + r
         screenRow = rectRow rect + r
         text = lineAt line buf

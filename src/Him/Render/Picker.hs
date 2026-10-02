@@ -5,7 +5,6 @@ module Him.Render.Picker
   , pickerCursor
   ) where
 
-import Data.IntMap.Strict qualified as IntMap
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
 import Him.Editor
@@ -68,7 +67,7 @@ drawPicker theme ed area f = case edPicker ed of
               withLabels
               (zip [0 ..] visible)
           withPreview = maybe withItems (drawPreview top left h w inner withItems) preview
-       in withPreview {frameRowKeys = foldr IntMap.delete (frameRowKeys withPreview) [top .. top + h - 1]}
+       in forgetRows top h withPreview
 
     -- The preview: right of a divider, the file around the target line
     -- (highlighted), with line numbers; or why there is nothing to show.

@@ -5,7 +5,6 @@ module Him.Render.Info
   ) where
 
 import Control.Applicative ((<|>))
-import Data.IntMap.Strict qualified as IntMap
 import Data.Text qualified as T
 import Him.Editor
 import Him.Render.Frame
@@ -51,4 +50,4 @@ drawInfo theme ed area cursor f = case edInfo ed <|> edPopup ed of
           drawn = foldl' (\fr (row, t, st) -> putText row left st t fr) f lines'
           keys = [(top + 1 + i, k) | (i, (k, _)) <- zip [0 ..] shown]
           withKeys = foldl' (\fr (row, k) -> putText row (left + 2) (themePopupKey theme) (T.take (inner - 1) k) fr) drawn keys
-       in withKeys {frameRowKeys = foldr IntMap.delete (frameRowKeys withKeys) [top .. top + h - 1]}
+       in forgetRows top h withKeys

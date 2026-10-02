@@ -9,6 +9,7 @@ import Test.Lsp
 import Test.Syntax
 import Test.Render
 import Test.Integration
+import Test.Windows
 
 main :: IO ()
 main = do
@@ -22,6 +23,7 @@ main = do
   lspIO <- lspTests
   bufferIO <- openBufferTests
   loading <- loadingTests
+  windows <- windowTests
   runTests
     [ group "Him.Key" keyTests
     , group "Him.Terminal.Input.decodeKeys" decodeTests
@@ -62,6 +64,7 @@ main = do
     , group "Him.TextWidth" widthTests
     , group "Him.Render" renderTests
     , group "Him.Render.Diff" diffTests
+    , group "windows (splits)" windows
     , group "keys through the default config" integration
     , group "rebinding keys to actions" rebinding
     , group "buffers" bufferIO

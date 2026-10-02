@@ -9,6 +9,7 @@ module Him.Render.Frame
   , RowKey (..)
   , ScrollInfo (..)
   , blankFrame
+  , forgetRows
   , copyCells
   , putCell
   , putCells
@@ -16,8 +17,8 @@ module Him.Render.Frame
   , fillRect
   ) where
 
-import Data.IntMap.Strict (IntMap)
-import Data.IntMap.Strict qualified as IntMap
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
@@ -78,8 +79,9 @@ data Frame = Frame
   , frameCursor :: !(Maybe (Int, Int))
   -- ^ Where the terminal cursor goes, as @(row, col)@; hidden if 'Nothing'.
   , frameCursorShape :: !CursorShape
-  , frameRowKeys :: !(IntMap RowKey)
-  -- ^ Keys of the text-area rows, by screen row.
+  , frameRowKeys :: !(Map (Int, Int) RowKey)
+  -- ^ Keys of the text-area rows, by screen row and the text area's
+  -- column (windows side by side share rows).
   , frameScroll :: !(Maybe ScrollInfo)
   , frameColors :: !(Color, Color)
   -- ^ The terminal's default foreground and background meanwhile (the
@@ -98,7 +100,7 @@ data Rect = Rect
 
 blankFrame :: Int -> Int -> Frame
 blankFrame rows cols =
-  Frame rows cols (Seq.replicate rows (Seq.replicate cols blankCell)) Nothing CursorBlock IntMap.empty Nothing (DefaultColor, DefaultColor)
+  Frame rows cols (Seq.replicate rows (Seq.replicate cols blankCell)) Nothing CursorBlock Map.empty Nothing (DefaultColor, DefaultColor)
 
 -- | Copy @width@ cells at column @col@ from row @srcRow@ of another frame
 -- (of the same size) to row @row@: one slice and one splice.
@@ -133,3 +135,8 @@ putText row col style t = putCells row col (map (`Cell` packStyle style) (T.unpa
 fillRect :: Rect -> Style -> Frame -> Frame
 fillRect (Rect r c h w) style f =
   foldl' (\acc row -> putCells row c (replicate w (Cell ' ' (packStyle style))) acc) f [r .. r + h - 1]
+
+-- | Forget the row keys of some rows (a popup was drawn over them), so the
+-- next frame draws them again instead of copying.
+forgetRows :: Int -> Int -> Frame -> Frame
+forgetRows top height f = f {frameRowKeys = Map.filterWithKey (\(r, _) _ -> r < top || r >= top + height) (frameRowKeys f)}

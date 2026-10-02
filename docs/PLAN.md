@@ -717,6 +717,50 @@ holds the `EditorM` monad and its helpers. They are now `Him.Actions.*` and
 The old names stay in the older ADRs and log entries, which describe the code as it
 was then.
 
+**ADR-37: Splits are a tree of windows; the focused one is the editor's state.**
+Helix's model, without Vim's tabs (the buffer list stays as it was):
+- **Layout (`Him.Window`, pure):** `Layout` is a tree, `Leaf windowId | Split Axis
+  [Layout]`, where the axis is `Beside` (`:vsplit`) or `Stacked` (`:hsplit`).
+  - Splitting inside a split along the same axis adds a sibling; otherwise the window
+    is split in two.
+  - Closing collapses a split that is left with one child.
+  - `boxes` shares a split's space evenly, with a one-column border between windows
+    side by side.
+  - `neighbour` finds the nearest window on a side that overlaps across, preferring
+    the one most in line.
+- **State:** the *focused* window is still `edDoc` + `edView`, so no action changed.
+  The other windows are `Window { winDoc, winView, winSelection }` in `edWindows`.
+  - Focusing a window stashes the focused one as a `Window`, then makes the other's
+    document current (the buffer zipper's `gotoBuffer`) with its view and selection,
+    clamped in case the text changed meanwhile.
+  - Each window therefore keeps its own cursor and scroll position, even on the same
+    document. Edits are not mapped through an unfocused window's selection; clamping
+    keeps it valid.
+- **Rendering:** each window gets its own gutter, text area and status line. An
+  unfocused window is drawn by the same components through `windowEditor`, the editor
+  as that window shows it (normal mode, no popups).
+  - Unfocused windows draw their primary cursor as a cell, use
+    `ui.statusline.inactive`, and show no mode.
+  - Borders use `ui.window`.
+  - Row-cache keys are now keyed by `(row, column)`, since windows side by side share
+    rows.
+  - The terminal-scroll optimization (ADR-15) applies only when the focused window
+    spans the full width, because scrolling moves whole rows.
+- **Highlighting** asks for the lines visible in every window on the current document
+  when they are within 2000 lines of each other; otherwise only for the focused one.
+- **Keys:** Helix's, after `C-w` or `space w`:
+  - `v` / `s` split side by side / stacked;
+  - `w` next window;
+  - `h j k l` (also with `C-` and arrows) focus a neighbour;
+  - `H J K L` swap;
+  - `q` close, `o` only;
+  - `n v` / `n s` split with a new scratch buffer.
+- **Commands:** `:vsplit` / `:vs [files]`, `:hsplit` / `:hs [files]`, `:vnew`,
+  `:hnew`.
+- **Quitting:** `:q` / `:q!` / `:wq` close the focused window, and quit with the last
+  one, as in Helix. `:qa` quits everything.
+- **Paging** (`C-f`, `C-d`, …) moves by the focused window's height.
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -776,6 +820,7 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Actions.*` | ✅ | Action lists: `Motion`, `Edit` (modes and text), `Search`, `CommandLine`; `File` holds the ex commands. |
 | `Him.TextWidth` | ✅ | Tab expansion (width 4), `charWidth` (a compact East-Asian-wide/emoji table; control chars are 2 wide and shown as `^X`), char↔display-column mapping. |
 | `Him.Toml`, `Him.UserConfig` | ✅ | The TOML subset reader; the user's config file: checking, applying, the dumped defaults (ADR-32). |
+| `Him.Window`, `Him.Actions.Window` | ✅ | Splits: the layout tree, boxes and neighbours (pure); window actions, keys and `:vsplit`/`:hsplit` (ADR-37). The editor's window operations (`focusWindow`, `splitWindow`, `closeWindow`, `windowEditor`, …) are in `Him.Editor`. |
 | `Him.Options` | ✅ | The settings (`Options`, `edOptions`) and the table that checks, applies and dumps them (ADR-34). |
 | `Him.Paths` | ✅ | Where things are: the config file, the runtime directories, the theme directories. |
 | `Him.Theme`, `Him.Theme.Load`, `Him.Render.Theme` | ✅ | Helix theme files: parsing, colours, `inherits`, the built-in theme, 256-colour fallback (pure); finding and loading them; the render-side `Theme` built from scopes (ADR-33). |
@@ -865,6 +910,10 @@ Each milestone ends with something runnable, and with this file updated.
   from one table (ADR-34).
 - [x] **32. Plugins.** Git and LSP as plugins: `[plugins]`, `:plugins`,
   `:plugin-enable`, `:plugin-disable` (ADR-35).
+- [x] **33. Modules.** `Him.Session`, `Him.Actions.*`, `Him.EditorM`, the LSP split,
+  and the test modules (ADR-36).
+- [x] **34. Splits.** Windows side by side and stacked, Helix's `C-w` / `space w`
+  keys, `:vsplit`, `:hsplit` (ADR-37).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -892,6 +941,7 @@ Implemented (defined in `Him.Config.Default`):
 | Language server | Diagnostics in the gutter, underlined, and the cursor line's message at the bottom; `] d` / `[ d` next/previous, `space x` list. `space k` hover, `g d` definition, `g y` type definition, `g i` implementation, `g r` references, `space s` symbols, `space S` workspace symbols, `space r` rename, `space a` code actions, `:format`. Insert mode: completion opens by itself (or `C-x`); `tab`/`C-n`/`down` and `S-tab`/`C-p`/`up` select, `ret` accepts, `esc` closes; signature help appears after `(` and `,`. `:lsp-start`, `:lsp-stop`, `:lsp-restart`, `:lsp-info`. Servers: hls, rust-analyzer, clangd, typescript-language-server, pylsp, gopls (`Him.Lsp.Config`). |
 | Git | Gutter signs (green added, yellow changed, red removed; dimmer when staged). `] g` / `[ g` next/previous change; `space g s` / `space g u` stage/unstage the selected lines, `space g S` / `space g U` the whole file, `space g r` reset the selected lines to the index. |
 | Picker preview | Items that are places (files, buffers, symbols, references, diagnostics) show the file around their line beside the list. |
+| Windows | `C-w` or `space w`, then: `v` / `s` split side by side / stacked, `w` next, `h j k l` focus, `H J K L` swap, `q` close, `o` only, `n v` / `n s` split with a scratch buffer. `:vsplit` / `:vs [files]`, `:hsplit` / `:hs [files]`, `:vnew`, `:hnew`; `:q` closes the window (quits with the last). |
 | Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker), `space ?` (command palette: every action, its keys and doc; one with arguments opens `:action <name> `). `:action <invocation>` runs any action. In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
 
 Actions that take arguments, and have no default key yet: `move_char_left/right`,
@@ -930,7 +980,7 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-02. Themes, settings and plugins (milestones 30–32, ADR-33/34/35) are done. Benchmarking
+*Last updated 2026-10-02. Themes, settings, plugins, modules and splits (milestones 30–34, ADR-33–37) are done; next is the REPL plugin, then benchmarking. Benchmarking
 is **on hold**: the user was using the machine during the runs, so this session's
 numbers are provisional.*
 
@@ -983,7 +1033,7 @@ numbers are provisional.*
   7. [ ] **Benchmark again** (the user's request, 2026-10-02) against Helix and Vim,
      also with plugins on and off, and apply low-hanging optimizations that keep the
      code readable. See "Benchmarking on hold" below for where it stopped.
-  5. [ ] **Splits (windows)**, with Helix's keys: `C-w` / `space w` then `v`/`s` (split
+  5. [x] **Splits** (ADR-37, milestone 34). The plan was: with Helix's keys: `C-w` / `space w` then `v`/`s` (split
      vertically/horizontally), `h j k l` / `C-h …` (focus), `w` (next), `q` (close), `o`
      (only), `H J K L` (swap); `:vsplit`/`:hsplit` (`:vs`, `:hs`) with an optional file.
      No Vim tabs: the buffer list stays as it is. Splits will need a view per window
@@ -1080,7 +1130,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (494 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (507 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.
