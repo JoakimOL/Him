@@ -15,6 +15,7 @@ import Data.Text qualified as T
 import Him.Buffer (Buffer)
 import Him.GitState (GitInfo (..))
 import Him.History (History, emptyHistory)
+import Him.Lsp.State (DocLsp (..))
 import Him.Syntax (SyntaxInfo, noSyntax)
 import Him.Position (Pos (..))
 import Him.Selection (Selection, point, single)
@@ -60,6 +61,8 @@ data Document = Document
   , docHistory :: !History
   , docSyntax :: !SyntaxInfo
   -- ^ Highlighting ("Him.Syntax").
+  , docLsp :: !DocLsp
+  -- ^ The document's language server, if any ("Him.Lsp.State").
   , docGit :: !GitInfo
   -- ^ The file's state in git ("Him.GitState"), for gutter signs and staging.
   , docSavedBuffer :: !Buffer
@@ -82,6 +85,7 @@ newDocument path buf =
     , docTrailingNewline = True
     , docHistory = emptyHistory
     , docSyntax = noSyntax
+    , docLsp = LspUnknown
     , docGit = GitUnknown
     , docSavedBuffer = buf
     }

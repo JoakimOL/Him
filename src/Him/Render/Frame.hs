@@ -55,6 +55,8 @@ data RowKey = RowKey
   -- ^ How the line is coloured as a whole (e.g. a directory in a listing).
   , rkSyntax :: ![LineSpan]
   -- ^ Its highlighting.
+  , rkDiagnostics :: ![(Int, Int, Int)]
+  -- ^ Underlined ranges and their severity.
   }
   deriving stock (Eq, Show)
 

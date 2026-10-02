@@ -4,16 +4,19 @@ module Him.Render.Info
   ( drawInfo
   ) where
 
+import Control.Applicative ((<|>))
 import Data.IntMap.Strict qualified as IntMap
 import Data.Text qualified as T
 import Him.Editor
 import Him.Render.Frame
 import Him.Render.Theme
 
--- | Draw over the area. The rows it covers are dropped from the frame's
--- row keys, so the next frame redraws them instead of copying the popup.
-drawInfo :: Theme -> Editor -> Rect -> Frame -> Frame
-drawInfo theme ed area f = case edInfo ed of
+-- | Draw the info box, or else the popup, over the area. The rows it
+-- covers are dropped from the frame's row keys, so the next frame redraws
+-- them instead of copying the popup. A box 'AtCursor' goes below the
+-- cursor (screen position given), or above it when there is no room.
+drawInfo :: Theme -> Editor -> Rect -> Maybe (Int, Int) -> Frame -> Frame
+drawInfo theme ed area cursor f = case edInfo ed <|> edPopup ed of
   Just box | rectHeight area >= 3 && rectWidth area >= 8 -> draw box
   _ -> f
   where
@@ -28,10 +31,14 @@ drawInfo theme ed area f = case edInfo ed of
           inner = min (rectWidth area - 2) (2 + maximum [T.length title + 2, keyW + if docW > 0 then 2 + docW else 0])
           h = length shown + 2
           w = inner + 2
-          top = rectRow area + rectHeight area - h
-          left = case place of
-            BottomRight -> rectCol area + rectWidth area - w
-            BottomLeft -> rectCol area
+          (top, left) = case (place, cursor) of
+            (BottomRight, _) -> (rectRow area + rectHeight area - h, rectCol area + rectWidth area - w)
+            (AtCursor, Just (cr, cc)) ->
+              let below = cr + 1
+                  above = cr - h
+                  row = if below + h <= rectRow area + rectHeight area || above < rectRow area then below else above
+               in (row, max (rectCol area) (min cc (rectCol area + rectWidth area - w)))
+            _ -> (rectRow area + rectHeight area - h, rectCol area)
           titled = T.take inner (" " <> title <> " ")
           border l r fill t = l <> t <> T.replicate (inner - T.length t) fill <> r
           line (k, d) = T.take inner (" " <> k <> T.replicate (keyW - T.length k) " " <> (if T.null d then "" else "  " <> d))

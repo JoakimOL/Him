@@ -6,10 +6,18 @@ module Him.Runtime
   ( Runtime
   , newRuntime
   , perform
+  , shutdown
   ) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
-import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
+import Control.Monad (when)
+import Data.Text (Text)
+import Data.Text qualified as T
+import Him.Lsp.Config (ServerConfig (..), serverFor)
+import Him.Lsp.Server (Server, findRoot, sendMessage, startServer, stopServer)
+import Him.Lsp.State (ServerInfo)
+import System.Directory (makeAbsolute)
 import Control.Exception (evaluate)
 import Data.Foldable (toList)
 import Data.IORef (atomicModifyIORef', newIORef)
@@ -34,13 +42,17 @@ data Runtime = Runtime
   , rtProviders :: [SyntaxProvider]
   , rtSessions :: MVar (Map Int SyntaxSession)
   -- ^ Highlighters by document id. The editor only sees their results.
+  , rtServers :: MVar (Map Text (MVar (Either Text (Server, ServerInfo))))
+  -- ^ Language servers by key; the inner variable is filled once the
+  -- server has started (or failed to).
   }
 
 newRuntime :: [SyntaxProvider] -> (Event -> IO ()) -> IO Runtime
 newRuntime providers post = do
   jobs <- newMVar Map.empty
   sessions <- newMVar Map.empty
-  pure (Runtime post jobs providers sessions)
+  servers <- newMVar Map.empty
+  pure (Runtime post jobs providers sessions servers)
 
 -- | Carry out an effect that needs the runtime; others are ignored (the
 -- main loop handles them before).
@@ -53,7 +65,21 @@ perform rt = \case
   CancelJob key -> modifyMVar_ (rtJobs rt) $ \jobs -> do
     mapM_ killThread (Map.lookup key jobs)
     pure (Map.delete key jobs)
+  LspSend key msg -> do
+    servers <- readMVar (rtServers rt)
+    case Map.lookup key servers of
+      Just started ->
+        tryReadMVar started >>= \case
+          Just (Right (server, _)) -> sendMessage server msg
+          _ -> pure ()
+      Nothing -> pure ()
   _ -> pure ()
+
+-- | Stop every language server (when the editor quits).
+shutdown :: Runtime -> IO ()
+shutdown rt = do
+  servers <- readMVar (rtServers rt)
+  mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) (Map.elems servers)
 
 -- | Most files a picker lists (a memory guard; the scan streams).
 maxFiles :: Int
@@ -102,6 +128,26 @@ runJob rt = \case
       mapM_ ssClose (Map.lookup doc sessions)
       pure (maybe (Map.delete doc sessions) (\(_, session) -> Map.insert doc session sessions) started)
     post (EvJob (SyntaxStarted doc (fst <$> started)))
+  LspEnsure doc language file -> case serverFor language of
+    Nothing -> post (EvJob (LspUnavailable doc "no language server configured"))
+    Just config -> do
+      absolute <- makeAbsolute file
+      root <- findRoot (scRoots config) absolute
+      let key = T.pack (scCommand config <> " " <> root)
+      -- The first document for a key starts the server; others wait for it.
+      (started, fresh) <- modifyMVar (rtServers rt) $ \servers -> case Map.lookup key servers of
+        Just v -> pure (servers, (v, False))
+        Nothing -> do
+          v <- newEmptyMVar
+          pure (Map.insert key v servers, (v, True))
+      when fresh $ do
+        result <- startServer config root (post . EvJob . LspMessage key) $ do
+          modifyMVar_ (rtServers rt) (pure . Map.delete key)
+          post (EvJob (LspExited key))
+        putMVar started result
+      readMVar started >>= \case
+        Right (_, info) -> post (EvJob (LspReady doc key absolute (scLanguageId config) info))
+        Left e -> post (EvJob (LspUnavailable doc e))
   Highlight doc version buffer from to -> do
     session <- Map.lookup doc <$> readMVar (rtSessions rt)
     case session of

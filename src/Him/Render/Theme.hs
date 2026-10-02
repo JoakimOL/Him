@@ -10,6 +10,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.GitState (SignKind (..))
+import Him.Lsp.Protocol (Severity (..))
 import Him.Mode (Mode (..))
 import Him.Terminal.Ansi
 
@@ -31,6 +32,8 @@ data Theme = Theme
   -- ^ Only its foreground is used, over the row's background.
   , themeGitSign :: SignKind -> Bool -> Style
   -- ^ Gutter signs by kind; the flag is "staged" (drawn dimmer).
+  , themeDiagnostic :: Severity -> Style
+  -- ^ Gutter signs and underlines of diagnostics.
   , themeScopes :: Map Text Style
   -- ^ Styles of syntax scopes (Helix's names); see 'scopeStyle'.
   , themeDirectory :: Style
@@ -56,12 +59,18 @@ defaultTheme =
     , themePopupSelected = defaultStyle {styleBg = Indexed 24, styleFg = Indexed 255}
     , themePopupDetail = defaultStyle {styleFg = Indexed 245}
     , themeGitSign = \kind staged -> defaultStyle {styleFg = gitColor kind staged}
+    , themeDiagnostic = \sev -> defaultStyle {styleFg = Indexed (diagColor sev)}
     , themeScopes = defaultScopes
     , themeDirectory = defaultStyle {styleFg = Indexed 110, styleBold = True}
     , themeDirectoryHeader = defaultStyle {styleFg = Indexed 180, styleBold = True}
     , themeError = defaultStyle {styleFg = Ansi 9}
     }
   where
+    diagColor = \case
+      SevError -> 203
+      SevWarning -> 179
+      SevInfo -> 110
+      SevHint -> 245
     gitColor kind staged = Indexed $ case (kind, staged) of
       (SignAdded, False) -> 114
       (SignChanged, False) -> 179

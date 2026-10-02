@@ -23,6 +23,8 @@ import Him.Diff (Hunk)
 import Him.Document (LineEnding)
 import Him.GitState (GitBase)
 import Him.Invocation (Invocation)
+import Him.Json (Value)
+import Him.Lsp.State (ServerInfo)
 import Him.Picker (PickerItem)
 
 data Effect
@@ -34,6 +36,9 @@ data Effect
     -- cancelled first.
     StartJob !Job
   | CancelJob !JobKey
+  | -- | Send a message to a language server (by its key); queued, never
+    -- blocks.
+    LspSend !Text !Value
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were
@@ -55,9 +60,12 @@ data Job
     SyntaxStart !Int !Language
   | -- | Highlight lines @[from, to]@ of a document version.
     Highlight !Int !Int !Buffer !Int !Int
+  | -- | Make sure a language server runs for a document (id, language,
+    -- path), starting it if needed.
+    LspEnsure !Int !Language !FilePath
   deriving stock (Eq, Show)
 
-data JobKey = ScanJob | FilterJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int | SyntaxJob !Int
+data JobKey = ScanJob | FilterJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int | SyntaxJob !Int | LspStartJob !Int
   deriving stock (Eq, Ord, Show)
 
 jobKey :: Job -> JobKey
@@ -69,6 +77,7 @@ jobKey = \case
   GitWriteIndex d _ _ _ -> GitWriteJob d
   SyntaxStart d _ -> SyntaxJob d
   Highlight d _ _ _ _ -> SyntaxJob d
+  LspEnsure d _ _ -> LspStartJob d
 
 data JobResult
   = FilesFound !Int ![FilePath]
@@ -84,4 +93,12 @@ data JobResult
     SyntaxStarted !Int !(Maybe Text)
   | -- | Document id, version, the lines covered, and their spans.
     Highlighted !Int !Int !Int !Int !(IntMap [LineSpan])
+  | -- | A server serves the document: id, server key, absolute path,
+    -- language id, what the server can do.
+    LspReady !Int !Text !FilePath !Text !ServerInfo
+  | -- | No server for the document, and why.
+    LspUnavailable !Int !Text
+  | -- | A message from a server (a reply or a notification).
+    LspMessage !Text !Value
+  | LspExited !Text
   deriving stock (Eq, Show)

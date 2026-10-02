@@ -21,6 +21,7 @@ import Him.Commands.CommandLine qualified as CommandLine
 import Him.Commands.Directory qualified as Directory
 import Him.Commands.Edit qualified as Edit
 import Him.Commands.Git qualified as Git
+import Him.Commands.Lsp qualified as Lsp
 import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
 import Him.Commands.Picker qualified as Picker
@@ -41,6 +42,7 @@ allActions =
     <> Picker.actions
     <> Directory.actions
     <> Git.actions
+    <> Lsp.actions
     <> CommandLine.actions exCommands
 
 exCommands :: [ExCommand]
@@ -99,6 +101,12 @@ normalBindings =
        , ("space g S", "git_stage_file")
        , ("space g U", "git_unstage_file")
        , ("space g r", "git_reset_selection")
+       , ("space k", "lsp_hover")
+       , ("space x", "diagnostics_picker")
+       , ("g d", "goto_definition")
+       , ("g R", "goto_references")
+       , ("] d", "goto_next_diagnostic")
+       , ("[ d", "goto_prev_diagnostic")
        , ("] g", "goto_next_change")
        , ("[ g", "goto_prev_change")
        , ("g n", "buffer_next")

@@ -19,6 +19,7 @@ module Him.Editor
   , openBuffer
   , closeBuffer
   , modifyDocument
+  , mapDocuments
   ) where
 
 import Data.Map.Strict (Map)
@@ -27,6 +28,7 @@ import Data.Text (Text)
 import Him.Key (Key)
 import Him.Mode (Mode (..))
 import Him.Effect (Effect)
+import Him.Lsp.State (LspState, emptyLsp)
 import Him.Picker (Picker)
 import Him.Search (Direction)
 import Him.Selection (Selection)
@@ -78,8 +80,8 @@ data InfoBox = InfoBox
   }
   deriving stock (Eq, Show)
 
--- | Which corner of the text area the box sits in.
-data InfoPlace = BottomLeft | BottomRight
+-- | Where the box sits: a corner of the text area, or next to the cursor.
+data InfoPlace = BottomLeft | BottomRight | AtCursor
   deriving stock (Eq, Show)
 
 -- | The open documents form a zipper: the current one ('edDoc', with
@@ -112,6 +114,10 @@ data Editor = Editor
   -- ^ Effects requested by actions, oldest first ("Him.Effect").
   , edNextId :: !Int
   -- ^ The id the next opened document gets ('docId').
+  , edLsp :: !LspState
+  -- ^ Language servers, pending requests, diagnostics ("Him.Lsp.State").
+  , edPopup :: !(Maybe InfoBox)
+  -- ^ A box shown until the next key (e.g. hover documentation).
   , edShowHidden :: !Bool
   -- ^ Directory listings show dotfiles (@g .@ toggles).
   , edInfo :: !(Maybe InfoBox)
@@ -143,6 +149,8 @@ newEditor size doc =
     , edPicker = Nothing
     , edEffects = []
     , edNextId = 2
+    , edLsp = emptyLsp
+    , edPopup = Nothing
     , edShowHidden = False
     , edInfo = Nothing
     , edCompletions = []
@@ -218,3 +226,14 @@ modifyDocument i f ed
   | otherwise = ed {edBefore = map g (edBefore ed), edAfter = map g (edAfter ed)}
   where
     g b = if docId (bufDoc b) == i then b {bufDoc = f (bufDoc b)} else b
+
+-- | Change every open document.
+mapDocuments :: (Document -> Document) -> Editor -> Editor
+mapDocuments f ed =
+  ed
+    { edDoc = f (edDoc ed)
+    , edBefore = map g (edBefore ed)
+    , edAfter = map g (edAfter ed)
+    }
+  where
+    g b = b {bufDoc = f (bufDoc b)}

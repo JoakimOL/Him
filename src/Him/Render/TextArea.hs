@@ -17,7 +17,9 @@ import Him.Mode (Mode (..))
 import Him.Position (Pos (..))
 import Him.Render.Frame
 import Him.Render.Theme
-import Him.Terminal.Ansi (packStyle)
+import Him.Lsp.Protocol (Severity (..))
+import Him.Lsp.State (ShownDiagnostic (..), shownDiagnostics)
+import Him.Terminal.Ansi (Style (..), packStyle, unpackStyle)
 import Him.Selection
 import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
 import Him.View (View (..))
@@ -60,6 +62,13 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
         | line == 0 -> 1
         | (e : _) <- drop (line - 1) entries, deIsDir e -> 2
       _ -> 0 :: Int
+    diagnosticsByLine =
+      IntMap.fromListWith (<>) [(sdLine sd, [(sdStart sd, sdEnd sd, sdSeverity sd)]) | sd <- shownDiagnostics (edLsp ed) (docLsp doc) buf, sdLine sd >= top, sdLine sd < bottom]
+    sevRank = \case
+      SevError -> 0
+      SevWarning -> 1
+      SevInfo -> 2
+      SevHint -> 3 :: Int
     cursorStyle = packStyle (themeCursor theme)
     selectionStyle = packStyle (themeSelection theme)
 
@@ -70,13 +79,21 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
           remember (copyCells (prevRowOf screenRow) screenRow (rectCol rect) (rectWidth rect) p f)
       | otherwise = remember (putCells screenRow (rectCol rect) visible f)
       where
-        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls syntax
+        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls syntax [(a, b, sevRank sev) | (a, b, sev) <- underlines]
+        underlines = IntMap.findWithDefault [] line diagnosticsByLine
+        -- Diagnostics are underlined, in their severity's colour.
+        underlineAt i = case [sev | (a, b, sev) <- underlines, a <= i, i < b] of
+          sev : _ -> Just sev
+          [] -> Nothing
         syntax = IntMap.findWithDefault [] line (siSpans (docSyntax doc))
         -- The syntax style of each highlighted span, under the selection.
         syntaxStyles = [(lsStart sp, lsEnd sp, packStyle st) | sp <- syntax, Just st <- [scopeStyle theme (lsScope sp)]]
-        baseAt i = case [st | (a, b, st) <- syntaxStyles, a <= i, i < b] of
+        syntaxAt i = case [st | (a, b, st) <- syntaxStyles, a <= i, i < b] of
           st : _ -> st
           [] -> base
+        baseAt i = case underlineAt i of
+          Nothing -> syntaxAt i
+          Just sev -> packStyle ((unpackStyle (syntaxAt i)) {styleUnderline = True, styleFg = styleFg (themeDiagnostic theme sev)})
         cls = lineClass line
         base = case cls of
           1 -> headerStyle

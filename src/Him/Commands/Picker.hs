@@ -13,7 +13,10 @@ import Him.Action
 import Him.Effect (Effect (..), Job (..), JobKey (..), JobResult (..))
 import Him.Command
 import Him.Commands.File (openFile)
-import Him.Document (displayName)
+import Him.Buffer qualified as Buffer
+import Him.Document (Document (..), displayName)
+import Him.Position (Pos (..))
+import Him.Selection (point, single)
 import Him.Editor
 import Him.Mode (Mode (..))
 import Him.Picker
@@ -44,6 +47,12 @@ actions =
                   modify' (\e -> e {edPrompt = ExPrompt, edCmdLine = "action " <> name <> " ", edCompletions = []})
                   setMode CmdLine
               | otherwise -> request (RunAction (Invocation name []))
+            PickPosition path line col -> do
+              openFile path
+              modifyDoc $ \d ->
+                let l = max 0 (min line (Buffer.lineCount (docBuffer d) - 1))
+                    c = max 0 (min col (Buffer.lineLength l (docBuffer d)))
+                 in d {docSelection = single (point (Pos l c))}
         _ -> close
   , simple "picker_next" GPrompt "Select the next item" (onPicker (moveSelection 1))
   , simple "picker_previous" GPrompt "Select the previous item" (onPicker (moveSelection (-1)))

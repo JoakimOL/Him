@@ -34,6 +34,8 @@ data PickTarget
   | -- | Run an action (the command palette); 'True' when it needs
     -- arguments, which are then asked for on the @:@ line.
     PickAction !Text !Bool
+  | -- | A place in a file: path, line, column.
+    PickPosition !FilePath !Int !Int
   deriving stock (Eq, Show)
 
 data PickerItem = PickerItem

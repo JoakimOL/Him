@@ -71,7 +71,7 @@ render theme prev ed =
       drawCommandLine theme ed cmdR
         . drawStatusLine theme ed statusR
         . drawPicker theme ed overlay
-        . drawInfo theme ed overlay
+        . drawInfo theme ed overlay (cursorPosition ed textR)
         . drawTextArea theme prev ed textR
         . drawGutter theme ed gutterR
         $ blankFrame rows cols

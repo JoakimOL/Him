@@ -27,6 +27,7 @@ import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
 import Him.Commands.Git qualified as Git
 import Him.Commands.Picker qualified as Picker
+import Him.Commands.Lsp qualified as Lsp
 import Him.Commands.Syntax qualified as Syntax
 import Him.Info (refreshInfo)
 import Him.Runtime (Runtime, newRuntime)
@@ -67,6 +68,7 @@ run files = do
     start <- execStateT housekeeping (openAll size docs)
     mapM_ (Runtime.perform runtime) (edEffects start)
     eventLoop config runtime events start {edEffects = []}
+    Runtime.shutdown runtime
 
 -- | An editor showing the first document, with the others open behind it.
 openAll :: (Int, Int) -> [Document] -> Editor
@@ -85,7 +87,10 @@ eventLoop config runtime events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
-      let ed = ensureCursorVisible (refreshSearchPreview ed0)
+      -- Once per batch: hand the language server the text as it is now.
+      flushed <- execStateT Lsp.lspFlush ed0
+      mapM_ (Runtime.perform runtime) (edEffects flushed)
+      let ed = ensureCursorVisible (refreshSearchPreview flushed {edEffects = []})
           frame = render defaultTheme prev ed
       writeOutput (diffFrames prev frame)
       next <- atomically (readTChan events) >>= batch maxBatch ed
@@ -124,9 +129,12 @@ handleEvent config (EvJob result) = do
   Picker.applyJobResult result
   Git.applyGitResult result
   Syntax.applySyntaxResult result
+  Lsp.applyLspResult result
   runEffects config
   housekeeping
 handleEvent config (EvKey key) = do
+  -- A popup (hover) lasts until the next key.
+  modify' (\e -> e {edPopup = Nothing})
   ed <- get
   let pending = edPending ed
       keys = pending <> [key]
@@ -163,6 +171,7 @@ housekeeping = do
   modify' ensureCursorVisible
   Git.gitHousekeeping
   Syntax.syntaxHousekeeping
+  Lsp.lspHousekeeping
 
 -- | Carry out the effects the key's action requested that need the config
 -- (ADR-23). An action run this way may request more; a chain is cut off
@@ -187,6 +196,7 @@ runEffects config = go (8 :: Int)
     perform = \case
       StartJob _ -> pure ()
       CancelJob _ -> pure ()
+      LspSend _ _ -> pure ()
       RunAction inv -> either failWith boundRun (bindInvocation (cfgActions config) inv)
       OpenPalette -> modify' $ \e ->
         e {edPicker = Just (newPicker "commands" (paletteItems config (keymapMode e))), edMode = Picking}
