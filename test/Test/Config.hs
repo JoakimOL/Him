@@ -253,7 +253,7 @@ rebindTests = do
     , test "set_mode" (assertEqual Normal (edMode insertExit))
     , test "an insert-mode chord (j j) runs" (assertEqual (Normal, "a") (edMode jjExit, B.toText (docBuffer (edDoc jjExit))))
     , test "a chord's first key not followed by the rest is typed" (assertEqual (Insert, "ajojk") (edMode jTyped, B.toText (docBuffer (edDoc jTyped))))
-    , test "a chord's first key waits for the next" (assertEqual ("", [plain (KChar 'j')], Nothing) (B.toText (docBuffer (edDoc jPending)), edPending jPending, edInfo jPending))
+    , test "a chord's first key waits for the next, with the key menu" (assertEqual ("", [plain (KChar 'j')], True) (B.toText (docBuffer (edDoc jPending)), edPending jPending, isJust (edInfo jPending)))
     , test "space ? opens the palette" (assertEqual (Just "commands", Picking) (pkTitle <$> edPicker palette, edMode palette))
     , test "the palette runs the chosen action" (assertEqual (Pos 0 0, Normal) (paletteRan, edMode paletteDone))
     , test "an action with arguments is completed on the : line" (assertEqual (CmdLine, "action goto_line ") (edMode paletteArgs, edCmdLine paletteArgs))
