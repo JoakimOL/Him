@@ -24,7 +24,17 @@ promptLabel ed = case edPrompt ed of
   SearchPrompt Forward _ -> "/"
   SearchPrompt Backward _ -> "?"
   SelectPrompt _ -> "select:"
+  FilePrompt act -> fileActionLabel act
 
 commandLineCursor :: Editor -> Rect -> (Int, Int)
 commandLineCursor ed rect =
   (rectRow rect, rectCol rect + min (rectWidth rect - 1) (T.length (promptLabel ed) + T.length (edCmdLine ed)))
+
+-- | What the command line shows for a file operation.
+fileActionLabel :: FileAction -> T.Text
+fileActionLabel = \case
+  NewFile _ -> "new file: "
+  NewDirectory _ -> "new directory: "
+  RenameEntry _ old -> "rename " <> T.pack old <> " to: "
+  DeleteEntries _ [name] -> "delete " <> T.pack name <> "? [y/N] "
+  DeleteEntries _ names -> "delete " <> T.pack (show (length names)) <> " entries? [y/N] "

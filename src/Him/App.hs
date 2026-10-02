@@ -46,7 +46,7 @@ run :: [FilePath] -> IO ()
 run files = do
   config <- either (die . T.unpack) pure defaultConfig
   -- Load before entering raw mode, so errors print normally.
-  docs <- traverse (\path -> loadPath path >>= either (die . T.unpack) pure) files
+  docs <- traverse (\path -> loadPath False path >>= either (die . T.unpack) pure) files
   logMsg ("starting, files = " <> show files)
   withRawTerminal $ do
     events <- newTChanIO

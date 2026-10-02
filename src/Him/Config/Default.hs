@@ -134,6 +134,11 @@ directoryBindings =
   , ("-", "directory_parent")
   , ("backspace", "directory_parent")
   , ("g r", "directory_refresh")
+  , ("g .", "directory_toggle_hidden")
+  , ("a", "directory_new_file")
+  , ("+", "directory_new_directory")
+  , ("r", "directory_rename")
+  , ("d", "directory_delete")
   ]
 
 pickerBindings :: [(Text, Text)]

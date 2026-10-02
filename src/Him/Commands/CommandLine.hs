@@ -12,6 +12,7 @@ import Data.Text qualified as T
 import System.Directory (doesDirectoryExist, listDirectory)
 import Him.Action
 import Him.Command
+import Him.Commands.Directory (runFileAction)
 import Him.Commands.Search (cancelSearch, executeSearch, executeSelect)
 import Him.Editor (Editor (..), PromptKind (..))
 import Him.Ex (ExArgs (..), ExCommand (..), runExLine)
@@ -37,6 +38,7 @@ actions exTable =
         ExPrompt -> runExLine exTable line
         SearchPrompt dir origin -> executeSearch dir origin line
         SelectPrompt origin -> executeSelect origin line
+        FilePrompt act -> runFileAction act line
   , simple "cmdline_complete" GPrompt "Complete the command name or path" (complete exTable)
   , action "ex" GPrompt "Run a : command, e.g. ex \"w\"" (text "command") (runExLine exTable)
   ]
@@ -49,6 +51,7 @@ cancel = do
   case prompt of
     SearchPrompt _ origin -> cancelSearch origin
     SelectPrompt origin -> cancelSearch origin
+    FilePrompt _ -> pure ()
     ExPrompt -> pure ()
 
 cmdlineInsert :: Char -> EditorM ()
@@ -63,6 +66,7 @@ setCmdLine t = modify' $ \e ->
     , edPreviewPending = case edPrompt e of
         SearchPrompt {} -> True
         SelectPrompt {} -> True
+        FilePrompt {} -> False
         ExPrompt -> False
     }
 

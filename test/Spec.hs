@@ -1,13 +1,14 @@
 module Main (main) where
 
+import Control.Monad ((<=<))
 import Control.Monad.Trans.State.Strict (execStateT)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (toLazyByteString)
 import Data.ByteString.Lazy qualified as BL
 import Data.Foldable (foldlM)
-import Data.List (nub, sort)
-import Data.Maybe (fromMaybe)
+import Data.List (isPrefixOf, nub, sort)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import Him.Action
 import Him.App (handleEvent)
@@ -25,11 +26,11 @@ import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
-import System.Directory (canonicalizePath, createDirectoryIfMissing, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
+import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesPathExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
 import Him.FileTree (listFiles)
 import Him.Picker
 import Him.Ignore
-import Him.Directory (listingDocument)
+import Him.Directory (entriesIn, entryAt, listingDocument)
 import Him.Key
 import Him.Keymap
 import Him.Mode (Mode (..))
@@ -182,6 +183,44 @@ openBufferTests = do
   refreshed <- keys "g r" listing
   cwd <- canonicalizePath "."
   removeDirectoryRecursive dtree
+  -- File operations in a listing.
+  let otree = dir <> "/him-test-ops"
+      typeLine t ed = foldlM run ed (map charKey (T.unpack t) <> [plain KEnter])
+      find t = typeLine t <=< keys "/"
+      exists p = doesPathExist (otree <> "/" <> p)
+      entryLine ed = (\e -> deName e) <$> entryAt (cursorLine ed) (edDoc ed)
+  createDirectoryIfMissing True otree
+  mapM_ (\f -> writeFile (otree <> "/" <> f) "x\n") ["a.txt", "b.txt", "f1", "f2", ".dotfile"]
+  ops <- ex ("o " <> T.pack otree) start
+  canonOps <- canonicalizePath otree
+  created <- typeLine "new.txt" =<< keys "a" ops
+  createdDeep <- typeLine "deep/x.txt" =<< keys "a" ops
+  createdDir <- typeLine "made/" =<< keys "a" ops
+  createdPlus <- typeLine "plus" =<< keys "+" ops
+  createdTwice <- typeLine "a.txt" =<< keys "a" ops
+  newExists <- mapM exists ["new.txt", "deep/x.txt", "made", "plus"]
+  -- Open a.txt, go back to the listing, rename a.txt: the buffer follows.
+  withA <- keys "space d" =<< keys "ret" =<< find "a.txt" ops
+  renamed <- typeLine "renamed.txt" =<< keys "r backspace backspace backspace backspace backspace" =<< find "a.txt" withA
+  renameExists <- mapM exists ["a.txt", "renamed.txt"]
+  notDeleted <- typeLine "n" =<< keys "d" =<< find "b.txt" renamed
+  bStill <- exists "b.txt"
+  deleted <- typeLine "y" =<< keys "d" =<< find "b.txt" renamed
+  bGone <- exists "b.txt"
+  deletedTwo <- typeLine "y" =<< keys "x x d" =<< find "f1" deleted
+  fsGone <- mapM exists ["f1", "f2"]
+  deleteUp <- keys "g g j d" deleted
+  hiddenShown <- keys "g ." ops
+  -- Deleting a link to a directory removes the link, not the directory.
+  let outside = dir <> "/him-test-ops-target"
+  createDirectoryIfMissing True outside
+  writeFile (outside <> "/keep.txt") "keep\n"
+  createDirectoryLink outside (otree <> "/link")
+  linkDeleted <- typeLine "y" =<< keys "d" =<< find "link" =<< keys "g r" ops
+  linkGone <- not <$> exists "link"
+  targetKept <- doesPathExist (outside <> "/keep.txt")
+  removeDirectoryRecursive outside
+  removeDirectoryRecursive otree
   mapM_ removeFile [fileA, fileB]
   pure
     [ test "zipper: open, switch and close" $
@@ -220,6 +259,22 @@ openBufferTests = do
     , test "deleting is refused in a listing" (assertEqual (lines' listing) (lines' refusedDelete))
     , test ":w is refused in a listing" (assertEqual (Just (Status Error "a directory listing cannot be written")) (edStatus refusedWrite))
     , test "g r lists the directory again" (assertEqual ["sub/", "a.txt", "b.txt", "new.txt"] (drop 2 (lines' refreshed)))
+    , test "a creates files, directories and parents; + creates a directory" (assertEqual [True, True, True, True] newExists)
+    , test "the cursor lands on what was created" (assertEqual [Just "new.txt", Just "deep", Just "made", Just "plus"] (map entryLine [created, createdDeep, createdDir, createdPlus]))
+    , test "creating an existing name is refused" (assertEqual (Just (Status Error "a.txt already exists")) (edStatus createdTwice))
+    , test "r renames, and open buffers follow" $
+        assertEqual ([False, True], Just "renamed.txt", [canonOps <> "/renamed.txt"])
+          (renameExists, entryLine renamed, [p | Just p <- map (docPath . bufDoc) (fst (buffers renamed)), (canonOps <> "/") `isPrefixOf` p])
+    , test "d asks first; anything but y keeps the file" (assertEqual (True, Just (Status Info "nothing deleted")) (bStill, edStatus notDeleted))
+    , test "d y deletes" (assertEqual (False, Just (Status Info "deleted 1 entry")) (bGone, edStatus deleted))
+    , test "d deletes every selected entry" (assertEqual ([False, False], Just (Status Info "deleted 2 entries")) (fsGone, edStatus deletedTwo))
+    , test "d on a link to a directory removes only the link" (assertEqual (True, True, Just (Status Info "deleted 1 entry")) (linkGone, targetKept, edStatus linkDeleted))
+    , test "d on .. deletes nothing" (assertEqual (Just (Status Error "no entries selected")) (edStatus deleteUp))
+    , test "dotfiles are hidden until g ." $
+        assertEqual (True, Just ".dotfile")
+          ( any ("(1 hidden" `T.isInfixOf`) (take 1 (lines' ops))
+          , (\e -> deName e) <$> listToMaybe [e | e <- entriesIn 2 100 (edDoc hiddenShown), "." `isPrefixOf` deName e]
+          )
     , test "listFiles lists files sorted, skipping hidden entries" (assertEqual ["a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt"] listed)
     , test "listFiles stops at the limit" (assertEqual ["a.txt", "b.txt"] listedFew)
     , test "listFiles honours .gitignore and .ignore at every level" $
@@ -784,7 +839,7 @@ widthTests =
 renderTests :: [Test]
 renderTests =
   [ test "a listing colours its header and directories" $
-      let doc = listingDocument "/x" [DirEntry "f" False, DirEntry "d" True]
+      let doc = listingDocument "/x" 0 [DirEntry "f" False, DirEntry "d" True]
           f = render defaultTheme Nothing (newEditor (8, 30) doc)
           -- Column 5: past the gutter and the cursor cell.
           styleOn row = fmap cellStyle (Seq.lookup 5 =<< Seq.lookup row (frameCells f))

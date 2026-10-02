@@ -4,6 +4,7 @@ module Him.Editor
   , Status (..)
   , Severity (..)
   , PromptKind (..)
+  , FileAction (..)
   , InfoBox (..)
   , InfoPlace (..)
   , newEditor
@@ -48,6 +49,20 @@ data PromptKind
   | -- | Select the matches of a pattern inside the selection (Helix @s@),
     -- with the selection to restore when cancelled.
     SelectPrompt !Selection
+  | -- | A file operation in a directory listing, waiting for a name or a
+    -- confirmation.
+    FilePrompt !FileAction
+  deriving stock (Eq, Show)
+
+-- | File operations in a directory listing ("Him.Commands.Directory").
+-- The first field is always the listed directory.
+data FileAction
+  = NewFile !FilePath
+  | NewDirectory !FilePath
+  | -- | The entry's current name.
+    RenameEntry !FilePath !FilePath
+  | -- | The entries to delete; the prompt asks for @y@.
+    DeleteEntries !FilePath ![FilePath]
   deriving stock (Eq, Show)
 
 -- | A popup listing what can be typed next: the keys after a prefix such
@@ -91,6 +106,8 @@ data Editor = Editor
   -- once before the next render, not for every key of a burst.
   , edPicker :: !(Maybe Picker)
   -- ^ The open picker, shown in 'Picking' mode.
+  , edShowHidden :: !Bool
+  -- ^ Directory listings show dotfiles (@g .@ toggles).
   , edInfo :: !(Maybe InfoBox)
   , edCompletions :: ![Text]
   -- ^ Candidates from the last @tab@ on the command line, shown until the
@@ -118,6 +135,7 @@ newEditor size doc =
     , edPrompt = ExPrompt
     , edPreviewPending = False
     , edPicker = Nothing
+    , edShowHidden = False
     , edInfo = Nothing
     , edCompletions = []
     , edRegisters = Map.empty

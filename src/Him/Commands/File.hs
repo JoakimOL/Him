@@ -91,8 +91,9 @@ openFile path = do
   open <- liftIO (traverse (traverse canonical . docPath . bufDoc) bs)
   case lookup (Just want) (zip open [0 ..]) of
     Just i -> modify' (gotoBuffer i)
-    Nothing ->
-      liftIO (loadPath path) >>= \case
+    Nothing -> do
+      showHidden <- gets edShowHidden
+      liftIO (loadPath showHidden path) >>= \case
         Left e -> failWith ("could not open " <> T.pack path <> ": " <> e)
         Right doc -> modify' (openBuffer doc)
   where
