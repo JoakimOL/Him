@@ -94,6 +94,8 @@ tests:
     - containers
     - directory
     - filepath
+    - process
     - stm
     - text
     - transformers
+    - unix

@@ -35,8 +35,10 @@ import System.Exit (ExitCode (..))
 import System.IO (hClose, hSetBinaryMode)
 import System.Process (CreateProcess (..), StdStream (..), createProcess, proc, readProcessWithExitCode, terminateProcess, waitForProcess)
 
+-- | Stateless: every turn sends the whole history, and tool calls come with
+-- the finished reply.
 anthropicProvider :: ChatProvider
-anthropicProvider = ChatProvider "anthropic" send
+anthropicProvider = ChatProvider "anthropic" (pure (ChatSession send (\_ _ _ -> pure ()) (pure ())))
 
 -- | The request body: streaming, adaptive thinking at the configured
 -- effort, the server-side fallback for refusals, and the tools with

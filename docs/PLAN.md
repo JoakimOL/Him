@@ -900,6 +900,53 @@ edits go through `applyEdits` (each range's pair is next to it). Tree-sitter obj
 - **`Runtime` now takes the `Config`** (`newRuntime config post`, `reconfigure`), instead
   of one argument and one setter per table.
 
+**ADR-42: Claude Code as a chat provider, with him's tools over MCP.**
+`[chat] provider = "claude-code"` is the default. It uses the `claude` program you are
+logged in to, so no API key is needed, and it keeps the approve-before-writing design
+of ADR-41.
+
+- **Sessions.** Providers now start a session per chat buffer (`cpStart` →
+  `ChatSession { sessSend, sessAnswer, sessClose }`), like syntax providers. The API
+  provider's session is stateless. Claude Code's keeps one `claude -p` process with
+  streaming JSON in and out.
+  - A cancelled turn ends the process, and the next turn uses `--resume <session id>`.
+  - A conversation that starts over (`:chat-new`) starts a new session.
+- **Tools.** Claude Code's own editing and command tools are off: `--tools Grep,Glob`
+  (read-only search) and `--permission-mode dontAsk` (anything not allowed is denied,
+  never asked). Its file tools are him's, served over MCP:
+  `--mcp-config` names `him --mcp-bridge DIR`, and `--strict-mcp-config` ignores the
+  user's other MCP servers.
+- **The bridge.** Claude Code starts MCP servers itself, over stdio, so the server can't
+  be the running editor. `Him.Mcp` is a small bridge that speaks MCP (newline-delimited
+  JSON-RPC: `initialize`, `ping`, `tools/list`, `tools/call`) and forwards each tool
+  call to the editor. `mcpStep` is the pure part.
+- **Bridge ↔ editor.** Two named pipes in a temporary directory: `calls` and `answers`,
+  one JSON object per line. The boot libraries have no sockets, and `unix` has named
+  pipes.
+  - GHC opens files non-blocking. On a named pipe, that makes a write-open fail with
+    no reader, and a read-open see end-of-file at once.
+  - So the editor opens both pipes **read-write** (Linux allows it; it never blocks),
+    before Claude Code starts. The bridge's opens always find this end, and a bridge
+    restart is invisible to the editor.
+  - Call ids carry the bridge's process id, so an answer left behind by a bridge that
+    died is ignored by the next.
+- **Live tool calls.** A call arrives during the turn as `ChatToolCall`.
+  - Reads are answered at once.
+  - An edit becomes a pending edit (ADR-41) and is answered when you approve or deny
+    it. Claude Code waits meanwhile and goes on by itself afterwards, in the same turn.
+  - The batch path of the API provider (tool calls with the finished reply, results
+    with the next request) is unchanged. Both share `runCall`.
+- **Output.** Text streams from `stream_event` lines (`--include-partial-messages`). The
+  use of its own tools shows as `[Grep]`, and the `result` line ends the turn (or
+  fails it).
+- **Not tried against the live service** (the user tests live models). The tests cover:
+  - Claude Code's output shapes;
+  - the MCP messages;
+  - a real round trip, client → bridge → named pipes → editor → answer;
+  - the live approve flow with a fake session that waits for answers like Claude Code.
+
+  `him --mcp-bridge` was also checked by hand, with a scripted MCP handshake.
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -962,7 +1009,7 @@ Pure modules are marked *(pure)*.
 | `Him.Diff`, `Him.GitState`, `Him.Git` | Line diffs, a document's git state and signs *(pure)*; running git (ADR-25). |
 | `Him.Lsp.*` | The LSP client: protocol, state, sync, edits *(pure)*, server processes, the server table (ADR-29). |
 | `Him.Repl`, `Him.Repl.Process` | REPL config and state *(pure)*; the process (ADR-38). |
-| `Him.Chat`, `Him.Chat.Tools`, `Him.Chat.Anthropic` | The chat provider interface and state, the model's tools and pending edits *(pure)*; the Claude API provider over curl (ADR-41). |
+| `Him.Chat`, `Him.Chat.Tools`, `Him.Chat.Anthropic`, `Him.Chat.ClaudeCode`, `Him.Mcp` | The chat provider interface (sessions) and state, the model's tools and pending edits *(pure)*; the Claude API provider over curl (ADR-41); the Claude Code provider and the MCP bridge (`him --mcp-bridge`) that serves him's tools to it (ADR-42). |
 
 ## 5. Development goals / milestones
 
@@ -1057,6 +1104,8 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **36. Match mode.** `m m`, `m s`, `m r`, `m d`, `m i`, `m a`; `I` and `A` (ADR-40).
 - [x] **37. AI chat plugin.** A chat beside the code; the model's edits wait for
   approval in the editor (ADR-41).
+- [x] **38. Claude Code provider.** The chat through `claude`, with him's tools served
+  over MCP by `him --mcp-bridge` (ADR-42).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
@@ -1125,10 +1174,11 @@ them in the editor.
 ## 8. Where to pick up
 
 *Last updated 2026-10-02.* Everything the user asked for so far is done; the latest
-work is match mode and `I` / `A` (ADR-40), the AI chat plugin (ADR-41), and a sweep of
-the repository and the documents.
+work is match mode and `I` / `A` (ADR-40), the AI chat plugin (ADR-41) with Claude
+Code as its default provider over MCP (ADR-42), and a sweep of the repository and the
+documents.
 
-- **State:** milestones 1–37 (§5) and ADR-1…41 (§3). `make test` runs 544 tests (pure
+- **State:** milestones 1–38 (§5) and ADR-1…42 (§3). `make test` runs 552 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).
@@ -1136,9 +1186,13 @@ the repository and the documents.
   `him` and `him-lite`, plain text and an IDE-like setup). Open items there: the first
   paint of a large plain file (Helix 23 vs him 30 ms), per-key latency against Vim
   (0.5 vs about 1.1 ms), and parsing large diagnostic lists on the main loop.
-- **The chat plugin has not been tried against the real API** (no key on this
-  machine, and the user tests live models themselves). It needs `ANTHROPIC_API_KEY`
-  (or `ANTHROPIC_AUTH_TOKEN`, or `ant auth login`); `[chat]` sets the model and effort.
+- **The chat plugin has not been tried against a live model** (the user tests live
+  models themselves). The default provider, `claude-code`, needs the `claude` program
+  and a login; `provider = "anthropic"` needs `ANTHROPIC_API_KEY` (or
+  `ANTHROPIC_AUTH_TOKEN`, or `ant auth login`). `[chat]` sets the model and effort.
+  Things to watch on the first live run: Claude Code's stream-json input format for
+  user messages, and that `--tools Grep,Glob` plus `--allowedTools mcp__him__*` gives
+  it exactly him's tools (`Him.Chat.ClaudeCode.claudeArgs`).
 - **Ideas, roughly by value:**
   1. Regex search and `S` (split on a pattern), on `Him.Regex`.
   2. Incremental tree-sitter parsing (the buffer's `changeBetween` is ready) and
@@ -1168,6 +1222,8 @@ the repository and the documents.
     the same document; it is clamped (ADR-37).
   - A chat edit's lines are tracked by line number; editing above a pending edit by
     hand before deciding it moves it (ADR-41).
+  - The MCP bridge's pipes are opened read-write by the editor, which Linux allows but
+    POSIX leaves undefined (ADR-42).
 - **Working rules:**
   - Revert temporary instrumentation by editing it out (or `git checkout` on a clean
     tree only).

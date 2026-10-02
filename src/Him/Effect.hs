@@ -68,6 +68,9 @@ data Effect
     -- already running for it is cancelled).
     ChatSend !Int !ChatRequest
   | ChatCancel !Int
+  | -- | Answer a tool call the model waits for (chat buffer, call id, is it
+    -- an error, the result).
+    ChatAnswer !Int !Text !Bool !Text
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were

@@ -324,7 +324,8 @@ defaultConfigText =
       <> concatMap serverBlock (Map.toList defaultServers)
       <> concatMap replBlock (Map.toList defaultRepls)
       <> [ ""
-         , "[chat]   # the AI chat plugin (space c c); needs ANTHROPIC_API_KEY (or `ant auth login`)"
+         , "[chat]   # the AI chat plugin (space c c)"
+         , "# provider: \"claude-code\" (the claude program you are logged in to) or \"anthropic\" (the API; ANTHROPIC_API_KEY)"
          , "provider = " <> quoteString (ccProvider defaultChatConfig)
          , "model = " <> quoteString (ccModel defaultChatConfig)
          , "effort = " <> quoteString (ccEffort defaultChatConfig) <> "   # low, medium, high, xhigh or max"

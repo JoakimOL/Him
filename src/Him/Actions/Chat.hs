@@ -245,6 +245,7 @@ applyChatResult :: JobResult -> EditorM ()
 applyChatResult = \case
   ChatReply i ev -> case ev of
     ChatText t -> say i t
+    ChatToolCall call -> liveCall i call
     ChatFailed e -> do
       modify' (modifyChat i (\c -> c {csStatus = ChatIdle}))
       say i ("\n[error: " <> e <> "]\n\n" <> prompt)
@@ -270,44 +271,62 @@ appendResults :: Int -> [Value] -> EditorM ()
 appendResults i results =
   modify' (modifyChat i (\c -> c {csHistory = csHistory c <> [object [("role", JString "user"), ("content", JArray results)]], csResults = [], csEdits = []}))
 
--- | Run a turn's tool calls: reads at once, edits as pending edits.
+-- | Run a turn's tool calls (the API provider: they came with the finished
+-- reply): reads at once, edits as pending edits; the results go back with
+-- the next request.
 runCalls :: Int -> [ToolCall] -> EditorM ()
 runCalls i calls = do
-  root <- liftIO getCurrentDirectory
-  results <- forM calls $ \call -> case parseToolCall call of
-    Left e -> pure (tcId call, Just (toolResult (tcId call) True e))
-    Right req -> case req of
-      ListFiles -> do
-        files <- liftIO (listFiles (defaultWalk 2000) root)
-        pure (tcId call, Just (toolResult (tcId call) False (T.unlines (map T.pack files))))
-      ReadFile p -> withPath root p call $ \path -> do
-        text <- readProjectFile path
-        pure (tcId call, Just (either (toolResult (tcId call) True) (toolResult (tcId call) False) text))
-      EditFile p old new -> withPath root p call $ \path -> do
-        target <- openTarget path
-        number <- nextNumber i
-        d <- gets (find ((== target) . docId) . allDocuments)
-        case d >>= either (const Nothing) Just . proposeEdit number (tcId call) path old new of
-          Just (pe, d') -> pending i pe d'
-          Nothing ->
-            pure (tcId call, Just (toolResult (tcId call) True (either id (const "") (maybe (Left "the file could not be opened") (proposeEdit number (tcId call) path old new) d))))
-      WriteFile p content -> withPath root p call $ \path -> do
-        target <- openTarget path
-        number <- nextNumber i
-        gets (find ((== target) . docId) . allDocuments) >>= \case
-          Just d -> let (pe, d') = proposeWrite number (tcId call) path content d in pending i pe d'
-          Nothing -> pure (tcId call, Just (toolResult (tcId call) True "the file could not be opened"))
+  results <- forM calls $ \call ->
+    runCall i call >>= \case
+      Left (isError, text) -> pure (tcId call, Just (toolResult (tcId call) isError text))
+      Right () -> pure (tcId call, Nothing)
   modify' (modifyChat i (\c -> c {csResults = results}))
   if all (isJust . snd) results
     then finishTurn i
-    else do
-      modify' (modifyChat i (\c -> c {csStatus = ChatDeciding}))
-      say i "[space c a: approve the next edit, space c d: deny it; A / D: all of them]\n"
-      showNextEdit i
+    else awaitDecisions i
+
+-- | A tool call the model waits for now (Claude Code over MCP, ADR-42):
+-- answered at once, or when its edit is decided.
+liveCall :: Int -> ToolCall -> EditorM ()
+liveCall i call =
+  runCall i call >>= \case
+    Left (isError, text) -> request (ChatAnswer i (tcId call) isError text)
+    Right () -> awaitDecisions i
+
+awaitDecisions :: Int -> EditorM ()
+awaitDecisions i = do
+  modify' (modifyChat i (\c -> c {csStatus = ChatDeciding}))
+  say i "[space c a: approve the next edit, space c d: deny it; A / D: all of them]\n"
+  showNextEdit i
+
+-- | Run one tool call: its result, or 'Right' when it became a pending edit.
+runCall :: Int -> ToolCall -> EditorM (Either (Bool, Text) ())
+runCall i call = do
+  root <- liftIO getCurrentDirectory
+  case parseToolCall call of
+    Left e -> pure (Left (True, e))
+    Right req -> case req of
+      ListFiles -> do
+        files <- liftIO (listFiles (defaultWalk 2000) root)
+        pure (Left (False, T.unlines (map T.pack files)))
+      ReadFile p -> withPath root p $ \path -> either (\e -> Left (True, e)) (\t -> Left (False, t)) <$> readProjectFile path
+      EditFile p old new -> withPath root p $ \path -> do
+        target <- openTarget path
+        number <- nextNumber i
+        d <- gets (find ((== target) . docId) . allDocuments)
+        case maybe (Left "the file could not be opened") (proposeEdit number (tcId call) path old new) d of
+          Right (pe, d') -> Right () <$ pending i pe d'
+          Left e -> pure (Left (True, e))
+      WriteFile p content -> withPath root p $ \path -> do
+        target <- openTarget path
+        number <- nextNumber i
+        gets (find ((== target) . docId) . allDocuments) >>= \case
+          Just d -> let (pe, d') = proposeWrite number (tcId call) path content d in Right () <$ pending i pe d'
+          Nothing -> pure (Left (True, "the file could not be opened"))
   where
-    withPath root p call k = case projectPath root p of
+    withPath root p k = case projectPath root p of
       Right path -> k path
-      Left e -> pure (tcId call, Just (toolResult (tcId call) True e))
+      Left e -> pure (Left (True, e))
 
 nextNumber :: Int -> EditorM Int
 nextNumber i = do
@@ -316,12 +335,11 @@ nextNumber i = do
   pure n
 
 -- | Record a pending edit: the document changed, the chat shows the diff.
-pending :: Int -> PendingEdit -> Document -> EditorM (Text, Maybe Value)
+pending :: Int -> PendingEdit -> Document -> EditorM ()
 pending i pe d' = do
   modify' (modifyDocument (docId d') (const d'))
   modify' (modifyChat i (\c -> c {csEdits = csEdits c <> [pe]}))
   say i ("\n" <> editSummary pe)
-  pure (peToolId pe, Nothing)
 
 -- | A path the model gave, inside the project (relative to it).
 projectPath :: FilePath -> FilePath -> Either Text FilePath
@@ -388,35 +406,42 @@ decideAll approve =
       afterDecision (docId d)
     _ -> failWith "no pending edits"
 
--- | Keep (and save) or undo one edit, and record its tool result.
+-- | Keep (and save) or undo one edit, and record its tool result (or,
+-- for a call the model waits for, answer it).
 decide :: Int -> Bool -> PendingEdit -> EditorM ()
 decide i approve pe = do
-  result <-
+  (isError, text) <-
     if approve
       then
         gets (find ((== peDoc pe) . docId) . allDocuments) >>= \case
-          Nothing -> pure (toolResult (peToolId pe) True "the file's buffer was closed before the edit was approved")
+          Nothing -> pure (True, "the file's buffer was closed before the edit was approved")
           Just d ->
             liftIO (saveDocument (pePath pe) d) >>= \case
-              Left e -> pure (toolResult (peToolId pe) True ("approved, but saving failed: " <> e))
+              Left e -> pure (True, "approved, but saving failed: " <> e)
               Right _ -> do
                 modify' (modifyDocument (peDoc pe) (\doc -> doc {docDirty = False, docSavedBuffer = docBuffer doc, docSaves = docSaves doc + 1}))
-                pure (toolResult (peToolId pe) False ("The user approved the edit; " <> T.pack (pePath pe) <> " is saved."))
+                pure (False, "The user approved the edit; " <> T.pack (pePath pe) <> " is saved.")
       else do
         modify' (modifyDocument (peDoc pe) (revertEdit pe))
-        pure (toolResult (peToolId pe) False "The user rejected this edit; the file is unchanged.")
+        pure (False, "The user rejected this edit; the file is unchanged.")
+  batch <- gets (maybe False (elem (peToolId pe) . map fst . csResults . snd) . chatOf)
   modify' $ modifyChat i $ \c ->
     c
       { csEdits = [if peNumber e == peNumber pe then e {peDecision = if approve then Approved else Denied} else e | e <- csEdits c]
-      , csResults = [(k, if k == peToolId pe then Just result else r) | (k, r) <- csResults c]
+      , csResults = [(k, if k == peToolId pe then Just (toolResult k isError text) else r) | (k, r) <- csResults c]
       }
+  if batch then pure () else request (ChatAnswer i (peToolId pe) isError text)
   say i ("[#" <> T.pack (show (peNumber pe)) <> (if approve then " approved]\n" else " denied]\n"))
 
 afterDecision :: Int -> EditorM ()
 afterDecision i = do
   cs <- gets (fmap snd . chatOf)
   case cs of
-    Just c | all (isJust . snd) (csResults c) -> finishTurn i
+    Just c
+      | not (null (csResults c)), all (isJust . snd) (csResults c) -> finishTurn i
+      -- Calls the model waits for: once all are decided, it goes on by itself.
+      | null (csResults c), all ((/= Undecided) . peDecision) (csEdits c) ->
+          modify' (modifyChat i (\st -> st {csStatus = ChatWaiting, csEdits = []}))
     _ -> showNextEdit i
 
 -- | Put the editor window on the next undecided edit.

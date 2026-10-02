@@ -6,10 +6,11 @@ module Test.Chat
   ) where
 
 import Control.Exception (finally)
+import Control.Monad (when)
 import Control.Monad.Trans.State.Strict (execStateT)
 import Data.ByteString.Char8 qualified as BC
 import Data.Foldable (foldlM)
-import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
+import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, mapAccumL)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -18,6 +19,14 @@ import Data.Text.IO qualified as TIO
 import Him.Buffer qualified as B
 import Him.Chat
 import Him.Chat.Anthropic (newStream, requestBody, streamEnd, streamStep)
+import Him.Chat.ClaudeCode (claudeArgs, claudeEvent, serveToolPipes)
+import Him.Mcp (McpStep (..), answersPipe, callsPipe, mcpStep, runBridgeWith)
+import Control.Concurrent (forkIO)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
+import System.IO (hFlush)
+import System.Posix.Files (createNamedPipe, ownerReadMode, ownerWriteMode, unionFileModes)
+import System.Process (createPipe)
+import System.Timeout (timeout)
 import Him.Chat.Tools
 import Him.Config (Config (..))
 import Him.Config.Default (defaultConfig)
@@ -27,14 +36,141 @@ import Him.Event (Event (..))
 import Him.Json
 import Him.Key (parseKeys)
 import Him.Session (handleEvent)
-import System.Directory (createDirectoryIfMissing, getCurrentDirectory, getTemporaryDirectory, removeDirectoryRecursive, setCurrentDirectory)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, getCurrentDirectory, getTemporaryDirectory, removeDirectoryRecursive, setCurrentDirectory)
 import Test.Harness
 import Test.Util
 
 chatTests :: IO [Test]
 chatTests = do
   flow <- flowTests
-  pure (pureTests <> flow)
+  bridge <- bridgeTests
+  live <- liveTests
+  pure (pureTests <> claudeCodeTests <> flow <> bridge <> live)
+
+-- | Claude Code's output (recorded shapes) and the MCP messages.
+claudeCodeTests :: [Test]
+claudeCodeTests =
+  [ test "Claude Code's stream: text as it comes, its own tools noted, the result ends the turn" $
+      let ev t = object [("type", JString "stream_event"), ("event", t)]
+          textStart = ev (object [("type", JString "content_block_start"), ("content_block", object [("type", JString "text")])])
+          delta t = ev (object [("type", JString "content_block_delta"), ("delta", object [("type", JString "text_delta"), ("text", JString t)])])
+          toolStart n = ev (object [("type", JString "content_block_start"), ("content_block", object [("type", JString "tool_use"), ("name", JString n)])])
+          lines' = [textStart, delta "Hi", toolStart "Grep", toolStart "mcp__him__read_file", textStart, delta "Done", object [("type", JString "result"), ("subtype", JString "success")]]
+          (events, _) = foldl (\(acc, seen) v -> let (es, seen') = claudeEvent v seen in (acc <> es, seen')) ([], False) lines'
+       in assertEqual
+            [ChatText "Hi", ChatText "\n[Grep]\n", ChatText "\n\n", ChatText "Done", ChatFinished "end_turn" (object [("role", JString "assistant"), ("content", JArray [])]) []]
+            events
+  , test "a failed Claude Code turn fails the chat's turn" $
+      assertEqual [ChatFailed "rate limited"] (fst (claudeEvent (object [("type", JString "result"), ("is_error", JBool True), ("result", JString "rate limited")]) True))
+  , test "claude runs with him's tools only, read-only search, and nothing that asks" $
+      let args = claudeArgs "/bin/him" "/tmp/x" defaultChatConfig "sys" (Just "abc")
+          after flag = case dropWhile (/= flag) args of _ : v : _ -> Just v; _ -> Nothing
+       in assertEqual
+            (Just "Grep,Glob", Just "dontAsk", True, Just "abc", True)
+            (after "--tools", after "--permission-mode", "--strict-mcp-config" `elem` args, after "--resume", maybe False ("mcp__him__edit_file" `T.isInfixOf`) (T.pack <$> after "--allowedTools"))
+  , test "MCP: initialize, tools/list in MCP's shape, tools/call forwarded, unknown methods, notifications" $
+      let req m ps = object [("jsonrpc", JString "2.0"), ("id", JInt 1), ("method", JString m), ("params", ps)]
+          initReply = mcpStep (req "initialize" (object [("protocolVersion", JString "2025-06-18")]))
+          listed = case mcpStep (req "tools/list" (object [])) of
+            Reply r -> path ["result", "tools"] r >>= asArray
+            _ -> Nothing
+       in assertEqual
+            ( Just "2025-06-18"
+            , Just ["read_file", "list_files", "edit_file", "write_file"]
+            , True
+            , Forward (JInt 1) "edit_file" (object [("path", JString "a")])
+            , Just (-32601)
+            , NoReply
+            )
+            ( case initReply of Reply r -> path ["result", "protocolVersion"] r >>= asText; _ -> Nothing
+            , map (\t -> fromMaybe "" (key "name" t >>= asText)) <$> listed
+            , maybe False (all (\t -> key "inputSchema" t /= Nothing)) listed
+            , mcpStep (req "tools/call" (object [("name", JString "edit_file"), ("arguments", object [("path", JString "a")])]))
+            , case mcpStep (req "resources/list" (object [])) of Reply r -> path ["error", "code"] r >>= asInt; _ -> Nothing
+            , mcpStep (object [("jsonrpc", JString "2.0"), ("method", JString "notifications/initialized")])
+            )
+  ]
+
+-- | A client talks MCP to the bridge; the call reaches the editor's end
+-- of the pipes, and the editor's answer comes back as the MCP result.
+bridgeTests :: IO [Test]
+bridgeTests = do
+  tmp <- getTemporaryDirectory
+  let dir = tmp <> "/him-mcp-test"
+  -- A run that failed may have left its pipes behind.
+  exists <- doesDirectoryExist dir
+  when exists (removeDirectoryRecursive dir)
+  createDirectoryIfMissing True dir
+  mapM_ (\p -> createNamedPipe p (unionFileModes ownerReadMode ownerWriteMode)) [callsPipe dir, answersPipe dir]
+  answerRef <- newEmptyMVar
+  received <- newEmptyMVar
+  (answer, stop) <- serveToolPipes dir (\call -> putMVar received call >> readMVar answerRef >>= \f -> f (tcId call) False "done")
+  putMVar answerRef answer
+  -- Two pipes, each (read end, write end): client to bridge, bridge to client.
+  (bridgeReads, clientWrites) <- createPipe
+  (clientReads, bridgeWrites) <- createPipe
+  _ <- forkIO (runBridgeWith bridgeReads bridgeWrites dir)
+  let send v = BC.hPutStrLn clientWrites (renderJson v) >> hFlush clientWrites
+  send (object [("jsonrpc", JString "2.0"), ("id", JInt 7), ("method", JString "tools/call"), ("params", object [("name", JString "read_file"), ("arguments", object [("path", JString "a.txt")])])])
+  call <- timeout 3000000 (takeMVar received)
+  reply <- timeout 3000000 (BC.hGetLine clientReads)
+  stop
+  removeDirectoryRecursive dir
+  let parsed = either (const Nothing) Just . parseJson =<< reply
+  pure
+    [ test "a tool call goes from the MCP client through the bridge to the editor" $
+        assertEqual (Just ("read_file", Right (object [("path", JString "a.txt")]))) ((\c -> (tcName c, tcInput c)) <$> call)
+    , test "the editor's answer comes back as the MCP result, with the request's id" $
+        assertEqual (Just (JInt 7), Just "done", Just False)
+          (parsed >>= key "id", parsed >>= path ["result", "content"] >>= asArray >>= \cs -> case cs of c : _ -> key "text" c >>= asText; [] -> Nothing, parsed >>= path ["result", "isError"] >>= asBool)
+    ]
+
+-- | The live flow (Claude Code): the model waits for each edit; approving
+-- answers it, and the turn ends when the model says so.
+liveTests :: IO [Test]
+liveTests = do
+  tmp <- getTemporaryDirectory
+  original <- getCurrentDirectory
+  let dir = tmp <> "/him-chat-live-test"
+  createDirectoryIfMissing True dir
+  TIO.writeFile (dir <> "/a.txt") "one\ntwo\n"
+  answers <- newIORef []
+  emitRef <- newIORef (\_ -> pure ())
+  defaults <- either (fail . show) pure defaultConfig
+  let editCall = ToolCall "c1" "edit_file" (Right (object [("path", JString "a.txt"), ("old_text", JString "two"), ("new_text", JString "TWO")]))
+      fake = ChatProvider "live" . pure $ ChatSession
+        { sessSend = \_ _ emit -> do
+            writeIORef emitRef emit
+            emit (ChatText "Editing.")
+            emit (ChatToolCall editCall)
+            pure (pure ())
+        , sessAnswer = \i isError text -> do
+            modifyIORef' answers (<> [(i, isError, text)])
+            emit <- readIORef emitRef
+            emit (ChatText "Thanks.")
+            emit (ChatFinished "end_turn" (object [("role", JString "assistant"), ("content", JArray [])]) [])
+        , sessClose = pure ()
+        }
+      config = defaults {cfgChatProviders = [fake], cfgChat = defaultChatConfig {ccProvider = "live"}}
+      typeKeys ks ed = foldlM (\e k -> execStateT (handleEvent config (EvKey k)) e) ed (fromMaybe (error ("bad keys: " <> show ks)) (parseKeys ks))
+      transcript ed = maybe "" (B.toText . docBuffer) (find (\d -> case docKind d of ChatDoc _ -> True; _ -> False) (allDocuments ed))
+  (got, disk, done) <-
+    ( do
+        setCurrentDirectory dir
+        rt <- testRuntime config
+        let settleLive = settleUntil config rt 3000
+        start <- (\t -> newDocument (Just "a.txt") (buf (fromMaybe t (T.stripSuffix "\n" t)))) <$> TIO.readFile "a.txt"
+        asked <- settleLive (T.isInfixOf "[edit #1" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
+        finished <- settleLive (T.isInfixOf "Thanks." . transcript) =<< typeKeys "esc space c a" asked
+        (,,) <$> readIORef answers <*> TIO.readFile "a.txt" <*> pure finished
+    )
+      `finally` setCurrentDirectory original
+  removeDirectoryRecursive dir
+  pure
+    [ test "a live edit is answered when it is approved, and saved first" $
+        assertEqual ([("c1", False, "The user approved the edit; a.txt is saved.")], "one\nTWO\n") (got, disk)
+    , test "after the decision the model goes on in the same turn" (assertEqual True ("Thanks." `T.isInfixOf` transcript done))
+    ]
 
 -- | A recorded stream: thinking (with its signature), text, a tool call
 -- whose input arrives in pieces.
@@ -126,11 +262,15 @@ flowTests = do
   sent <- newIORef []
   script <- newIORef []
   defaults <- either (fail . show) pure defaultConfig
-  let fake = ChatProvider "fake" $ \_ req emit -> do
-        modifyIORef' sent (<> [req])
-        reply <- atomicModifyIORef' script (\s -> (drop 1 s, take 1 s))
-        mapM_ (mapM_ emit) reply
-        pure (pure ())
+  let fake = ChatProvider "fake" . pure $ ChatSession
+        { sessSend = \_ req emit -> do
+            modifyIORef' sent (<> [req])
+            reply <- atomicModifyIORef' script (\s -> (drop 1 s, take 1 s))
+            mapM_ (mapM_ emit) reply
+            pure (pure ())
+        , sessAnswer = \_ _ _ -> pure ()
+        , sessClose = pure ()
+        }
       config = defaults {cfgChatProviders = [fake], cfgChat = defaultChatConfig {ccProvider = "fake"}}
       typeKeys ks ed = foldlM (\e k -> execStateT (handleEvent config (EvKey k)) e) ed (fromMaybe (error ("bad keys: " <> show ks)) (parseKeys ks))
       assistant calls = object [("role", JString "assistant"), ("content", JArray [object [("type", JString "tool_use"), ("id", JString c), ("name", JString "x"), ("input", object [])] | c <- calls])]

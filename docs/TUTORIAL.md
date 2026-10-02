@@ -1076,6 +1076,12 @@ The interesting part is the model's edits. Each one becomes a *pending edit*:
 The history sent to the model is append-only. The assistant's messages go back exactly
 as they came, thinking blocks included, which the API requires.
 
+With **Claude Code** as the provider (ADR-42), the model runs its own loop, so him's
+tools reach it over MCP. `him --mcp-bridge` is a tiny MCP server that Claude Code
+starts; it forwards each tool call through a named pipe to the running editor, and
+waits. The editor answers an edit only after you decide, so the model's turn simply
+pauses until then.
+
 **▶ Task 7c.** Write `textObject True 'w'`: given a line and a column, return the run
 of characters of the same kind (word, punctuation, blank) around it. Then make `m a w`
 include the blanks after the word, or before it at the end of a line.

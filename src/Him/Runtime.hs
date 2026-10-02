@@ -18,7 +18,7 @@ import Data.Text qualified as T
 import Him.Lsp.Config (ServerConfig (..), serverFor)
 import Him.Lsp.Server (Server, findRoot, sendMessage, startServer, stopServer)
 import Him.Repl (ReplConfig (..))
-import Him.Chat (ChatConfig (..), ChatEvent (..), ChatProvider (..))
+import Him.Chat (ChatConfig (..), ChatEvent (..), ChatProvider (..), ChatSession (..))
 import Him.Config (Config (..))
 import Him.Repl.Process (ReplProcess, interruptRepl, sendRepl, startRepl, stopRepl)
 import Him.Lsp.State (ServerInfo)
@@ -57,8 +57,8 @@ data Runtime = Runtime
   -- when the config is reloaded ('reconfigure').
   , rtRepls :: MVar (Map Int ReplProcess)
   -- ^ Running REPLs, by the id of their buffer.
-  , rtChats :: MVar (Map Int (IO ()))
-  -- ^ Chat requests in flight, by chat buffer: how to cancel them.
+  , rtChats :: MVar (Map Int ChatEntry)
+  -- ^ Chat sessions, by chat buffer.
   , rtServers :: MVar (Map Text (MVar (Either Text (Server, ServerInfo))))
   -- ^ Language servers by key; the inner variable is filled once the
   -- server has started (or failed to).
@@ -125,15 +125,20 @@ perform rt = \case
     case [p | p <- cfgChatProviders config, cpName p == ccProvider cc] of
       [] -> post (ChatFailed ("no chat provider named " <> ccProvider cc))
       provider : _ -> do
-        -- One request per chat; a new one replaces it.
+        -- One turn per chat; a new one replaces it. The session is kept
+        -- (and replaced when the configured provider changes).
         cancelChatIn rt doc
-        cancel <- cpSend provider cc req (\ev -> do
-          case ev of
-            ChatText _ -> pure ()
-            _ -> modifyMVar_ (rtChats rt) (pure . Map.delete doc)
-          post ev)
-        modifyMVar_ (rtChats rt) (pure . Map.insert doc cancel)
+        session <- modifyMVar (rtChats rt) $ \m -> case Map.lookup doc m of
+          Just e | ceProvider e == cpName provider -> pure (m, ceSession e)
+          old -> do
+            mapM_ (sessClose . ceSession) old
+            s <- cpStart provider
+            pure (Map.insert doc (ChatEntry (cpName provider) s Nothing) m, s)
+        cancel <- sessSend session cc req post
+        modifyMVar_ (rtChats rt) (pure . Map.adjust (\e -> e {ceCancel = Just cancel}) doc)
   ChatCancel doc -> cancelChatIn rt doc
+  ChatAnswer doc callId isError result ->
+    Map.lookup doc <$> readMVar (rtChats rt) >>= mapM_ (\e -> sessAnswer (ceSession e) callId isError result)
   ReplSend doc asCode text -> withRepl rt doc (\rp -> sendRepl rp asCode text)
   ReplInterrupt doc -> withRepl rt doc interruptRepl
   ReplStop doc -> modifyMVar (rtRepls rt) (\m -> pure (Map.delete doc m, Map.lookup doc m)) >>= mapM_ stopRepl
@@ -142,9 +147,18 @@ perform rt = \case
     mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) stopped
   _ -> pure ()
 
--- | Cancel a chat's request, if one runs.
+-- | A chat buffer's session: which provider started it, and how to cancel
+-- the turn in flight.
+data ChatEntry = ChatEntry
+  { ceProvider :: Text
+  , ceSession :: ChatSession
+  , ceCancel :: Maybe (IO ())
+  }
+
+-- | Cancel a chat's turn, if one runs.
 cancelChatIn :: Runtime -> Int -> IO ()
-cancelChatIn rt doc = modifyMVar (rtChats rt) (\m -> pure (Map.delete doc m, Map.lookup doc m)) >>= sequence_
+cancelChatIn rt doc =
+  modifyMVar (rtChats rt) (\m -> pure (Map.adjust (\e -> e {ceCancel = Nothing}) doc m, Map.lookup doc m >>= ceCancel)) >>= sequence_
 
 -- | Run something with a REPL, if it is running.
 withRepl :: Runtime -> Int -> (ReplProcess -> IO ()) -> IO ()
@@ -154,6 +168,7 @@ withRepl rt doc k = Map.lookup doc <$> readMVar (rtRepls rt) >>= mapM_ k
 shutdown :: Runtime -> IO ()
 shutdown rt = do
   readMVar (rtRepls rt) >>= mapM_ stopRepl
+  readMVar (rtChats rt) >>= mapM_ (sessClose . ceSession)
   servers <- readMVar (rtServers rt)
   mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) (Map.elems servers)
 

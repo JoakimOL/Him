@@ -50,9 +50,12 @@ make fmt / make lint         # format / lint
     haskell-language-server, typescript-language-server, pylsp, gopls.
   - **repl:** `:repl` opens one beside the file (`stack ghci` in a Haskell project),
     `space e` sends the selection, and saving reloads.
-  - **chat:** `space c c` opens an AI chat beside the code. It needs
-    `ANTHROPIC_API_KEY`. The model's edits show up in the editor and wait for you:
-    `space c a` / `space c d` approve or deny the next one, `A` / `D` all of them.
+  - **chat:** `space c c` opens an AI chat beside the code. By default it runs
+    through Claude Code (`claude`, with your login), which gets him's file tools over
+    MCP. `provider = "anthropic"` in `[chat]` uses the API with `ANTHROPIC_API_KEY`
+    instead. The model's edits show up in the editor and wait for you: `space c a` /
+    `space c d` approve or deny the next one, `A` / `D` all of them; nothing is written
+    before you approve.
 - `C-z` suspends the editor (`fg` brings it back).
 
 ## Configuration

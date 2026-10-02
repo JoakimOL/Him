@@ -5,6 +5,7 @@
 module Him.Chat
   ( -- * Providers
     ChatProvider (..)
+  , ChatSession (..)
   , ChatRequest (..)
   , ChatEvent (..)
   , ToolCall (..)
@@ -22,13 +23,25 @@ import Data.Text (Text)
 import Him.Json (Value)
 import Him.Position (Pos (..))
 
--- | Something that answers a conversation: the Claude API, or a fake in
--- the tests. 'cpSend' starts a request and returns at once; events arrive
--- through the callback, ending with 'ChatFinished' or 'ChatFailed'. The
--- returned action cancels the request.
+-- | Something that answers a conversation: the Claude API, Claude Code, or
+-- a fake in the tests. Each chat buffer gets its own session ('cpStart'),
+-- like a highlighter (ADR-26), so a provider can keep a process or a
+-- conversation of its own.
 data ChatProvider = ChatProvider
   { cpName :: Text
-  , cpSend :: ChatConfig -> ChatRequest -> (ChatEvent -> IO ()) -> IO (IO ())
+  , cpStart :: IO ChatSession
+  }
+
+-- | A conversation with a provider.
+data ChatSession = ChatSession
+  { sessSend :: ChatConfig -> ChatRequest -> (ChatEvent -> IO ()) -> IO (IO ())
+  -- ^ Start a turn and return at once; events arrive through the callback,
+  -- ending with 'ChatFinished' or 'ChatFailed'. The returned action cancels
+  -- the turn.
+  , sessAnswer :: Text -> Bool -> Text -> IO ()
+  -- ^ Answer a 'ChatToolCall' (call id, is it an error, the result), for a
+  -- provider whose model waits for tools during the turn.
+  , sessClose :: IO ()
   }
 
 -- | What is sent: a system prompt, the conversation so far (messages in the
@@ -45,8 +58,12 @@ data ChatEvent
     ChatText !Text
   | -- | The reply is complete: why it stopped, the assistant message to
     -- append to the history (as the provider returned it, thinking blocks
-    -- included), and the tools it asks to call.
+    -- included), and the tools it asks to call (answered with the next
+    -- request).
     ChatFinished !Text !Value ![ToolCall]
+  | -- | A tool the model waits for now, in the middle of the turn (Claude
+    -- Code through MCP); answered with 'sessAnswer'.
+    ChatToolCall !ToolCall
   | ChatFailed !Text
   deriving stock (Eq, Show)
 
@@ -69,7 +86,7 @@ data ChatConfig = ChatConfig
   deriving stock (Eq, Show)
 
 defaultChatConfig :: ChatConfig
-defaultChatConfig = ChatConfig "anthropic" "claude-opus-5-5" "high" 64000
+defaultChatConfig = ChatConfig "claude-code" "claude-opus-5-5" "high" 64000
 
 data ChatStatus
   = ChatIdle

@@ -39,6 +39,7 @@ import Him.Actions.Repl qualified as Repl
 import Him.Actions.Chat qualified as Chat
 import Him.Chat (ChatProvider)
 import Him.Chat.Anthropic (anthropicProvider)
+import Him.Chat.ClaudeCode (claudeCodeProvider)
 import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))
@@ -276,7 +277,7 @@ configWith enabled user = do
 
 -- | Chat providers (ADR-41); @[chat] provider@ names the one used.
 chatProviders :: [ChatProvider]
-chatProviders = [anthropicProvider]
+chatProviders = [claudeCodeProvider, anthropicProvider]
 
 -- | Highlighters, tried in order for each language (ADR-26). A TextMate
 -- provider would be added here, and nowhere else.

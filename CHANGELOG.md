@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- Claude Code chat provider (the default): him's tools served over MCP (`him --mcp-bridge`), no API key needed.
 - AI chat plugin: a chat beside the code (Claude API over curl); the model's edits are applied as pending edits and approved or denied in the editor.
 - Match mode (`m m`, `m s`, `m r`, `m d`, `m i`, `m a`); `I` and `A`.
 - REPL plugin: `:repl`, send the selection (`space e`), reload on save.

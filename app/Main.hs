@@ -4,6 +4,7 @@ import Him.App qualified as App
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Him.UserConfig (defaultConfigText)
+import Him.Mcp (runBridge)
 import Him.GrammarBuild (buildGrammars, defaultSourceDirs, himGrammarDir)
 import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs)
@@ -17,6 +18,8 @@ main =
   getArgs >>= \case
     [flag] | flag `elem` ["--help", "-h"] -> putStr usage
     "--build-grammars" : rest -> buildCommand rest
+    -- Started by Claude Code for the chat (see "Him.Mcp"), not by hand.
+    ["--mcp-bridge", dir] -> runBridge dir
     ["--dump-default-config"] -> TIO.putStr defaultConfigText
     files -> App.run files
 
