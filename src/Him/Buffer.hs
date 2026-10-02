@@ -26,6 +26,7 @@ module Him.Buffer
   , regions
   , findForwardFrom
   , findBackwardBefore
+  , changeBetween
   ) where
 
 import Data.Maybe (fromMaybe)
@@ -245,3 +246,49 @@ posOfOffset :: Int -> Block -> Int -> Pos
 posOfOffset firstLine b off = Pos (firstLine + k) (T.length (takeWord8 (off - blockLineStart b k) (blockLine b k)))
   where
     k = blockLineOfOffset b off
+
+-- | One edit that turns the first text into the second: the range of the
+-- old text (inclusive start, exclusive end, as positions in the old text)
+-- and its replacement. 'Nothing' when the texts are equal.
+--
+-- Lines the two share at the start and at the end are skipped a storage
+-- block at a time where the blocks are equal (unchanged blocks are the
+-- same text, so this is a memory comparison), then line by line; the
+-- remaining lines are trimmed character by character. So a small edit in
+-- a large file costs little more than the edited lines.
+changeBetween :: Buffer -> Buffer -> Maybe (Pos, Pos, Text)
+changeBetween old@(Buffer a) new@(Buffer b)
+  | prefix == na && na == nb = Nothing
+  | otherwise =
+      let -- One shared line before the change keeps the window non-empty
+          -- (an insertion at the very end has a line to attach to).
+          from = if prefix > 0 then prefix - 1 else 0
+          window buf n = window' (take (n - suffix - from) (linesFrom from buf))
+          window' ls = if suffix > 0 then T.concat (map (<> "\n") ls) else T.intercalate "\n" ls
+          oldW = window old na
+          newW = window new nb
+          common = maybe 0 (\(p, _, _) -> T.length p) (T.commonPrefixes oldW newW)
+          maxSuffix = min (T.length oldW) (T.length newW) - common
+          tailCommon = length (takeWhile id (take maxSuffix (zipWith (==) (T.unpack (T.reverse oldW)) (T.unpack (T.reverse newW)))))
+          start = advance (Pos from 0) (T.take common oldW)
+          end = advance (Pos from 0) (T.take (T.length oldW - tailCommon) oldW)
+          text = T.take (T.length newW - common - tailCommon) (T.drop common newW)
+       in if start == end && T.null text then Nothing else Just (start, end, text)
+  where
+    na = ropeLines a
+    nb = ropeLines b
+    prefix = min na nb `min` commonPrefixLines
+    suffix = min (min na nb - prefix) commonSuffixLines
+    commonPrefixLines = goP (ropeBlocksFrom 0 a) (ropeBlocksFrom 0 b) 0
+    goP ((sa, ba) : ra) ((sb, bb) : rb) acc
+      | sa == acc && sb == acc && sameBlock ba bb = goP ra rb (acc + blockLines ba)
+    goP _ _ acc = acc + length (takeWhile id (zipWith (==) (ropeLinesFrom acc a) (ropeLinesFrom acc b)))
+    -- From the end: a block matches when it ends equally far from the end.
+    commonSuffixLines = goS (ropeBlocksDownFrom (na - 1) a) (ropeBlocksDownFrom (nb - 1) b) 0
+    goS ((sa, ba) : ra) ((sb, bb) : rb) acc
+      | na - (sa + blockLines ba) == acc && nb - (sb + blockLines bb) == acc && sameBlock ba bb = goS ra rb (acc + blockLines ba)
+    goS _ _ acc = acc + length (takeWhile id (zipWith (==) (ropeLinesDownFrom (na - 1 - acc) a) (ropeLinesDownFrom (nb - 1 - acc) b)))
+    sameBlock x y = blockLines x == blockLines y && blockCR x == blockCR y && fst (blockRegion x) == fst (blockRegion y)
+    advance (Pos l c) t = case T.splitOn "\n" t of
+      [single] -> Pos l (c + T.length single)
+      parts -> Pos (l + length parts - 1) (T.length (last parts))

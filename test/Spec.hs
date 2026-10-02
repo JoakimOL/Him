@@ -437,6 +437,7 @@ main = do
     , group "Him.Terminal.Input.decodeKeys" decodeTests
     , group "Him.Buffer" bufferTests
     , group "Him.Buffer (randomized against a list model)" ropeModelTests
+    , group "Him.Buffer.changeBetween" changeTests
     , group "Him.Search (randomized against a naive search)" searchTests
     , group "Him.Motion" motionTests
     , group "Him.Edit" editTests
@@ -537,6 +538,36 @@ bufferTests =
 -- libraries only).
 randoms :: Int -> [Int]
 randoms = drop 1 . iterate (\x -> (x * 6364136223846793005 + 1442695040888963407) `mod` (2 ^ (62 :: Int)))
+
+changeTests :: [Test]
+changeTests =
+  [ test "equal texts have no change" (assertEqual Nothing (B.changeBetween (buf "a\nb") (buf "a\nb")))
+  , test "a typed character" (assertEqual (Just (Pos 1 2, Pos 1 2, "X")) (B.changeBetween (buf "ab\ncd\nef") (buf "ab\ncdX\nef")))
+  , test "a line added at the end" (assertEqual (Just (Pos 1 1, Pos 1 1, "\nc")) (B.changeBetween (buf "a\nb") (buf "a\nb\nc")))
+  , test "the last line removed" (assertEqual (Just (Pos 0 1, Pos 1 1, "")) (B.changeBetween (buf "a\nb") (buf "a")))
+  , test "random edits: the change rebuilds the new text" (mapM_ changeModel (take 500 (chunks (randoms 31))))
+  , test "edits in a large loaded file are found" $
+      let big = B.fromRegions [(False, T.intercalate "\n" [T.pack (show i) | i <- [n .. n + 999 :: Int]]) | n <- [0, 1000 .. 9000]]
+          (edited, _) = B.insertText (Pos 5500 1) "X" big
+       in assertEqual (Just (Pos 5500 1, Pos 5500 1, "X")) (B.changeBetween big edited)
+  ]
+  where
+    chunks xs = let (a, z) = splitAt 6 xs in a : chunks z
+    alphabet = ["a", "bc", "", "def"]
+    changeModel rs = case rs of
+      (r1 : r2 : r3 : r4 : r5 : _) ->
+        let old = T.intercalate "\n" [alphabet !! ((r1 `div` (4 ^ i)) `mod` 4) | i <- [0 .. r2 `mod` 6 :: Int]]
+            cut = r3 `mod` (T.length old + 1)
+            len = r4 `mod` 4
+            ins = ["", "x", "\n", "y\nz\n", "\n\n"] !! (r5 `mod` 5)
+            new = T.take cut old <> ins <> T.drop (cut + len) old
+         in case B.changeBetween (buf old) (buf new) of
+              Nothing -> if old == new then Right () else Left ("missed: " <> show (old, new))
+              Just (s0, e0, t) ->
+                let rebuilt = T.take (offsetOf old s0) old <> t <> T.drop (offsetOf old e0) old
+                 in if rebuilt == new then Right () else Left (show (old, new, s0, e0, t))
+      _ -> Right ()
+    offsetOf t (Pos l c) = sum [T.length x + 1 | x <- take l (T.splitOn "\n" t)] + c
 
 ropeModelTests :: [Test]
 ropeModelTests =
