@@ -27,6 +27,8 @@ module Him.Lsp.Protocol
   , Location (..)
   , parseLocations
   , parseHover
+  , TextEdit (..)
+  , parseTextEdits
   , CompletionItem (..)
   , parseCompletion
   , stripSnippet
@@ -242,6 +244,26 @@ parseHover v = case key "contents" v of
       _ -> []
     trimBlank = reverse . dropWhile T.null . reverse . dropWhile T.null
 
+-- | Replace the text between two positions (line, column in the server's
+-- units).
+data TextEdit = TextEdit
+  { teStart :: !(Int, Int)
+  , teEnd :: !(Int, Int)
+  , teText :: !Text
+  }
+  deriving stock (Eq, Show)
+
+parseTextEdits :: Value -> [TextEdit]
+parseTextEdits = mapMaybe one . fromMaybe [] . asArray
+  where
+    one e = do
+      r <- key "range" e
+      s <- key "start" r >>= pos
+      t <- key "end" r >>= pos
+      text <- key "newText" e >>= asText
+      pure (TextEdit s t text)
+    pos p = (,) <$> (key "line" p >>= asInt) <*> (key "character" p >>= asInt)
+
 data CompletionItem = CompletionItem
   { ciLabel :: !Text
   , ciDetail :: !Text
@@ -251,6 +273,10 @@ data CompletionItem = CompletionItem
   -- ^ The range a text edit replaces, in the server's units.
   , ciFilter :: !Text
   , ciSort :: !Text
+  , ciAdditional :: ![TextEdit]
+  -- ^ Edits elsewhere, made with the insertion (e.g. an import).
+  , ciRaw :: !Value
+  -- ^ As the server sent it, for @completionItem/resolve@.
   }
   deriving stock (Eq, Show)
 
@@ -274,6 +300,8 @@ parseCompletion v = mapMaybe item (fromMaybe [] (asArray v <|> (key "items" v >>
           , ciReplace = replace
           , ciFilter = fromMaybe label (key "filterText" i >>= asText)
           , ciSort = fromMaybe label (key "sortText" i >>= asText)
+          , ciAdditional = maybe [] parseTextEdits (key "additionalTextEdits" i)
+          , ciRaw = i
           }
 
 -- | A snippet as the text it shows: @${1:x}@ becomes @x@, @$1@ and @$0@

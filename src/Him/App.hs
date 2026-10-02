@@ -176,6 +176,7 @@ housekeeping = do
   Syntax.syntaxHousekeeping
   Lsp.lspHousekeeping
   Lsp.completionHousekeeping
+  Picker.pickerHousekeeping
 
 -- | Carry out the effects the key's action requested that need the config
 -- (ADR-23). An action run this way may request more; a chain is cut off

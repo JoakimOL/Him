@@ -17,7 +17,12 @@ import Data.Text qualified as T
 import Him.Lsp.Config (ServerConfig (..), serverFor)
 import Him.Lsp.Server (Server, findRoot, sendMessage, startServer, stopServer)
 import Him.Lsp.State (ServerInfo)
-import System.Directory (makeAbsolute)
+import Control.Exception (IOException, try)
+import Data.ByteString qualified as BS
+import Him.Document (Document (..))
+import Him.File (loadDocument)
+import System.Directory (getFileSize, makeAbsolute)
+import System.IO (IOMode (..), withBinaryFile)
 import Control.Exception (evaluate)
 import Data.Foldable (toList)
 import Data.IORef (atomicModifyIORef', newIORef)
@@ -157,6 +162,16 @@ runJob rt = \case
       readMVar started >>= \case
         Right (_, info) -> post (EvJob (LspReady doc key absolute (scLanguageId config) info))
         Left e -> post (EvJob (LspUnavailable doc e))
+  LoadPreview file -> do
+    -- Binary and very large files are not shown.
+    size <- try @IOException (getFileSize file)
+    head' <- try @IOException (withBinaryFile file ReadMode (`BS.hGet` 8192))
+    result <- case (size, head') of
+      (Left e, _) -> pure (Left (T.pack (show e)))
+      (Right n, _) | n > 20 * 1024 * 1024 -> pure (Left "file too large to preview")
+      (_, Right bytes) | BS.elem 0 bytes -> pure (Left "binary file")
+      _ -> either Left (Right . docBuffer) <$> loadDocument file
+    post (EvJob (PreviewLoaded file result))
   Highlight doc version buffer from to -> do
     session <- Map.lookup doc <$> readMVar (rtSessions rt)
     case session of

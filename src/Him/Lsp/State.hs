@@ -84,6 +84,11 @@ data Pending
   | PendingSignature
   | -- | The document's path.
     PendingSymbols !FilePath
+  | -- | An accepted completion's details (imports): document and the
+    -- version right after the insertion.
+    PendingCompletionResolve !Int !Int
+  | -- | Workspace symbols for the picker of this generation and query.
+    PendingWorkspaceSymbols !Int !Text
   | -- | An answer nothing waits for (e.g. @workspace/executeCommand@).
     PendingIgnore
   deriving stock (Eq, Show)

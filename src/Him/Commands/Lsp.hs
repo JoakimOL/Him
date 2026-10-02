@@ -12,6 +12,7 @@ module Him.Commands.Lsp
   , exCommands
   , runCodeAction
   , renameTo
+  , queryWorkspaceSymbols
   ) where
 
 import Control.Monad.Trans.State.Strict (get, gets, modify')
@@ -30,6 +31,7 @@ import Him.Document (DocKind (..), Document (..))
 import Him.Effect (Effect (..), Job (..), JobResult (..))
 import Him.Editor hiding (Severity (..))
 import Him.Json hiding (path)
+import Him.Json qualified as J
 import Him.Language (detectLanguage, languages)
 import Him.Lsp.Protocol hiding (request)
 import Him.Lsp.Protocol qualified as P
@@ -37,7 +39,9 @@ import Him.Lsp.State
 import Him.Lsp.Sync (syncMessages)
 import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Mode (Mode (..))
-import Him.Picker (PickTarget (..), fuzzyScore, newPicker, pickerItem)
+import Data.Sequence qualified as Seq
+import Him.Picker (PickTarget (..), Picker (..), PickerSource (..), fuzzyScore, matchLimit, newPicker, pickerItem)
+import System.FilePath (makeRelative)
 import Him.Position (Pos (..))
 import Control.Monad.IO.Class (liftIO)
 import Him.History (Snapshot (..), beginChange)
@@ -67,6 +71,19 @@ actions =
         _ -> failWith "no language server for this file"
   , simple "format_document" GLsp "Format the file with the language server" formatDocument
   , simple "code_action" GLsp "List the language server's actions for the selection" codeActions
+  , simple "workspace_symbols" GLsp "Search the symbols of the whole project (as you type)" $ do
+      d <- getDoc
+      case docLsp d of
+        LspAttached at -> do
+          gen <- gets edNextId
+          modify' $ \e ->
+            e
+              { edNextId = gen + 1
+              , edPicker = Just (newPicker "workspace symbols" []) {pkGeneration = gen, pkSource = ServerQuery (atServer at), pkLoading = True}
+              , edMode = Picking
+              }
+          queryWorkspaceSymbols (atServer at) gen ""
+        _ -> failWith "no language server for this file"
   , simple "document_symbols" GLsp "List the symbols of this file" $ do
       d <- getDoc
       case docLsp d of
@@ -279,6 +296,14 @@ answered pending value = case pending of
                   )
             , edMode = Picking
             }
+  PendingCompletionResolve doc version -> do
+    d <- getDoc
+    enc <- currentEncoding
+    case maybe [] parseTextEdits (key "additionalTextEdits" value) of
+      edits@(_ : _)
+        | docId d == doc && docVersion d == version -> modifyDoc (applyAdditional enc edits)
+      _ -> pure ()
+  PendingWorkspaceSymbols gen query -> workspaceSymbolsArrived gen query value
   PendingIgnore -> pure ()
 
 -- | The active signature, and the first line of its documentation.
@@ -310,9 +335,21 @@ symbols = go 0 . fromMaybe [] . asArray
          in [(depth, name, kind, p) | Just p <- [at']] <> children
     position' p = (,) <$> (key "line" p >>= asInt) <*> (key "character" p >>= asInt)
     a <|> b = maybe b Just a
-    kindName k =
-      fromMaybe "" . lookup k . zip [1 ..] $
-        ["file", "module", "namespace", "package", "class", "method", "property", "field", "constructor", "enum", "interface", "function", "variable", "constant", "string", "number", "boolean", "array", "object", "key", "null", "enum member", "struct", "event", "operator", "type parameter"]
+    kindName = symbolKindName
+
+-- | The protocol's symbol kinds, by number.
+symbolKindName :: Int -> Text
+symbolKindName k =
+  fromMaybe "" . lookup k . zip [1 ..] $
+    ["file", "module", "namespace", "package", "class", "method", "property", "field", "constructor", "enum", "interface", "function", "variable", "constant", "string", "number", "boolean", "array", "object", "key", "null", "enum member", "struct", "event", "operator", "type parameter"]
+
+-- | The project root of the current document's server (for short paths).
+currentRoot :: EditorM FilePath
+currentRoot = do
+  ed <- get
+  pure $ case docLsp (edDoc ed) of
+    LspAttached at -> maybe "" siRoot (Map.lookup (atServer at) (lsServers (edLsp ed)))
+    _ -> ""
 
 currentEncoding :: EditorM Encoding
 currentEncoding = do
@@ -457,6 +494,7 @@ wordAroundCursor ed =
 goToLocations :: Text -> [Location] -> EditorM ()
 goToLocations title locations = do
   enc <- currentEncoding
+  root <- currentRoot
   case locations of
     [] -> info ("no " <> title)
     [loc] -> openAt enc loc
@@ -467,7 +505,7 @@ goToLocations title locations = do
               Just
                 ( newPicker
                     title
-                    [ pickerItem (T.pack (locPath l <> ":" <> show (fst (locStart l) + 1))) (PickPosition (locPath l) (fst (locStart l)) (snd (locStart l)) (Just (encodingName enc))) ""
+                    [ pickerItem (T.pack (makeRelative root (locPath l) <> ":" <> show (fst (locStart l) + 1))) (PickPosition (locPath l) (fst (locStart l)) (snd (locStart l)) (Just (encodingName enc))) ""
                     | l <- locs
                     ]
                 )
@@ -573,6 +611,32 @@ acceptCompletion =
               from = Pos hl (max 0 (hc - typedLength))
               (b', end) = Buffer.insertText from (ciInsert item) (Buffer.deleteRange from (Pos hl hc) b)
            in (b', point end)
+        -- Imports and other edits elsewhere: given with the item, or asked
+        -- for now if the server fills them in on request.
+        enc <- currentEncoding
+        d <- getDoc
+        case (ciAdditional item, docLsp d) of
+          (edits@(_ : _), _) -> modifyDoc (applyAdditional enc edits)
+          ([], LspAttached at)
+            | resolvable ed at ->
+                sendRequest (atServer at) (PendingCompletionResolve (docId d) (docVersion d)) "completionItem/resolve" (ciRaw item)
+          _ -> pure ()
+  where
+    resolvable ed at =
+      maybe False (\si -> J.path ["completionProvider", "resolveProvider"] (siCapabilities si) == Just (JBool True)) (Map.lookup (atServer at) (lsServers (edLsp ed)))
+
+-- | Edits that come with a completion (an import at the top): applied to the
+-- text, with the cursors moved down by the lines added above them.
+applyAdditional :: Encoding -> [TextEdit] -> Document -> Document
+applyAdditional enc edits d =
+  let buf = applyTextEdits enc edits (docBuffer d)
+      shift (Pos l c) = Pos (l + sum [T.count "\n" (teText e) - (fst (teEnd e) - fst (teStart e)) | e <- edits, fst (teEnd e) < l]) c
+   in d
+        { docBuffer = buf
+        , docSelection = mapRanges (\r -> r {rangeAnchor = Buffer.clampPos buf (shift (rangeAnchor r)), rangeHead = Buffer.clampPos buf (shift (rangeHead r))}) (docSelection d)
+        , docDirty = True
+        , docVersion = docVersion d + 1
+        }
 
 -- | After every event in insert mode: keep the completion menu in step
 -- with the typing, or open it on its own after a trigger character or the
@@ -685,3 +749,47 @@ stopServer server after = do
       }
   where
     allDocs ed = map bufDoc (fst (buffers ed))
+
+-- * Workspace symbols
+
+-- | Ask for the symbols matching a query, for the picker of a generation.
+queryWorkspaceSymbols :: Text -> Int -> Text -> EditorM ()
+queryWorkspaceSymbols server gen query =
+  sendRequest server (PendingWorkspaceSymbols gen query) "workspace/symbol" (object [("query", JString query)])
+
+-- | The answer for a picker's query: shown in the server's order, if the
+-- picker is still open and its query unchanged.
+workspaceSymbolsArrived :: Int -> Text -> Value -> EditorM ()
+workspaceSymbolsArrived gen query value = do
+  ed <- get
+  case edPicker ed of
+    Just p
+      | pkGeneration p == gen && pkQuery p == query -> do
+          enc <- currentEncoding
+          let root = case pkSource p of
+                ServerQuery server -> maybe "" siRoot (Map.lookup server (lsServers (edLsp ed)))
+                StaticItems -> ""
+              items =
+                [ pickerItem name (PickPosition file l c (Just (encodingName enc))) (T.intercalate "  " (filter (not . T.null) [kind, container, T.pack (makeRelative root file <> ":" <> show (l + 1))]))
+                | s <- fromMaybe [] (asArray value)
+                , Just name <- [key "name" s >>= asText]
+                , Just loc <- [key "location" s]
+                , Just file <- [key "uri" loc >>= asText >>= uriToPath]
+                , let (l, c) = fromMaybe (0, 0) (key "range" loc >>= key "start" >>= \p' -> (,) <$> (key "line" p' >>= asInt) <*> (key "character" p' >>= asInt))
+                      kind = maybe "" symbolKindName (key "kind" s >>= asInt)
+                      container = fromMaybe "" (key "containerName" s >>= asText)
+                ]
+          modify' $ \e ->
+            e
+              { edPicker =
+                  Just
+                    p
+                      { pkItems = Seq.fromList items
+                      , pkMatches = take matchLimit items
+                      , pkMatchCount = length items
+                      , pkSelected = 0
+                      , pkStale = False
+                      , pkLoading = False
+                      }
+              }
+    _ -> pure ()

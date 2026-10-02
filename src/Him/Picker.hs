@@ -6,6 +6,7 @@ module Him.Picker
   , PickerItem (..)
   , pickerItem
   , PickTarget (..)
+  , PickerSource (..)
   , newPicker
   , matches
   , selectedItem
@@ -41,6 +42,15 @@ data PickTarget
     PickPosition !FilePath !Int !Int !(Maybe Text)
   | -- | A language server's code action (or command), as it sent it.
     PickCodeAction !Value
+  deriving stock (Eq, Show)
+
+-- | Where a picker's items come from.
+data PickerSource
+  = -- | Given when it opened (or streamed in); filtered here.
+    StaticItems
+  | -- | Asked from a language server (by key) for each query, which also
+    -- filters them (workspace symbols).
+    ServerQuery !Text
   deriving stock (Eq, Show)
 
 data PickerItem = PickerItem
@@ -82,11 +92,12 @@ data Picker = Picker
   -- ^ Items are still arriving.
   , pkStale :: !Bool
   -- ^ The matches are for an earlier query; a background filter is running.
+  , pkSource :: !PickerSource
   }
   deriving stock (Eq, Show)
 
 newPicker :: Text -> [PickerItem] -> Picker
-newPicker title items = refilter (Picker title (Seq.fromList items) "" [] 0 0 0 False False)
+newPicker title items = refilter (Picker title (Seq.fromList items) "" [] 0 0 0 False False StaticItems)
 
 -- | Change the query, filter again, and select the best match.
 setQuery :: Text -> Picker -> Picker

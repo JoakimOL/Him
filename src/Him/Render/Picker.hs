@@ -7,6 +7,7 @@ module Him.Render.Picker
 
 import Data.IntMap.Strict qualified as IntMap
 import Data.Text qualified as T
+import Him.Buffer qualified as Buffer
 import Him.Editor
 import Him.Picker
 import Him.Render.Frame
@@ -29,7 +30,11 @@ drawPicker theme ed area f = case edPicker ed of
   where
     draw p =
       let Rect top left h w = box area
-          inner = w - 2
+          preview = if w >= 60 then selectedItem p >>= previewFor ed . piTarget else Nothing
+          -- With a preview, the list takes the left part of the box.
+          inner = case preview of
+            Just _ -> (w - 3) * 2 `div` 5
+            Nothing -> w - 2
           listRows = h - 3
           ms = pkMatches p
           sel = pkSelected p
@@ -38,7 +43,6 @@ drawPicker theme ed area f = case edPicker ed of
           visible = zip [first ..] (take listRows (drop first ms))
           count = T.pack (show (pkMatchCount p) <> "/" <> show (length (pkItems p))) <> if pkLoading p || pkStale p then "…" else ""
           titled = T.take inner (" " <> pkTitle p <> " ")
-          border l r fill t = l <> t <> T.replicate (inner - T.length t) fill <> r
           fit t = T.take inner t <> T.replicate (inner - T.length t) " "
           queryLine = fit (T.take (inner - T.length count - 1) ("> " <> pkQuery p) `padTo` (inner - T.length count) <> count)
           padTo t n = t <> T.replicate (n - T.length t) " "
@@ -47,19 +51,48 @@ drawPicker theme ed area f = case edPicker ed of
           rowStyle i = if i == sel then themePopupSelected theme else themePopup theme
           row i item = (rowStyle i, fit (" " <> piLabel item))
           detailCol = left + 2 + labelW + 2
+          full = w - 2
+          wide t = T.take full t <> T.replicate (full - T.length t) " "
           lines' =
-            [(top, themePopup theme, border "┌" "┐" "─" titled), (top + 1, themePopup theme, "│" <> queryLine <> "│")]
-              <> [(top + 2 + j, themePopup theme, "│" <> fit "" <> "│") | j <- [0 .. listRows - 1]]
-              <> [(top + h - 1, themePopup theme, border "└" "┘" "─" "")]
+            [(top, themePopup theme, "┌" <> T.take full (titled <> T.replicate full "─") <> "┐"), (top + 1, themePopup theme, "│" <> wide queryLine <> "│")]
+              <> [(top + 2 + j, themePopup theme, "│" <> wide "" <> "│") | j <- [0 .. listRows - 1]]
+              <> [(top + h - 1, themePopup theme, "└" <> T.replicate full "─" <> "┘")]
           framed = foldl' (\fr (r, st, t) -> putText r left st t fr) f lines'
           withLabels = foldl' (\fr (j, (i, item)) -> let (st, t) = row i item in putText (top + 2 + j) (left + 1) st t fr) framed (zip [0 ..] visible)
           detailStyle i = (rowStyle i) {styleFg = styleFg (themePopupDetail theme)}
           withItems =
             foldl'
-              (\fr (j, (i, item)) -> if T.null (piDetail item) then fr else putText (top + 2 + j) detailCol (detailStyle i) (T.take (left + w - 1 - detailCol) (piDetail item)) fr)
+              (\fr (j, (i, item)) -> if T.null (piDetail item) then fr else putText (top + 2 + j) detailCol (detailStyle i) (T.take (left + 1 + inner - detailCol) (piDetail item)) fr)
               withLabels
               (zip [0 ..] visible)
-       in withItems {frameRowKeys = foldr IntMap.delete (frameRowKeys withItems) [top .. top + h - 1]}
+          withPreview = maybe withItems (drawPreview top left h w inner withItems) preview
+       in withPreview {frameRowKeys = foldr IntMap.delete (frameRowKeys withPreview) [top .. top + h - 1]}
+
+    -- The preview: right of a divider, the file around the target line
+    -- (highlighted), with line numbers; or why there is nothing to show.
+    drawPreview top left h w listInner fr (title, content) =
+      let divider = left + 1 + listInner
+          col = divider + 1
+          pw = left + w - 1 - col
+          rows = h - 2
+          dividers = foldl' (\acc r -> putText r divider (themePopup theme) "│" acc) fr [top + 1 .. top + h - 2]
+          titled = putText top divider (themePopup theme) ("┬" <> T.take (pw - 1) (" " <> title <> " ")) $
+            putText (top + h - 1) divider (themePopup theme) "┴" dividers
+       in case content of
+            Left why -> putText (top + 1) (col + 1) (themePopup theme) {styleFg = styleFg (themePopupDetail theme)} (T.take (pw - 1) why) titled
+            Right (buf, line) ->
+              let firstLine = max 0 (line - rows `div` 3)
+                  numberW = length (show (firstLine + rows))
+                  shown =
+                    [ (r, l, Buffer.lineAt l buf)
+                    | (r, l) <- zip [top + 1 ..] [firstLine .. min (Buffer.lineCount buf - 1) (firstLine + rows - 1)]
+                    ]
+                  rowText l text =
+                    let number = T.justifyRight numberW ' ' (T.pack (show (l + 1)))
+                        body = T.replace "\t" "    " text
+                     in T.take pw (" " <> number <> " " <> body) <> T.replicate (pw - 2 - numberW - T.length body) " "
+                  styleOf l = if l == line then themePopupSelected theme else themePopup theme
+               in foldl' (\acc (r, l, text) -> putText r col (styleOf l) (T.take pw (rowText l text)) acc) titled shown
 
 -- | The terminal cursor sits at the end of the query.
 pickerCursor :: Editor -> Rect -> Maybe (Int, Int)

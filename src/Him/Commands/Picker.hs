@@ -4,9 +4,11 @@ module Him.Commands.Picker
   ( actions
   , pickerInsert
   , applyJobResult
+  , pickerHousekeeping
   ) where
 
-import Control.Monad.Trans.State.Strict (gets, modify')
+import Control.Monad.Trans.State.Strict (get, gets, modify')
+import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
 import Him.Action
@@ -71,7 +73,7 @@ actions =
   where
     open p = modify' (\e -> e {edPicker = Just p, edMode = Picking})
     close = do
-      modify' (\e -> e {edPicker = Nothing, edMode = Normal})
+      modify' (\e -> e {edPicker = Nothing, edMode = Normal, edPreviews = Map.empty})
       request (CancelJob ScanJob)
       request (CancelJob FilterJob)
 
@@ -88,7 +90,13 @@ changeQuery :: (T.Text -> T.Text) -> EditorM ()
 changeQuery f =
   gets edPicker >>= \case
     Nothing -> pure ()
-    Just p -> refresh p {pkQuery = f (pkQuery p), pkSelected = 0}
+    Just p -> case pkSource p of
+      StaticItems -> refresh p {pkQuery = f (pkQuery p), pkSelected = 0}
+      -- The server filters: ask again, keep showing the last answer.
+      ServerQuery server -> do
+        let query = f (pkQuery p)
+        modify' (\e -> e {edPicker = Just p {pkQuery = query, pkStale = True}})
+        Lsp.queryWorkspaceSymbols server (pkGeneration p) query
 
 -- | Bring a picker's matches up to date with its query and items: at once
 -- when it is small or the query is empty, otherwise in a job.
@@ -115,8 +123,34 @@ applyJobResult result =
             Just (refresh p {pkItems = pkItems p <> Seq.fromList [pickerItem (T.pack f) (PickFile f) "" | f <- files]})
       ScanFinished gen
         | gen == pkGeneration p -> Just (modify' (\e -> e {edPicker = Just p {pkLoading = False}}))
+      PreviewLoaded file loaded ->
+        Just $ modify' $ \e ->
+          e {edPreviews = capped (Map.insert file (either PreviewNone PreviewText loaded) (edPreviews e))}
       PickerFiltered gen query best total
         | gen == pkGeneration p && query == pkQuery p ->
             Just $ modify' $ \e ->
               e {edPicker = Just p {pkMatches = best, pkMatchCount = total, pkStale = False, pkSelected = min (pkSelected p) (max 0 (length best - 1))}}
       _ -> Nothing
+
+-- | After every event: read the file the selected item points at, for the
+-- preview, unless it is open or read already.
+pickerHousekeeping :: EditorM ()
+pickerHousekeeping = do
+  ed <- get
+  case edPicker ed >>= selectedItem of
+    Just item
+      | Just file <- fileOf (piTarget item)
+      , Just (_, Left _) <- previewFor ed (piTarget item)
+      , Map.notMember file (edPreviews ed) -> do
+          modify' (\e -> e {edPreviews = Map.insert file PreviewLoading (edPreviews e)})
+          request (StartJob (LoadPreview file))
+    _ -> pure ()
+  where
+    fileOf = \case
+      PickFile file -> Just file
+      PickPosition file _ _ _ -> Just file
+      _ -> Nothing
+
+-- | Keep the preview cache small (the most recent reads matter).
+capped :: Map.Map FilePath Preview -> Map.Map FilePath Preview
+capped m = if Map.size m > 64 then Map.fromList (take 32 (Map.toList m)) else m

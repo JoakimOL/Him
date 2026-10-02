@@ -29,7 +29,11 @@ import Data.Text.Encoding qualified as TE
 import System.Directory (findExecutable, getHomeDirectory, canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesPathExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
 import Him.FileTree (listFiles)
 import Him.Picker
+import Him.Commands.Picker (pickerHousekeeping)
+import Him.Commands.Picker qualified as Picker
+import System.IO.Unsafe (unsafePerformIO)
 import Him.Effect (Effect (..), Job (..), JobResult (..))
+import Him.Command (EditorM)
 import Him.Runtime (Runtime, newRuntime)
 import Him.Runtime qualified as Runtime
 import Control.Concurrent.STM (TChan, atomically, newTChanIO, readTChan, writeTChan)
@@ -78,6 +82,10 @@ import Data.Foldable (toList)
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
 import Test.Harness
+
+-- | Run an editor action that does no IO (for pure tests).
+runNoIO :: EditorM () -> Editor -> Editor
+runNoIO act ed = unsafePerformIO (execStateT act ed)
 
 -- | Collapse runs of spaces in the details (they are padded into columns).
 squeeze :: [(Text, Text)] -> [(Text, Text)]
@@ -1255,6 +1263,17 @@ lspTests = do
       actDoc <- either (fail . T.unpack) pure =<< loadDocument (project <> "/act.c")
       actOpen <- settleUntil config rt 20000 isAttached =<< execStateT (handleEvent config (EvResize 24 80)) (newEditor (24, 80) actDoc)
       picked <- settleUntil config rt 10000 (isJust . edPicker) =<< keys "space a" (selecting 2 12 20 actOpen)
+      -- Workspace symbols, asked again as the query changes.
+      symbolsFound <-
+        settleUntil config rt 10000 (maybe False (any ((== "add") . piLabel) . pkMatches) . edPicker)
+          =<< keys "space S a d d" actOpen
+      -- Completing printf without stdio.h adds the include (clangd sends it
+      -- with the item).
+      writeFile (project <> "/imp.c") "int main(void) {\n    return 0;\n}\n"
+      impDoc <- either (fail . T.unpack) pure =<< loadDocument (project <> "/imp.c")
+      impOpen <- settleUntil config rt 20000 isAttached =<< execStateT (handleEvent config (EvResize 24 80)) (newEditor (24, 80) impDoc)
+      impMenu <- settleUntil config rt 10000 (maybe False (any (T.isInfixOf "printf" . ciLabel) . cmShown) . edCompletion) =<< keys "j o p r i n t f" impOpen
+      imported <- settleUntil config rt 10000 (T.isPrefixOf "#include <stdio.h>" . B.lineAt 0 . docBuffer . edDoc) =<< keys "ret" impMenu
       extracted <- settleUntil config rt 10000 (T.isInfixOf "placeholder" . B.toText . docBuffer . edDoc) =<< keys "e x t r a c t ret" picked
       -- Server commands (last: a restart replaces the server the states
       -- above were talking to).
@@ -1275,6 +1294,9 @@ lspTests = do
         , test "typing ( shows the signature" $
             assertEqual (Just "signature", True) (infoTitle <$> edPopup signature, maybe False (any (T.isInfixOf "int a" . fst) . infoRows) (edPopup signature))
         , test "space a lists code actions" (assertEqual (Just "code actions") (pkTitle <$> edPicker actionsShown))
+        , test "space S finds workspace symbols as you type" (assertEqual (Just "workspace symbols") (pkTitle <$> edPicker symbolsFound) >> assertEqual True (maybe False (any ((== "add") . piLabel) . pkMatches) (edPicker symbolsFound)))
+        , test "a completion brings its import" $
+            assertEqual ("#include <stdio.h>", True) (B.lineAt 0 (docBuffer (edDoc imported)), "printf" `T.isInfixOf` B.toText (docBuffer (edDoc imported)))
         , test "a picked code action is applied" (assertEqual True (T.isInfixOf "placeholder" (B.toText (docBuffer (edDoc extracted)))))
         , test ":format formats the file" (assertEqual "int main(void) { return 0; }" (T.strip (B.toText (docBuffer (edDoc formatted)))))
         , test ":lsp-info names the server" (assertEqual True (maybe False (\(Status _ m) -> "clangd" `T.isInfixOf` m) (edStatus infoShown)))
@@ -1511,7 +1533,24 @@ widthTests =
 
 renderTests :: [Test]
 renderTests =
-  [ test "a listing colours its header and directories" $
+  [ test "the picker previews an open buffer at the item's line" $
+      let ed0 = newEditor (24, 100) (newDocument (Just "a.txt") (buf (T.intercalate "\n" [T.pack ("line " <> show n) | n <- [1 .. 50 :: Int]])))
+          ed = ed0 {edPicker = Just (newPicker "t" [pickerItem "a.txt:30" (PickPosition "a.txt" 29 0 Nothing) ""]), edMode = Picking}
+          f = render defaultTheme Nothing ed
+       in assertEqual (Just ("a.txt", True), True)
+            ( fmap (\(t, c) -> (t, either (const False) ((== 29) . snd) c)) (previewFor ed (PickPosition "a.txt" 29 0 Nothing))
+            , any (T.isInfixOf "30 line 30") [rowText f r | r <- [0 .. 23]]
+            )
+  , test "a file that is not open is read for the preview" $
+      let ed0 = newEditor (24, 100) (newDocument Nothing (buf ""))
+          ed = ed0 {edPicker = Just (newPicker "t" [pickerItem "b.txt" (PickFile "b.txt") ""]), edMode = Picking}
+       in assertEqual
+            (Just ("b.txt", Left "loading…"), [StartJob (LoadPreview "b.txt")], Just (PreviewText (buf "hi")))
+            ( previewFor ed (PickFile "b.txt")
+            , edEffects (runNoIO pickerHousekeeping ed)
+            , Map.lookup "b.txt" (edPreviews (runNoIO (Picker.applyJobResult (PreviewLoaded "b.txt" (Right (buf "hi")))) ed))
+            )
+  , test "a listing colours its header and directories" $
       let doc = listingDocument "/x" 0 [DirEntry "f" False, DirEntry "d" True]
           f = render defaultTheme Nothing (newEditor (8, 30) doc)
           -- Column 6: past the gutter (sign lane, number, padding) and the cursor cell.

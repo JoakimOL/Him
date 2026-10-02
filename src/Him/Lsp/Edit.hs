@@ -8,34 +8,12 @@ module Him.Lsp.Edit
   ) where
 
 import Data.List (sortOn)
-import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Ord (Down (..))
-import Data.Text (Text)
 import Him.Buffer (Buffer)
 import Him.Buffer qualified as Buffer
 import Him.Json
-import Him.Lsp.Protocol (Encoding, fromLspColumn, uriToPath)
+import Him.Lsp.Protocol (Encoding, TextEdit (..), fromLspColumn, parseTextEdits, uriToPath)
 import Him.Position (Pos (..))
-
--- | Replace the text between two positions (line, column in the server's
--- units).
-data TextEdit = TextEdit
-  { teStart :: !(Int, Int)
-  , teEnd :: !(Int, Int)
-  , teText :: !Text
-  }
-  deriving stock (Eq, Show)
-
-parseTextEdits :: Value -> [TextEdit]
-parseTextEdits = mapMaybe one . fromMaybe [] . asArray
-  where
-    one e = do
-      r <- key "range" e
-      s <- key "start" r >>= pos
-      t <- key "end" r >>= pos
-      text <- key "newText" e >>= asText
-      pure (TextEdit s t text)
-    pos p = (,) <$> (key "line" p >>= asInt) <*> (key "character" p >>= asInt)
 
 -- | The edits of a @WorkspaceEdit@, per file: its @changes@ map, or its
 -- @documentChanges@ (file creations, renames and deletions are skipped).

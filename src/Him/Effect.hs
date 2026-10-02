@@ -65,9 +65,11 @@ data Job
   | -- | Make sure a language server runs for a document (id, language,
     -- path), starting it if needed.
     LspEnsure !Int !Language !FilePath
+  | -- | Read a file for the picker's preview.
+    LoadPreview !FilePath
   deriving stock (Eq, Show)
 
-data JobKey = ScanJob | FilterJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int | SyntaxJob !Int | LspStartJob !Int
+data JobKey = ScanJob | FilterJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int | SyntaxJob !Int | LspStartJob !Int | PreviewJob !FilePath
   deriving stock (Eq, Ord, Show)
 
 jobKey :: Job -> JobKey
@@ -80,6 +82,7 @@ jobKey = \case
   SyntaxStart d _ -> SyntaxJob d
   Highlight d _ _ _ _ -> SyntaxJob d
   LspEnsure d _ _ -> LspStartJob d
+  LoadPreview file -> PreviewJob file
 
 data JobResult
   = FilesFound !Int ![FilePath]
@@ -103,4 +106,6 @@ data JobResult
   | -- | A message from a server (a reply or a notification).
     LspMessage !Text !Value
   | LspExited !Text
+  | -- | A file read for the preview, or why not.
+    PreviewLoaded !FilePath !(Either Text Buffer)
   deriving stock (Eq, Show)

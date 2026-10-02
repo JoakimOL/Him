@@ -6,6 +6,7 @@ module Him.Editor
   , PromptKind (..)
   , FileAction (..)
   , InfoBox (..)
+  , Preview (..)
   , InfoPlace (..)
   , newEditor
   , keymapMode
@@ -19,6 +20,7 @@ module Him.Editor
   , openBuffer
   , closeBuffer
   , modifyDocument
+  , previewFor
   , mapDocuments
   ) where
 
@@ -28,10 +30,13 @@ import Data.Text (Text)
 import Him.Key (Key)
 import Him.Mode (Mode (..))
 import Him.Effect (Effect)
-import Him.Lsp.State (Completion, LspState, emptyLsp)
-import Him.Picker (Picker)
+import Data.Text qualified as T
+import Him.Lsp.State (Attachment (..), Completion, DocLsp (..), LspState, emptyLsp)
+import Him.Position (Pos (..))
+import Him.Picker (PickTarget (..), Picker)
 import Him.Search (Direction)
-import Him.Selection (Selection)
+import Him.Selection (Selection, primary, rangeHead)
+import Him.Buffer (Buffer)
 import Him.Buffer qualified as Buffer
 import Him.Document (DocKind (..), Document (..), newDocument)
 import Him.View (View, initialView)
@@ -82,6 +87,14 @@ data InfoBox = InfoBox
   }
   deriving stock (Eq, Show)
 
+-- | A file's text for the picker's preview.
+data Preview
+  = PreviewLoading
+  | PreviewText !Buffer
+  | -- | Why there is nothing to show (binary, too large, unreadable).
+    PreviewNone !Text
+  deriving stock (Eq, Show)
+
 -- | Where the box sits: a corner of the text area, or next to the cursor.
 data InfoPlace = BottomLeft | BottomRight | AtCursor | AboveCursor
   deriving stock (Eq, Show)
@@ -110,6 +123,8 @@ data Editor = Editor
   , edPreviewPending :: !Bool
   -- ^ The search text changed; the incremental search preview is computed
   -- once before the next render, not for every key of a burst.
+  , edPreviews :: !(Map FilePath Preview)
+  -- ^ Files read for the picker's preview (while a picker is open).
   , edPicker :: !(Maybe Picker)
   -- ^ The open picker, shown in 'Picking' mode.
   , edEffects :: ![Effect]
@@ -150,6 +165,7 @@ newEditor size doc =
     , edCmdLine = ""
     , edPrompt = ExPrompt
     , edPreviewPending = False
+    , edPreviews = Map.empty
     , edPicker = Nothing
     , edEffects = []
     , edNextId = 2
@@ -244,3 +260,33 @@ mapDocuments f ed =
     }
   where
     g b = b {bufDoc = f (bufDoc b)}
+
+-- | What the picker's preview shows for an item: its file's title, and the
+-- text with the line to centre on, or why there is none. 'Nothing' for
+-- items that are not places (actions, code actions). An open buffer's own
+-- text is used (with unsaved changes); other files come from the cache
+-- ('edPreviews').
+previewFor :: Editor -> PickTarget -> Maybe (Text, Either Text (Buffer, Int))
+previewFor ed = \case
+  PickBuffer i -> case drop i (fst (buffers ed)) of
+    b : _ ->
+      let d = bufDoc b
+       in Just (maybe "[scratch]" T.pack (docPath d), Right (docBuffer d, posLine (rangeHead (primary (docSelection d)))))
+    [] -> Nothing
+  PickFile file -> place file 0
+  PickPosition file line _ _ -> place file line
+  _ -> Nothing
+  where
+    place file line = Just (T.pack file, maybe cached (\d -> Right (docBuffer d, line)) (openDoc file))
+      where
+        cached = case Map.lookup file (edPreviews ed) of
+          Just (PreviewText b) -> Right (b, line)
+          Just (PreviewNone why) -> Left why
+          _ -> Left "loading…"
+    openDoc file =
+      case [d | b <- fst (buffers ed), let d = bufDoc b, docPath d == Just file || attachedTo file d] of
+        d : _ -> Just d
+        [] -> Nothing
+    attachedTo file d = case docLsp d of
+      LspAttached at -> atPath at == file
+      _ -> False

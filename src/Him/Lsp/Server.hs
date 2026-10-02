@@ -147,7 +147,17 @@ initializeParams pid root =
                 , ("hover", object [("contentFormat", JArray [JString "plaintext", JString "markdown"])])
                 , ("definition", object [])
                 , ("references", object [])
-                , ("completion", object [("completionItem", object [("snippetSupport", JBool False)])])
+                , ( "completion"
+                  , object
+                      [ ( "completionItem"
+                        , object
+                            [ ("snippetSupport", JBool False)
+                            , -- Lets servers send imports and docs only for the item chosen.
+                              ("resolveSupport", object [("properties", JArray [JString "additionalTextEdits", JString "detail", JString "documentation"])])
+                            ]
+                        )
+                      ]
+                  )
                 ]
             )
           , ("workspace", object [("configuration", JBool True), ("workspaceFolders", JBool True)])
