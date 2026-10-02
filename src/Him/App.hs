@@ -40,21 +40,25 @@ import Him.Terminal.Raw (withRawTerminal)
 import Him.Terminal.Size (getWindowSize, onResize)
 import System.Exit (die)
 
--- | Run the editor, optionally opening the given file.
-run :: Maybe FilePath -> IO ()
-run file = do
+-- | Run the editor, opening the given files (the first one is shown).
+run :: [FilePath] -> IO ()
+run files = do
   config <- either (die . T.unpack) pure defaultConfig
   -- Load before entering raw mode, so errors print normally.
-  doc <- case file of
-    Nothing -> pure (newDocument Nothing Buffer.empty)
-    Just path -> loadDocument path >>= either (die . T.unpack) pure
-  logMsg ("starting, file = " <> show file)
+  docs <- traverse (\path -> loadDocument path >>= either (die . T.unpack) pure) files
+  logMsg ("starting, files = " <> show files)
   withRawTerminal $ do
     events <- newTChanIO
     size <- fromMaybe (24, 80) <$> getWindowSize
     onResize (atomically . writeTChan events . uncurry EvResize)
     startInputReader events
-    eventLoop config events (newEditor size doc)
+    eventLoop config events (openAll size docs)
+
+-- | An editor showing the first document, with the others open behind it.
+openAll :: (Int, Int) -> [Document] -> Editor
+openAll size docs = case docs of
+  [] -> newEditor size (newDocument Nothing Buffer.empty)
+  d : ds -> gotoBuffer 0 (foldl (flip openBuffer) (newEditor size d) ds)
 
 -- | Most events that can be handled before one render. Typeahead (a paste,
 -- key repeat, a fast typist) is handled first and drawn once, the way Vim

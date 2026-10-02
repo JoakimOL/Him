@@ -32,6 +32,7 @@ allActions =
   Motion.actions
     <> Edit.actions
     <> Search.actions
+    <> File.actions
     <> CommandLine.actions exCommands
 
 exCommands :: [ExCommand]
@@ -80,6 +81,8 @@ normalBindings =
        , ("g e", "goto_last_line")
        , ("g h", "goto_line_start")
        , ("g l", "goto_line_end")
+       , ("g n", "buffer_next")
+       , ("g p", "buffer_previous")
        , ("i", "insert_mode")
        , ("a", "append_mode")
        , ("o", "open_below")

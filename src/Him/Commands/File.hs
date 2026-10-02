@@ -1,30 +1,103 @@
--- | @:@ commands for files and quitting.
+-- | @:@ commands for files, buffers and quitting.
 module Him.Commands.File
   ( exCommands
+  , actions
   ) where
 
+import Control.Exception (IOException, try)
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.State.Strict (gets, modify')
 import Data.Text qualified as T
+import Him.Action
 import Him.Buffer (lineCount)
+import Him.Buffer qualified as Buffer
 import Him.Command
-import Him.Document (Document (..))
+import Him.Document (Document (..), displayName, newDocument)
+import Him.Editor
 import Him.Ex (ExCommand (..))
-import Him.File (saveDocument)
+import Him.File (loadDocument, saveDocument)
+import System.Directory (canonicalizePath)
+
+actions :: [Action]
+actions =
+  [ simple "buffer_next" GBuffers "Go to the next buffer" (modify' (switchBuffer 1))
+  , simple "buffer_previous" GBuffers "Go to the previous buffer" (modify' (switchBuffer (-1)))
+  ]
 
 exCommands :: [ExCommand]
 exCommands =
   [ ExCommand ["write", "w"] "Write the file, optionally to a new path" $ \args ->
       () <$ write args
-  , ExCommand ["quit", "q"] "Quit (refuses with unsaved changes)" $ \_ -> do
-      dirty <- docDirty <$> getDoc
-      if dirty
-        then failWith "unsaved changes (use :q! to discard them, or :wq to save)"
-        else quit
+  , ExCommand ["quit", "q"] "Quit (refuses with unsaved changes in any buffer)" $ \_ -> quitChecked
   , ExCommand ["quit!", "q!"] "Quit, discarding unsaved changes" $ \_ -> quit
+  , ExCommand ["quit-all", "qa"] "Quit (refuses with unsaved changes in any buffer)" $ \_ -> quitChecked
+  , ExCommand ["quit-all!", "qa!"] "Quit, discarding unsaved changes" $ \_ -> quit
   , ExCommand ["write-quit", "wq", "x"] "Write the file and quit" $ \args -> do
       ok <- write args
+      if ok then quitChecked else pure ()
+  , ExCommand ["write-all", "wa"] "Write every modified buffer" $ \_ -> () <$ writeAll
+  , ExCommand ["write-quit-all", "wqa", "xa"] "Write every modified buffer and quit" $ \_ -> do
+      ok <- writeAll
       if ok then quit else pure ()
+  , ExCommand ["open", "o", "edit", "e"] "Open files (switches to one already open)" $ \case
+      [] -> failWith ":open needs a path"
+      paths -> mapM_ (openFile . T.unpack) paths
+  , ExCommand ["new", "n"] "Open a new scratch buffer" $ \_ ->
+      modify' (openBuffer (newDocument Nothing Buffer.empty))
+  , ExCommand ["buffer-close", "bc", "bclose"] "Close the buffer (refuses with unsaved changes)" $ \_ -> do
+      dirty <- docDirty <$> getDoc
+      if dirty
+        then failWith "unsaved changes (use :bc! to discard them)"
+        else modify' closeBuffer
+  , ExCommand ["buffer-close!", "bc!", "bclose!"] "Close the buffer, discarding unsaved changes" $ \_ ->
+      modify' closeBuffer
+  , ExCommand ["buffer-next", "bn", "bnext"] "Go to the next buffer" $ \_ -> modify' (switchBuffer 1)
+  , ExCommand ["buffer-previous", "bp", "bprev"] "Go to the previous buffer" $ \_ -> modify' (switchBuffer (-1))
   ]
+
+-- | Quit unless a buffer has unsaved changes.
+quitChecked :: EditorM ()
+quitChecked = do
+  dirty <- gets (filter docDirty . map bufDoc . fst . buffers)
+  case dirty of
+    [] -> quit
+    [d] -> failWith ("unsaved changes in " <> displayName d <> " (use :q! to discard them, or :wq to save)")
+    ds -> failWith (T.pack (show (length ds)) <> " buffers have unsaved changes (use :q! to discard them, or :wa to save)")
+
+-- | Show a file: switch to its buffer if it is open, otherwise load it (a
+-- missing file opens as an empty buffer that :w creates).
+openFile :: FilePath -> EditorM ()
+openFile path = do
+  want <- liftIO (canonical path)
+  (bs, _) <- gets buffers
+  open <- liftIO (traverse (traverse canonical . docPath . bufDoc) bs)
+  case lookup (Just want) (zip open [0 ..]) of
+    Just i -> modify' (gotoBuffer i)
+    Nothing ->
+      liftIO (loadDocument path) >>= \case
+        Left e -> failWith ("could not open " <> T.pack path <> ": " <> e)
+        Right doc -> modify' (openBuffer doc)
+  where
+    canonical p = either (const p) id <$> (try (canonicalizePath p) :: IO (Either IOException FilePath))
+
+-- | Write every modified buffer that has a path. False if any could not be
+-- written.
+writeAll :: EditorM Bool
+writeAll = do
+  (bs, cur) <- gets buffers
+  results <- traverse (\(i, b) -> saveBuffer i (bufDoc b)) (zip [0 ..] bs)
+  modify' (gotoBuffer cur)
+  let failed = length (filter (== Just False) results)
+      written = length (filter (== Just True) results)
+  if failed == 0
+    then True <$ info ("wrote " <> T.pack (show written) <> " buffer(s)")
+    else False <$ failWith (T.pack (show failed) <> " buffer(s) could not be written")
+  where
+    saveBuffer i doc
+      | not (docDirty doc) = pure Nothing
+      | otherwise = do
+          modify' (gotoBuffer i)
+          Just <$> write []
 
 -- | Save to the given path (and remember it), or to the document's path.
 write :: [T.Text] -> EditorM Bool

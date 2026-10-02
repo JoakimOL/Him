@@ -102,10 +102,68 @@ rebindTests = do
     , test "the default keymaps cover every mode" (assertEqual [minBound .. maxBound] (Map.keys (cfgKeymaps (either (error . T.unpack) id defaultConfig))))
     ]
 
+-- | Opening, switching, closing and saving buffers, on real files.
+openBufferTests :: IO [Test]
+openBufferTests = do
+  config <- either (fail . T.unpack) pure defaultConfig
+  dir <- getTemporaryDirectory
+  let fileA = dir <> "/him-test-buf-a.txt"
+      fileB = dir <> "/him-test-buf-b.txt"
+      fileNew = dir <> "/him-test-buf-new.txt"
+  writeFile fileA "alpha\n"
+  writeFile fileB "beta\n"
+  docA <- either (fail . T.unpack) pure =<< loadDocument fileA
+  let run ed k = execStateT (handleEvent config (EvKey k)) ed
+      keys ks = foldlM run `flip` fromMaybe (error ks) (parseKeys (T.pack ks))
+      -- Type a : command literally (paths contain characters key syntax
+      -- would read differently).
+      ex line ed = foldlM run ed ([plain (KChar ':')] <> map charKey (T.unpack line) <> [plain KEnter])
+      charKey c = if c == ' ' then plain (KChar ' ') else plain (KChar c)
+      start = newEditor (24, 80) docA
+      current ed = (docPath (edDoc ed), bufferIndex ed)
+      a = Just fileA
+      b = Just fileB
+  opened <- ex ("o " <> T.pack fileB) start
+  nextWraps <- keys "g n" opened
+  reopened <- ex ("e " <> T.pack fileA) opened
+  closed <- ex "bc" opened
+  newFile <- ex ("o " <> T.pack fileNew) start
+  editedB <- keys "i X esc" opened
+  quitDirty <- ex "q" =<< keys "g p" editedB
+  closeDirty <- ex "bc" editedB
+  writtenAll <- ex "wa" =<< keys "g p" editedB
+  savedB <- readFile fileB
+  quitAfter <- ex "q" writtenAll
+  scratch <- ex "n" start
+  mapM_ removeFile [fileA, fileB]
+  pure
+    [ test "zipper: open, switch and close" $
+        let e0 = newEditor (24, 80) (newDocument (Just "1") (buf "1"))
+            e1 = openBuffer (newDocument (Just "2") (buf "2")) e0
+            e2 = openBuffer (newDocument (Just "3") (buf "3")) (switchBuffer 1 e1)
+         in assertEqual
+              -- [1, 3, 2]: a new buffer opens right after the current one
+              [(Just "3", (1, 3)), (Just "2", (2, 3)), (Just "2", (1, 2)), (Just "3", (1, 2))]
+              [current e2, current (switchBuffer 1 e2), current (closeBuffer e2), current (closeBuffer (switchBuffer 1 e2))]
+    , test "closing the only buffer leaves a scratch buffer" (assertEqual (Nothing, (0, 1)) (current (closeBuffer start)))
+    , test ":o opens a second buffer and shows it" (assertEqual (b, (1, 2)) (current opened))
+    , test "g n wraps around" (assertEqual (a, (0, 2)) (current nextWraps))
+    , test ":e of an open file switches to it" (assertEqual (a, (0, 2)) (current reopened))
+    , test ":bc closes the buffer" (assertEqual (a, (0, 1)) (current closed))
+    , test ":o of a missing file opens an empty buffer" (assertEqual (Just fileNew, "") (docPath (edDoc newFile), B.toText (docBuffer (edDoc newFile))))
+    , test ":q refuses with unsaved changes in another buffer" $
+        assertEqual (False, Just (Status Error ("unsaved changes in " <> T.pack fileB <> " (use :q! to discard them, or :wq to save)"))) (edQuit quitDirty, edStatus quitDirty)
+    , test ":bc refuses with unsaved changes" (assertEqual (b, (1, 2)) (current closeDirty))
+    , test ":wa writes the other buffer and stays" (assertEqual ("Xbeta\n", a) (savedB, docPath (edDoc writtenAll)))
+    , test ":q quits once everything is saved" (assertEqual True (edQuit quitAfter))
+    , test ":n opens a scratch buffer" (assertEqual (Nothing, (1, 2)) (current scratch))
+    ]
+
 main :: IO ()
 main = do
   integration <- integrationTests
   rebinding <- rebindTests
+  bufferIO <- openBufferTests
   loading <- loadingTests
   runTests
     [ group "Him.Key" keyTests
@@ -127,6 +185,7 @@ main = do
     , group "Him.Render.Diff" diffTests
     , group "keys through the default config" integration
     , group "rebinding keys to actions" rebinding
+    , group "buffers" bufferIO
     , group "Him.File (from disk)" loading
     ]
 

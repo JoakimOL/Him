@@ -5,7 +5,7 @@ module Him.Render.StatusLine
 
 import Data.Text qualified as T
 import Him.Document (Document (..), displayName)
-import Him.Editor (Editor (..))
+import Him.Editor (Editor (..), bufferIndex)
 import Him.Key (showKeys)
 import Him.Mode (modeLabel)
 import Him.Position (Pos (..))
@@ -25,15 +25,18 @@ drawStatusLine theme ed rect =
     doc = edDoc ed
     mode = " " <> modeLabel (edMode ed) <> " "
     dirty = if docDirty doc then " [+]" else ""
+    bufs = case bufferIndex ed of
+      (_, 1) -> ""
+      (i, n) -> "[" <> T.pack (show (i + 1)) <> "/" <> T.pack (show n) <> "] "
     -- Shorten the file name from the left so the dirty marker and the right
     -- section always fit.
-    room = rectWidth rect - T.length mode - T.length right - T.length dirty - 2
+    room = rectWidth rect - T.length mode - T.length right - T.length dirty - T.length bufs - 2
     name = displayName doc
     shortName
       | T.length name <= room = name
       | room <= 1 = ""
       | otherwise = "…" <> T.takeEnd (room - 1) name
-    file = " " <> shortName <> dirty
+    file = " " <> bufs <> shortName <> dirty
     sel = docSelection doc
     Pos l c = rangeHead (primary sel)
     sels

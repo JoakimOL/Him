@@ -55,6 +55,7 @@ data ActionGroup
   | GClipboard
   | GHistory
   | GSearch
+  | GBuffers
   | GPrompt
   | GMisc
   deriving stock (Eq, Ord, Show, Enum, Bounded)
@@ -68,6 +69,7 @@ groupName = \case
   GClipboard -> "clipboard"
   GHistory -> "history"
   GSearch -> "search"
+  GBuffers -> "buffers"
   GPrompt -> "prompt"
   GMisc -> "misc"
 
