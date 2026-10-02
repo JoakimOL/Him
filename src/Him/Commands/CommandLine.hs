@@ -13,6 +13,7 @@ import System.Directory (doesDirectoryExist, listDirectory)
 import Him.Action
 import Him.Command
 import Him.Commands.Directory (runFileAction)
+import Him.Commands.Lsp qualified as Lsp
 import Him.Commands.Search (cancelSearch, executeSearch, executeSelect)
 import Him.Editor (Editor (..), PromptKind (..))
 import Him.Ex (ExArgs (..), ExCommand (..), runExLine)
@@ -39,6 +40,7 @@ actions exTable =
         SearchPrompt dir origin -> executeSearch dir origin line
         SelectPrompt origin -> executeSelect origin line
         FilePrompt act -> runFileAction act line
+        RenamePrompt at -> Lsp.renameTo at line
   , simple "cmdline_complete" GPrompt "Complete the command name or path" (complete exTable)
   , action "ex" GPrompt "Run a : command, e.g. ex \"w\"" (text "command") (runExLine exTable)
   ]
@@ -52,6 +54,7 @@ cancel = do
     SearchPrompt _ origin -> cancelSearch origin
     SelectPrompt origin -> cancelSearch origin
     FilePrompt _ -> pure ()
+    RenamePrompt _ -> pure ()
     ExPrompt -> pure ()
 
 cmdlineInsert :: Char -> EditorM ()
@@ -67,6 +70,7 @@ setCmdLine t = modify' $ \e ->
         SearchPrompt {} -> True
         SelectPrompt {} -> True
         FilePrompt {} -> False
+        RenamePrompt {} -> False
         ExPrompt -> False
     }
 

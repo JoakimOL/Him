@@ -71,6 +71,11 @@ startServer config root deliver exited = do
       initialized <- newEmptyMVar
       let handle v = case classify v of
             Reply (-1) result -> void (tryPutMVar initialized result)
+            -- Edits the server wants made go to the editor (it applies them
+            -- in order); the server hears they were applied.
+            ServerRequest i "workspace/applyEdit" _ -> do
+              deliver v
+              sendMessage server (response i (object [("applied", JBool True)]))
             ServerRequest i method params -> sendMessage server (response i (autoReply method params))
             _ -> deliver v
       _ <- forkIO (reader hout handle >> exited)

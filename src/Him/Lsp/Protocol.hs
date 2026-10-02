@@ -179,6 +179,8 @@ data Diagnostic = Diagnostic
   , diagSeverity :: !Severity
   , diagMessage :: !Text
   , diagSource :: !Text
+  , diagRaw :: !Value
+  -- ^ As the server sent it (code-action requests send it back).
   }
   deriving stock (Eq, Show)
 
@@ -198,7 +200,7 @@ parseDiagnostics params = do
             Just 4 -> SevHint
             _ -> SevError
           source = fromMaybe "" (key "source" d >>= asText)
-      pure (Diagnostic s e sev msg source)
+      pure (Diagnostic s e sev msg source d)
 
 range :: Value -> Maybe ((Int, Int), (Int, Int))
 range r = (,) <$> (key "start" r >>= position) <*> (key "end" r >>= position)

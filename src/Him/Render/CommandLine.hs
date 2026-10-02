@@ -33,6 +33,7 @@ promptLabel ed = case edPrompt ed of
   SearchPrompt Backward _ -> "?"
   SelectPrompt _ -> "select:"
   FilePrompt act -> fileActionLabel act
+  RenamePrompt _ -> "rename to: "
 
 commandLineCursor :: Editor -> Rect -> (Int, Int)
 commandLineCursor ed rect =

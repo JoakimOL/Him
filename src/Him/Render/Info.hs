@@ -33,7 +33,9 @@ drawInfo theme ed area cursor f = case edInfo ed <|> edPopup ed of
           w = inner + 2
           (top, left) = case (place, cursor) of
             (BottomRight, _) -> (rectRow area + rectHeight area - h, rectCol area + rectWidth area - w)
-            (AtCursor, Just (cr, cc)) ->
+            (AboveCursor, Just (cr, cc))
+              | cr - h >= rectRow area -> (cr - h, max (rectCol area) (min cc (rectCol area + rectWidth area - w)))
+            (_, Just (cr, cc)) | place /= BottomLeft ->
               let below = cr + 1
                   above = cr - h
                   row = if below + h <= rectRow area + rectHeight area || above < rectRow area then below else above

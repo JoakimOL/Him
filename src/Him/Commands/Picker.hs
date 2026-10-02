@@ -13,6 +13,8 @@ import Him.Action
 import Him.Effect (Effect (..), Job (..), JobKey (..), JobResult (..))
 import Him.Command
 import Him.Commands.File (openFile)
+import Him.Commands.Lsp qualified as Lsp
+import Him.Lsp.Protocol (Encoding (..), fromLspColumn)
 import Him.Buffer qualified as Buffer
 import Him.Document (Document (..), displayName)
 import Him.Position (Pos (..))
@@ -47,12 +49,19 @@ actions =
                   modify' (\e -> e {edPrompt = ExPrompt, edCmdLine = "action " <> name <> " ", edCompletions = []})
                   setMode CmdLine
               | otherwise -> request (RunAction (Invocation name []))
-            PickPosition path line col -> do
+            PickPosition path line col encoding -> do
               openFile path
               modifyDoc $ \d ->
                 let l = max 0 (min line (Buffer.lineCount (docBuffer d) - 1))
-                    c = max 0 (min col (Buffer.lineLength l (docBuffer d)))
+                    lineText = Buffer.lineAt l (docBuffer d)
+                    -- A language server's column, converted on the line.
+                    c = case encoding of
+                      Just "utf-8" -> fromLspColumn Utf8 lineText col
+                      Just "utf-16" -> fromLspColumn Utf16 lineText col
+                      Just "utf-32" -> fromLspColumn Utf32 lineText col
+                      _ -> max 0 (min col (Buffer.lineLength l (docBuffer d)))
                  in d {docSelection = single (point (Pos l c))}
+            PickCodeAction act -> Lsp.runCodeAction act
         _ -> close
   , simple "picker_next" GPrompt "Select the next item" (onPicker (moveSelection 1))
   , simple "picker_previous" GPrompt "Select the previous item" (onPicker (moveSelection (-1)))

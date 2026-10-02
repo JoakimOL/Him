@@ -10,6 +10,8 @@ module Him.Commands.Lsp
   , applyLspResult
   , completionHousekeeping
   , exCommands
+  , runCodeAction
+  , renameTo
   ) where
 
 import Control.Monad.Trans.State.Strict (get, gets, modify')
@@ -37,16 +39,40 @@ import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Mode (Mode (..))
 import Him.Picker (PickTarget (..), fuzzyScore, newPicker, pickerItem)
 import Him.Position (Pos (..))
-import Him.Selection (point, primary, rangeHead, single)
+import Control.Monad.IO.Class (liftIO)
+import Him.History (Snapshot (..), beginChange)
+import Him.Lsp.Edit
+import Him.Selection (Range (..), mapRanges, point, primary, rangeEnd, rangeHead, rangeStart, single)
+import System.Directory (makeAbsolute)
 
 actions :: [Action]
 actions =
   [ simple "lsp_hover" GLsp "Show documentation for the symbol under the cursor" $
       ask PendingHover "textDocument/hover" []
   , simple "goto_definition" GLsp "Go to the definition of the symbol under the cursor" $
-      ask PendingDefinition "textDocument/definition" []
+      ask (PendingLocations "definitions") "textDocument/definition" []
+  , simple "goto_type_definition" GLsp "Go to the definition of the type of the symbol under the cursor" $
+      ask (PendingLocations "type definitions") "textDocument/typeDefinition" []
+  , simple "goto_implementation" GLsp "Go to the implementations of the symbol under the cursor" $
+      ask (PendingLocations "implementations") "textDocument/implementation" []
   , simple "goto_references" GLsp "List the references to the symbol under the cursor" $
-      ask PendingReferences "textDocument/references" [("context", object [("includeDeclaration", JBool True)])]
+      ask (PendingLocations "references") "textDocument/references" [("context", object [("includeDeclaration", JBool True)])]
+  , simple "rename_symbol" GLsp "Rename the symbol under the cursor everywhere" $ do
+      ed <- get
+      case docLsp (edDoc ed) of
+        LspAttached _ -> do
+          let ((l, c), word) = wordAroundCursor ed
+          modify' (\e -> e {edPrompt = RenamePrompt (l, c), edCmdLine = word, edCompletions = []})
+          setMode CmdLine
+        _ -> failWith "no language server for this file"
+  , simple "format_document" GLsp "Format the file with the language server" formatDocument
+  , simple "code_action" GLsp "List the language server's actions for the selection" codeActions
+  , simple "document_symbols" GLsp "List the symbols of this file" $ do
+      d <- getDoc
+      case docLsp d of
+        LspAttached at ->
+          sendRequest (atServer at) (PendingSymbols (atPath at)) "textDocument/documentSymbol" (object [("textDocument", docIdentifier at)])
+        _ -> failWith "no language server for this file"
   , simple "diagnostics_picker" GLsp "List the diagnostics of this file" $ do
       ed <- get
       let d = edDoc ed
@@ -54,7 +80,7 @@ actions =
           items =
             [ pickerItem
                 (T.pack (show (sdLine sd + 1) <> ":" <> show (sdStart sd + 1)) <> "  " <> severityName (sdSeverity sd))
-                (PickPosition path (sdLine sd) (sdStart sd))
+                (PickPosition path (sdLine sd) (sdStart sd) Nothing)
                 (T.takeWhile (/= '\n') (sdMessage sd))
             | sd <- dedupe (shownDiagnostics (edLsp ed) (docLsp d) (docBuffer d))
             ]
@@ -94,24 +120,35 @@ ask pending method extra = do
   ed <- get
   let d = edDoc ed
   case docLsp d of
-    LspAttached at -> do
-      -- The server must have the current text before the question.
-      lspFlush
-      i <- gets edNextId
-      let Pos l c = rangeHead (primary (docSelection d))
-          enc = encodingOf ed at
-          character = toLspColumn enc (Buffer.lineAt l (docBuffer d)) c
-          params =
-            object $
-              [ ("textDocument", object [("uri", JString (pathToUri (atPath at)))])
-              , ("position", object [("line", JInt (fromIntegral l)), ("character", JInt (fromIntegral character))])
-              ]
-                <> extra
-      modify' $ \e ->
-        e {edNextId = i + 1, edLsp = (edLsp e) {lsPending = IntMap.insert i pending (lsPending (edLsp e))}}
-      request (LspSend (atServer at) (P.request i method params))
+    LspAttached at ->
+      sendRequest (atServer at) pending method $
+        object ([("textDocument", docIdentifier at), ("position", cursorPosition ed at)] <> extra)
     LspStarting -> info "the language server is still starting"
     _ -> failWith "no language server for this file"
+
+-- | Send a request (after bringing the server's text up to date),
+-- remembering what to do with the answer.
+sendRequest :: Text -> Pending -> Text -> Value -> EditorM ()
+sendRequest server pending method params = do
+  lspFlush
+  i <- gets edNextId
+  modify' $ \e ->
+    e {edNextId = i + 1, edLsp = (edLsp e) {lsPending = IntMap.insert i pending (lsPending (edLsp e))}}
+  request (LspSend server (P.request i method params))
+
+docIdentifier :: Attachment -> Value
+docIdentifier at = object [("uri", JString (pathToUri (atPath at)))]
+
+-- | The cursor as an LSP position.
+cursorPosition :: Editor -> Attachment -> Value
+cursorPosition ed at =
+  let d = edDoc ed
+      Pos l c = rangeHead (primary (docSelection d))
+   in lspPosition (encodingOf ed at) (docBuffer d) l c
+
+lspPosition :: Encoding -> Buffer.Buffer -> Int -> Int -> Value
+lspPosition enc buf l c =
+  object [("line", JInt (fromIntegral l)), ("character", JInt (fromIntegral (toLspColumn enc (Buffer.lineAt l buf) c)))]
 
 encodingOf :: Editor -> Attachment -> Encoding
 encodingOf ed at = maybe Utf16 siEncoding (Map.lookup (atServer at) (lsServers (edLsp ed)))
@@ -168,6 +205,8 @@ applyLspResult = \case
     Notification "textDocument/publishDiagnostics" params
       | Just (path, ds) <- parseDiagnostics params ->
           modify' (\e -> e {edLsp = (edLsp e) {lsDiagnostics = Map.insert path ds (lsDiagnostics (edLsp e))}})
+    ServerRequest _ "workspace/applyEdit" params
+      | Just e <- key "edit" params -> () <$ applyWorkspaceEdit (parseWorkspaceEdit e)
     Notification "window/showMessage" params
       | Just text <- key "message" params >>= asText -> info (T.take 200 text)
     _ -> pure ()
@@ -179,8 +218,7 @@ answered pending value = case pending of
   PendingHover -> case parseHover value of
     [] -> info "no documentation here"
     ls -> modify' (\e -> e {edPopup = Just (InfoBox "hover" [(l, "") | l <- take 30 ls] AtCursor)})
-  PendingDefinition -> goToLocations "definitions" (parseLocations value)
-  PendingReferences -> goToLocations "references" (parseLocations value)
+  PendingLocations title -> goToLocations title (parseLocations value)
   PendingCompletion doc _ start -> do
     ed <- get
     let Pos l c = rangeHead (primary (docSelection (edDoc ed)))
@@ -189,36 +227,263 @@ answered pending value = case pending of
     if docId (edDoc ed) == doc && edMode ed == Insert && l == fst start && c >= snd start && not (null items)
       then showCompletion (Completion doc start items [] 0)
       else pure ()
+  PendingRename -> case parseWorkspaceEdit value of
+    [] -> info "nothing to rename"
+    changes -> do
+      n <- applyWorkspaceEdit changes
+      info ("renamed in " <> T.pack (show n) <> " file" <> (if n == 1 then "" else "s"))
+  PendingFormat doc version -> do
+    d <- getDoc
+    case parseTextEdits value of
+      [] -> info "already formatted"
+      edits
+        | docId d == doc && docVersion d == version -> do
+            enc <- currentEncoding
+            modifyDoc (applyToDocument enc edits)
+            info "formatted"
+        | otherwise -> info "the file changed while formatting; try again"
+  PendingCodeActions -> case fromMaybe [] (asArray value) of
+    [] -> info "no code actions here"
+    acts ->
+      modify' $ \e ->
+        e
+          { edPicker =
+              Just
+                ( newPicker
+                    "code actions"
+                    [ pickerItem title (PickCodeAction a) (fromMaybe "" (key "kind" a >>= asText))
+                    | a <- acts
+                    , Just title <- [key "title" a >>= asText]
+                    ]
+                )
+          , edMode = Picking
+          }
+  PendingResolve -> runCodeAction value
+  PendingSignature -> case signatureLines value of
+    [] -> pure ()
+    ls -> modify' (\e -> e {edPopup = Just (InfoBox "signature" [(l, "") | l <- ls] AboveCursor)})
+  PendingSymbols file -> do
+    enc <- currentEncoding
+    case symbols value of
+      [] -> info "no symbols"
+      found ->
+        modify' $ \e ->
+          e
+            { edPicker =
+                Just
+                  ( newPicker
+                      "symbols"
+                      [ pickerItem (T.replicate (2 * depth) " " <> name) (PickPosition file l c (Just (encodingName enc))) (kind <> "  " <> T.pack (show (l + 1)))
+                      | (depth, name, kind, (l, c)) <- found
+                      ]
+                  )
+            , edMode = Picking
+            }
+  PendingIgnore -> pure ()
+
+-- | The active signature, and the first line of its documentation.
+signatureLines :: Value -> [Text]
+signatureLines v = case key "signatures" v >>= asArray of
+  Just sigs@(_ : _) ->
+    let active = fromMaybe 0 (key "activeSignature" v >>= asInt)
+        sig = sigs !! max 0 (min active (length sigs - 1))
+        label = fromMaybe "" (key "label" sig >>= asText)
+        doc = case key "documentation" sig of
+          Just (JString t) -> t
+          Just o -> fromMaybe "" (key "value" o >>= asText)
+          Nothing -> ""
+     in label : take 1 (filter (not . T.null) (T.lines doc))
+  _ -> []
+
+-- | Document symbols, flattened: depth, name, kind, position (server
+-- units). Both the nested and the flat form are read.
+symbols :: Value -> [(Int, Text, Text, (Int, Int))]
+symbols = go 0 . fromMaybe [] . asArray
+  where
+    go depth = concatMap (one depth)
+    one depth s = case key "name" s >>= asText of
+      Nothing -> []
+      Just name ->
+        let at' = (key "selectionRange" s <|> key "range" s <|> (key "location" s >>= key "range")) >>= key "start" >>= position'
+            kind = maybe "" kindName (key "kind" s >>= asInt)
+            children = maybe [] (go (depth + 1)) (key "children" s >>= asArray)
+         in [(depth, name, kind, p) | Just p <- [at']] <> children
+    position' p = (,) <$> (key "line" p >>= asInt) <*> (key "character" p >>= asInt)
+    a <|> b = maybe b Just a
+    kindName k =
+      fromMaybe "" . lookup k . zip [1 ..] $
+        ["file", "module", "namespace", "package", "class", "method", "property", "field", "constructor", "enum", "interface", "function", "variable", "constant", "string", "number", "boolean", "array", "object", "key", "null", "enum member", "struct", "event", "operator", "type parameter"]
+
+currentEncoding :: EditorM Encoding
+currentEncoding = do
+  ed <- get
+  pure $ case docLsp (edDoc ed) of
+    LspAttached at -> encodingOf ed at
+    _ -> Utf16
+
+-- | Apply a server's edits to a document as one undoable change.
+applyToDocument :: Encoding -> [TextEdit] -> Document -> Document
+applyToDocument enc edits d =
+  let buf = applyTextEdits enc edits (docBuffer d)
+   in d
+        { docBuffer = buf
+        , docSelection = mapRanges (\r -> r {rangeAnchor = Buffer.clampPos buf (rangeAnchor r), rangeHead = Buffer.clampPos buf (rangeHead r)}) (docSelection d)
+        , docDirty = buf /= docSavedBuffer d
+        , docVersion = docVersion d + 1
+        , docHistory = beginChange (Snapshot (docBuffer d) (docSelection d)) (docHistory d)
+        }
+
+-- | Apply edits to several files: open buffers are changed in place, other
+-- files are opened (and left modified, to be saved). The current buffer
+-- stays current. Returns how many files changed.
+applyWorkspaceEdit :: [(FilePath, [TextEdit])] -> EditorM Int
+applyWorkspaceEdit changes = do
+  enc <- currentEncoding
+  origin <- gets (docId . edDoc)
+  mapM_ (applyFile enc) changes
+  -- Back to where we were.
+  (bs, _) <- gets buffers
+  case [i | (i, b) <- zip [0 ..] bs, docId (bufDoc b) == origin] of
+    i : _ -> modify' (gotoBuffer i)
+    [] -> pure ()
+  pure (length changes)
+  where
+    applyFile enc (file, edits) = do
+      (bs, _) <- gets buffers
+      absolute <- liftIO (traverse (traverse makeAbsolute . docPath . bufDoc) bs)
+      let matches =
+            [ docId d
+            | (b, abs') <- zip bs absolute
+            , let d = bufDoc b
+            , case docLsp d of
+                LspAttached at -> atPath at == file
+                _ -> abs' == Just file
+            ]
+      case matches of
+        doc : _ -> modify' (modifyDocument doc (applyToDocument enc edits))
+        [] -> do
+          openFile file
+          modifyDoc (applyToDocument enc edits)
+
+-- | Run a code action picked from the list: apply its edit and run its
+-- command; one that comes without either is asked for in full first.
+runCodeAction :: Value -> EditorM ()
+runCodeAction act = do
+  d <- getDoc
+  case docLsp d of
+    LspAttached at -> do
+      let edit' = key "edit" act
+          command = case key "command" act of
+            Just c@(JObject _) -> Just c
+            Just (JString _) -> Just act
+            _ -> Nothing
+      case (edit', command) of
+        (Nothing, Nothing)
+          | Just _ <- key "data" act -> sendRequest (atServer at) PendingResolve "codeAction/resolve" act
+          | otherwise -> info "this action does nothing"
+        _ -> do
+          mapM_ (\e -> applyWorkspaceEdit (parseWorkspaceEdit e)) edit'
+          mapM_ (execute at) command
+    _ -> failWith "no language server for this file"
+  where
+    execute at c = case key "command" c >>= asText of
+      Just name ->
+        sendRequest (atServer at) PendingIgnore "workspace/executeCommand" $
+          object [("command", JString name), ("arguments", fromMaybe (JArray []) (key "arguments" c))]
+      Nothing -> pure ()
+
+codeActions :: EditorM ()
+codeActions = do
+  ed <- get
+  let d = edDoc ed
+  case docLsp d of
+    LspAttached at -> do
+      let r = primary (docSelection d)
+          enc = encodingOf ed at
+          Pos sl sc = rangeStart r
+          Pos el ec = rangeEnd r
+          buf = docBuffer d
+          -- The diagnostics on the selected lines, as the server sent them.
+          diagnostics =
+            [ diagRaw dg
+            | dg <- Map.findWithDefault [] (atPath at) (lsDiagnostics (edLsp ed))
+            , fst (diagStart dg) <= el
+            , fst (diagEnd dg) >= sl
+            ]
+      sendRequest (atServer at) PendingCodeActions "textDocument/codeAction" $
+        object
+          [ ("textDocument", docIdentifier at)
+          , ("range", object [("start", lspPosition enc buf sl sc), ("end", lspPosition enc buf el (min (ec + 1) (Buffer.lineLength el buf)))])
+          , ("context", object [("diagnostics", JArray diagnostics)])
+          ]
+    _ -> failWith "no language server for this file"
+
+formatDocument :: EditorM ()
+formatDocument = do
+  d <- getDoc
+  case docLsp d of
+    LspAttached at ->
+      sendRequest (atServer at) (PendingFormat (docId d) (docVersion d)) "textDocument/formatting" $
+        object [("textDocument", docIdentifier at), ("options", object [("tabSize", JInt 4), ("insertSpaces", JBool True)])]
+    _ -> failWith "no language server for this file"
+
+-- | Enter on the rename prompt.
+renameTo :: (Int, Int) -> Text -> EditorM ()
+renameTo (l, c) newName
+  | T.null (T.strip newName) = pure ()
+  | otherwise = do
+      ed <- get
+      case docLsp (edDoc ed) of
+        LspAttached at ->
+          sendRequest (atServer at) PendingRename "textDocument/rename" $
+            object
+              [ ("textDocument", docIdentifier at)
+              , ("position", lspPosition (encodingOf ed at) (docBuffer (edDoc ed)) l c)
+              , ("newName", JString (T.strip newName))
+              ]
+        _ -> failWith "no language server for this file"
+
+-- | The word under (or just before) the cursor, and where the cursor is.
+wordAroundCursor :: Editor -> ((Int, Int), Text)
+wordAroundCursor ed =
+  let d = edDoc ed
+      Pos l c = rangeHead (primary (docSelection d))
+      line = Buffer.lineAt l (docBuffer d)
+      before = T.takeWhileEnd isWordChar (T.take c line)
+      after = T.takeWhile isWordChar (T.drop c line)
+   in ((l, c), before <> after)
 
 -- | One location: go there. Several: pick one.
 goToLocations :: Text -> [Location] -> EditorM ()
-goToLocations title = \case
-  [] -> info ("no " <> title)
-  [loc] -> openAt loc
-  locs ->
-    modify' $ \e ->
-      e
-        { edPicker =
-            Just
-              ( newPicker
-                  title
-                  [ pickerItem (T.pack (locPath l <> ":" <> show (fst (locStart l) + 1))) (PickPosition (locPath l) (fst (locStart l)) (snd (locStart l))) ""
-                  | l <- locs
-                  ]
-              )
-        , edMode = Picking
-        }
+goToLocations title locations = do
+  enc <- currentEncoding
+  case locations of
+    [] -> info ("no " <> title)
+    [loc] -> openAt enc loc
+    locs ->
+      modify' $ \e ->
+        e
+          { edPicker =
+              Just
+                ( newPicker
+                    title
+                    [ pickerItem (T.pack (locPath l <> ":" <> show (fst (locStart l) + 1))) (PickPosition (locPath l) (fst (locStart l)) (snd (locStart l)) (Just (encodingName enc))) ""
+                    | l <- locs
+                    ]
+                )
+          , edMode = Picking
+          }
 
--- | Open a location's file and put the cursor there (the column is in the
--- server's units: approximated as characters).
-openAt :: Location -> EditorM ()
-openAt loc = do
+-- | Open a location's file and put the cursor there, converting the
+-- server's column against the line.
+openAt :: Encoding -> Location -> EditorM ()
+openAt enc loc = do
   openFile (locPath loc)
   let (l, c) = locStart loc
   modifyDoc $ \d ->
-    let line = min l (Buffer.lineCount (docBuffer d) - 1)
-        col = min c (Buffer.lineLength line (docBuffer d))
-     in d {docSelection = single (point (Pos (max 0 line) (max 0 col)))}
+    let line = max 0 (min l (Buffer.lineCount (docBuffer d) - 1))
+        col = fromLspColumn enc (Buffer.lineAt line (docBuffer d)) c
+     in d {docSelection = single (point (Pos line col))}
 
 jumpDiagnostic :: Bool -> EditorM ()
 jumpDiagnostic forward = do
@@ -309,11 +574,34 @@ acceptCompletion =
               (b', end) = Buffer.insertText from (ciInsert item) (Buffer.deleteRange from (Pos hl hc) b)
            in (b', point end)
 
--- | After every event in insert mode: keep the menu in step with the
--- typing, or open it on its own after a trigger character or the second
--- character of a word.
+-- | After every event in insert mode: keep the completion menu in step
+-- with the typing, or open it on its own after a trigger character or the
+-- second character of a word; and ask for signature help after its
+-- trigger characters (closing it at @)@).
 completionHousekeeping :: EditorM ()
-completionHousekeeping = do
+completionHousekeeping = menuHousekeeping >> signatureHousekeeping
+
+signatureHousekeeping :: EditorM ()
+signatureHousekeeping = do
+  ed <- get
+  let d = edDoc ed
+  case (edMode ed, docLsp d) of
+    (Insert, LspAttached at)
+      | docVersion d /= lsSignatureVersion (edLsp ed) -> do
+          modify' (\e -> e {edLsp = (edLsp e) {lsSignatureVersion = docVersion d}})
+          let Pos l c = rangeHead (primary (docSelection d))
+              previous = T.takeEnd 1 (T.take c (Buffer.lineAt l (docBuffer d)))
+              triggers = maybe [] siSignatureTriggers (Map.lookup (atServer at) (lsServers (edLsp ed)))
+          if previous == ")"
+            then modify' (\e -> e {edPopup = Nothing})
+            else
+              if not (T.null previous) && previous `elem` triggers
+                then ask PendingSignature "textDocument/signatureHelp" []
+                else pure ()
+    _ -> pure ()
+
+menuHousekeeping :: EditorM ()
+menuHousekeeping = do
   ed <- get
   let d = edDoc ed
   case (edCompletion ed, edMode ed) of
@@ -350,6 +638,7 @@ exCommands =
           Nothing -> atServer at
         LspStarting -> "the language server is starting"
         _ -> "no language server for this file"
+  , ExCommand ["format", "fmt"] "Format the file with the language server" NoArgs $ \_ -> formatDocument
   , ExCommand ["lsp-stop"] "Stop the language server of this file" NoArgs $ \_ ->
       withServer $ \server -> do
         stopServer server LspNone

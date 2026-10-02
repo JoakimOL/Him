@@ -1023,8 +1023,8 @@ lspProtocolTests =
         (map classify [JObject [("id", JInt 1), ("result", JNull)], JObject [("id", JInt 2), ("error", JObject [("message", JString "bad")])], JObject [("id", JInt 7), ("method", JString "workspace/configuration")], JObject [("method", JString "x")]])
   , test "diagnostics" $
       assertEqual
-        (Just ("/a.c", [Diagnostic (1, 2) (1, 5) SevWarning "unused" "clang"]))
-        (parseDiagnostics (JObject [("uri", JString "file:///a.c"), ("diagnostics", JArray [JObject [("range", rng 1 2 1 5), ("severity", JInt 2), ("message", JString "unused"), ("source", JString "clang")]])]))
+        (Just ("/a.c", [((1, 2), (1, 5), SevWarning, "unused", "clang")]))
+        (fmap (map (\d -> (diagStart d, diagEnd d, diagSeverity d, diagMessage d, diagSource d))) <$> parseDiagnostics (JObject [("uri", JString "file:///a.c"), ("diagnostics", JArray [JObject [("range", rng 1 2 1 5), ("severity", JInt 2), ("message", JString "unused"), ("source", JString "clang")]])]))
   , test "locations and location links" $
       assertEqual [Location "/a" (3, 4), Location "/b" (5, 6)]
         (parseLocations (JArray [JObject [("uri", JString "file:///a"), ("range", rng 3 4 3 5)], JObject [("targetUri", JString "file:///b"), ("targetSelectionRange", rng 5 6 5 7), ("targetRange", rng 0 0 9 0)]]))
@@ -1231,10 +1231,33 @@ lspTests = do
       -- Completion: type "ad" on a new line; the menu opens by itself.
       menu <- settleUntil config rt 10000 (isJust . edCompletion) =<< keys "g g j o a d" fixed
       accepted <- keys "ret" menu
-      -- Server commands (last: a restart replaces the server the states
-      -- above were talking to).
       let ex line ed = foldlM run ed ([plain (KChar ':')] <> map (\c -> plain (KChar c)) (T.unpack line) <> [plain KEnter])
           isAttached ed = case docLsp (edDoc ed) of LspAttached _ -> True; _ -> False
+      -- Rename add -> plus (cursor on its definition).
+      -- (After the completion above the text is: the add function, main,
+      -- the completed word, then `    int x = add(1, 2);` on line 3.)
+      renamed <- settleUntil config rt 10000 (("plus" `T.isInfixOf`) . B.lineAt 0 . docBuffer . edDoc) =<< keys "space r backspace backspace backspace p l u s ret" . selecting 0 4 4 =<< keys "esc" accepted
+      -- Symbols, signature help, code actions.
+      symbolsShown <- settleUntil config rt 10000 (isJust . edPicker) =<< keys "space s" renamed
+      actionsShown <- settleUntil config rt 10000 (isJust . edPicker) =<< keys "space a" (selecting 3 12 21 renamed)
+      -- (This one edits the text, so it comes after the others.)
+      signature <- settleUntil config rt 10000 (isJust . edPopup) =<< keys "g g j o p l u s (" renamed
+
+      -- Formatting.
+      let ugly = "int  main( void ){return 0;}\n"
+      writeFile (project <> "/ugly.c") ugly
+      uglyDoc <- either (fail . T.unpack) pure =<< loadDocument (project <> "/ugly.c")
+      uglyOpen <- settleUntil config rt 20000 isAttached =<< execStateT (handleEvent config (EvResize 24 80)) (newEditor (24, 80) uglyDoc)
+      formatted <- settleUntil config rt 10000 ((/= T.strip (T.pack ugly)) . B.toText . docBuffer . edDoc) =<< ex "format" uglyOpen
+      -- Apply a code action (clangd's tweaks are commands, whose edits come
+      -- back as a workspace/applyEdit request), in a file of its own.
+      writeFile (project <> "/act.c") "int add(int a, int b) { return a + b; }\nint main(void) {\n    int x = add(1, 2) * 3;\n    return x;\n}\n"
+      actDoc <- either (fail . T.unpack) pure =<< loadDocument (project <> "/act.c")
+      actOpen <- settleUntil config rt 20000 isAttached =<< execStateT (handleEvent config (EvResize 24 80)) (newEditor (24, 80) actDoc)
+      picked <- settleUntil config rt 10000 (isJust . edPicker) =<< keys "space a" (selecting 2 12 20 actOpen)
+      extracted <- settleUntil config rt 10000 (T.isInfixOf "placeholder" . B.toText . docBuffer . edDoc) =<< keys "e x t r a c t ret" picked
+      -- Server commands (last: a restart replaces the server the states
+      -- above were talking to).
       infoShown <- ex "lsp-info" attached
       stopped <- ex "lsp-stop" attached
       restarted <- settleUntil config rt 20000 (\ed -> isAttached ed && diagnosed ed) =<< ex "lsp-restart" attached
@@ -1245,6 +1268,15 @@ lspTests = do
         , test "hover shows a popup" (assertEqual True (isJust (edPopup hovered)))
         , test "g d goes to the definition of add" (assertEqual (Pos 0 4) (rangeHead (primary (docSelection (edDoc defined)))))
         , test "fixing the error clears it" (assertEqual [] (errorsOn fixed))
+        , test "space r renames every use" $
+            assertEqual (True, True) ("int plus(" `T.isPrefixOf` B.lineAt 0 (docBuffer (edDoc renamed)), "plus(1" `T.isInfixOf` B.lineAt 3 (docBuffer (edDoc renamed)))
+        , test "space s lists the symbols" $
+            assertEqual True (maybe False (\p -> all (`elem` map (T.strip . piLabel) (toList (pkItems p))) ["plus", "main"]) (edPicker symbolsShown))
+        , test "typing ( shows the signature" $
+            assertEqual (Just "signature", True) (infoTitle <$> edPopup signature, maybe False (any (T.isInfixOf "int a" . fst) . infoRows) (edPopup signature))
+        , test "space a lists code actions" (assertEqual (Just "code actions") (pkTitle <$> edPicker actionsShown))
+        , test "a picked code action is applied" (assertEqual True (T.isInfixOf "placeholder" (B.toText (docBuffer (edDoc extracted)))))
+        , test ":format formats the file" (assertEqual "int main(void) { return 0; }" (T.strip (B.toText (docBuffer (edDoc formatted)))))
         , test ":lsp-info names the server" (assertEqual True (maybe False (\(Status _ m) -> "clangd" `T.isInfixOf` m) (edStatus infoShown)))
         , test ":lsp-stop detaches and drops the diagnostics" (assertEqual (LspNone, False) (docLsp (edDoc stopped), diagnosed stopped))
         , test ":lsp-restart attaches again and diagnostics return" (assertEqual (True, True) (isAttached restarted, diagnosed restarted))

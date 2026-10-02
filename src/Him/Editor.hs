@@ -56,6 +56,8 @@ data PromptKind
   | -- | A file operation in a directory listing, waiting for a name or a
     -- confirmation.
     FilePrompt !FileAction
+  | -- | The new name for the symbol at this position (language server).
+    RenamePrompt !(Int, Int)
   deriving stock (Eq, Show)
 
 -- | File operations in a directory listing ("Him.Commands.Directory").
@@ -81,7 +83,7 @@ data InfoBox = InfoBox
   deriving stock (Eq, Show)
 
 -- | Where the box sits: a corner of the text area, or next to the cursor.
-data InfoPlace = BottomLeft | BottomRight | AtCursor
+data InfoPlace = BottomLeft | BottomRight | AtCursor | AboveCursor
   deriving stock (Eq, Show)
 
 -- | The open documents form a zipper: the current one ('edDoc', with

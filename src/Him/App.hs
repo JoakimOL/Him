@@ -133,8 +133,11 @@ handleEvent config (EvJob result) = do
   runEffects config
   housekeeping
 handleEvent config (EvKey key) = do
-  -- A popup (hover) lasts until the next key.
-  modify' (\e -> e {edPopup = Nothing})
+  -- A popup (hover) lasts until the next key; signature help stays while
+  -- typing in insert mode (it closes at ')' or when insert mode ends).
+  modify' $ \e ->
+    let keep = edMode e == Insert && fmap infoTitle (edPopup e) == Just "signature"
+     in e {edPopup = if keep then edPopup e else Nothing}
   ed <- get
   let pending = edPending ed
       keys = pending <> [key]

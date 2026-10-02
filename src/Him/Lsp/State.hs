@@ -71,10 +71,21 @@ data Attachment = Attachment
 -- | A request waiting for its reply, and what to do with it.
 data Pending
   = PendingHover
-  | PendingDefinition
-  | PendingReferences
+  | -- | Definitions, references, …: the picker's title.
+    PendingLocations !Text
   | -- | Document, its version, and where the completed word starts.
     PendingCompletion !Int !Int !(Int, Int)
+  | PendingRename
+  | -- | Document and version formatted.
+    PendingFormat !Int !Int
+  | PendingCodeActions
+  | -- | A code action asked to be completed (@codeAction/resolve@).
+    PendingResolve
+  | PendingSignature
+  | -- | The document's path.
+    PendingSymbols !FilePath
+  | -- | An answer nothing waits for (e.g. @workspace/executeCommand@).
+    PendingIgnore
   deriving stock (Eq, Show)
 
 data LspState = LspState
@@ -85,11 +96,13 @@ data LspState = LspState
   -- ^ By absolute path, as the servers last published them.
   , lsAutoVersion :: !Int
   -- ^ The document version last looked at for automatic completion.
+  , lsSignatureVersion :: !Int
+  -- ^ The same, for signature help.
   }
   deriving stock (Eq, Show)
 
 emptyLsp :: LspState
-emptyLsp = LspState Map.empty IntMap.empty Map.empty (-1)
+emptyLsp = LspState Map.empty IntMap.empty Map.empty (-1) (-1)
 
 -- | The completion menu in insert mode.
 data Completion = Completion

@@ -25,6 +25,7 @@ import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as T
+import Him.Json (Value)
 
 -- | What choosing an item does.
 data PickTarget
@@ -34,8 +35,12 @@ data PickTarget
   | -- | Run an action (the command palette); 'True' when it needs
     -- arguments, which are then asked for on the @:@ line.
     PickAction !Text !Bool
-  | -- | A place in a file: path, line, column.
-    PickPosition !FilePath !Int !Int
+  | -- | A place in a file: path, line, column; the column is in the
+    -- characters, or in a language server's units when its encoding is
+    -- named (converted once the file is open).
+    PickPosition !FilePath !Int !Int !(Maybe Text)
+  | -- | A language server's code action (or command), as it sent it.
+    PickCodeAction !Value
   deriving stock (Eq, Show)
 
 data PickerItem = PickerItem
