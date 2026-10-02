@@ -43,6 +43,7 @@ library:
   - containers
   - directory
   - filepath
+  - process
   - stm
   - text
   - transformers

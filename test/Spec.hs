@@ -30,6 +30,10 @@ import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirec
 import Him.FileTree (listFiles)
 import Him.Picker
 import Him.Ignore
+import Him.Json hiding (path)
+import Him.Json qualified as J
+import Him.Process (ProcessResult (..), runProcess)
+import System.Exit (ExitCode (..))
 import Him.Directory (entriesIn, entryAt, listingDocument)
 import Him.Key
 import Him.Keymap
@@ -296,6 +300,7 @@ main :: IO ()
 main = do
   integration <- integrationTests
   rebinding <- rebindTests
+  processes <- processTests
   bufferIO <- openBufferTests
   loading <- loadingTests
   runTests
@@ -311,6 +316,8 @@ main = do
     , group "Him.Action" actionTests
     , group "Him.Picker" pickerTests
     , group "Him.Ignore" ignoreTests
+    , group "Him.Json" jsonTests
+    , group "Him.Process" processes
     , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests
     , group "Him.Ex" exTests
@@ -713,6 +720,63 @@ ignoreTests =
   ]
   where
     ign pat path = isIgnored [(Below "", parseIgnore pat)] path False
+
+jsonTests :: [Test]
+jsonTests =
+  [ test "objects, arrays and literals" $
+      assertEqual
+        (Right (JObject [("a", JArray [JInt 1, JBool True, JNull]), ("b", JObject [])]))
+        (parseJson " { \"a\" : [1, true, null], \"b\": {} } ")
+  , test "numbers" $
+      assertEqual (Right [JInt 0, JInt (-12), JDouble 1.5, JDouble 1000, JInt 123456789012345678901234567890])
+        (traverse parseJson ["0", "-12", "1.5", "1e3", "123456789012345678901234567890"])
+  , test "escapes" (assertEqual (Right (JString "\"\\/\b\f\n\r\t\233")) (parseJson "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u00e9\""))
+  , test "surrogate pairs join; a lone surrogate is replaced" $
+      assertEqual (Right [JString "\128512", JString "\65533x"]) (traverse parseJson ["\"\\ud83d\\ude00\"", "\"\\ud83dx\""])
+  , test "raw UTF-8 in strings" (assertEqual (Right (JString "æ漢")) (parseJson (TE.encodeUtf8 "\"æ漢\"")))
+  , test "malformed input is an error" $
+      assertEqual [True, True, True, True, True, True]
+        (map (isLeft . parseJson) ["{\"a\" 1}", "[1,]", "\"open", "tru", "1 2", "\"a\nb\""])
+  , test "accessors" $
+      let v = JObject [("result", JObject [("n", JInt 3), ("s", JString "x")])]
+       in assertEqual (Just 3, Just "x", Nothing) (J.path ["result", "n"] v >>= asInt, J.path ["result", "s"] v >>= asText, J.path ["result", "z"] v)
+  , test "random values round-trip through render and parse" $
+      let vals = take 300 (map (fst . genValue 3) (chunksOf 40 (randoms 23)))
+       in assertEqual [] [v | v <- vals, parseJson (renderJson v) /= Right v]
+  ]
+  where
+    isLeft = either (const True) (const False)
+    chunksOf n xs = let (a, b) = splitAt n xs in a : chunksOf n b
+    -- A random value from a supply of random numbers.
+    genValue :: Int -> [Int] -> (Value, [Int])
+    genValue depth (r : rs) = case r `mod` (if depth <= 0 then 5 else 7) of
+      0 -> (JNull, rs)
+      1 -> (JBool (even (r `div` 7)), rs)
+      2 -> (JInt (fromIntegral (r `div` 7) - 2 ^ (40 :: Int)), rs)
+      3 -> (JDouble (fromIntegral (r `mod` 100000) / 64), rs)
+      4 -> (JString (T.pack (take (r `mod` 6) (map (pickChar . (`div` 3)) rs))), drop 6 rs)
+      5 -> let (vs, rest) = many (r `mod` 4) (depth - 1) rs in (JArray vs, rest)
+      _ -> let (vs, rest) = many (r `mod` 4) (depth - 1) rs in (JObject (zip ["k", "é", "\"q", "\n"] vs), rest)
+    genValue _ [] = (JNull, [])
+    many 0 _ rs = ([], rs)
+    many n d rs = let (v, rs') = genValue d rs; (vs, rs'') = many (n - 1 :: Int) d rs' in (v : vs, rs'')
+    pickChar n = let pool = "aZ \"\\\n\t\0é漢😀\DEL" in pool !! (n `mod` length pool)
+
+processTests :: IO [Test]
+processTests = do
+  echoed <- runProcess "cat" [] Nothing "hello"
+  failing <- runProcess "sh" ["-c", "echo err >&2; exit 3"] Nothing ""
+  missing <- runProcess "him-no-such-command" [] Nothing ""
+  let big = BS.replicate 3000000 65
+  bigEcho <- runProcess "cat" [] Nothing big
+  pure
+    [ test "stdin goes in, stdout comes out" (assertEqual (Right (ExitSuccess, "hello", "")) (summary <$> echoed))
+    , test "stderr and the exit code" (assertEqual (Right (ExitFailure 3, "", "err\n")) (summary <$> failing))
+    , test "a missing program is an error, not an exception" (assertEqual True (either (const True) (const False) missing))
+    , test "3 MB through a pipe both ways does not deadlock" (assertEqual (Right 3000000) (BS.length . prStdout <$> bigEcho))
+    ]
+  where
+    summary r = (prExit r, prStdout r, prStderr r)
 
 pickerTests :: [Test]
 pickerTests =
