@@ -56,17 +56,22 @@ logicalLines = go . map (fmap stripComment)
   where
     go [] = []
     go ((n, l) : rest)
-      | depth l > 0 && not (isHeader l) =
-          let (more, rest') = collect (depth l) rest
+      | d > 0 && not (isHeader l) =
+          let (more, rest') = collect d rest
            in (n, T.intercalate " " (l : more)) : go rest'
       | otherwise = (n, l) : go rest
+      where
+        d = depth l
     collect _ [] = ([], [])
     collect d ((_, l) : rest)
       | d + depth l <= 0 = ([l], rest)
       | otherwise = let (more, rest') = collect (d + depth l) rest in (l : more, rest')
     isHeader l = "[" `T.isPrefixOf` T.stripStart l
     -- Open minus closed brackets outside strings (comments are gone).
-    depth l = count (0 :: Int) False False (T.unpack l)
+    -- Most lines have none, and are not walked.
+    depth l
+      | T.any (\c -> c == '[' || c == ']' || c == '{' || c == '}') l = count (0 :: Int) False False (T.unpack l)
+      | otherwise = 0
     count acc _ _ [] = acc
     count acc inStr esc (c : cs)
       | inStr = if esc then count acc True False cs else if c == '\\' then count acc True True cs else count acc (c /= '"') False cs
@@ -76,9 +81,11 @@ logicalLines = go . map (fmap stripComment)
       | c == ']' || c == '}' = count (acc - 1) False False cs
       | otherwise = count acc False False cs
 
--- | Drop a comment, minding strings.
+-- | Drop a comment, minding strings. A line without @#@ is left alone.
 stripComment :: Text -> Text
-stripComment = T.pack . go False False . T.unpack
+stripComment t
+  | T.any (== '#') t = T.pack (go False False (T.unpack t))
+  | otherwise = t
   where
     go _ _ [] = []
     go inStr esc (c : cs)
@@ -158,10 +165,15 @@ value t = case T.uncons t of
           Just ('}', more) -> Right (acc', more)
           _ -> Left "expected , or } in the inline table"
 
--- | A double-quoted string with escapes.
+-- | A double-quoted string with escapes. One without escapes (the usual
+-- case) is a slice.
 basicString :: Text -> Either Text (Text, Text)
-basicString t = go [] (T.unpack (T.drop 1 t))
+basicString t = case T.uncons stop of
+  Just ('"', after) -> Right (plain, after)
+  _ -> go [] (T.unpack body)
   where
+    body = T.drop 1 t
+    (plain, stop) = T.break (\c -> c == '"' || c == '\\') body
     go acc = \case
       '"' : rest -> Right (T.pack (reverse acc), T.pack rest)
       '\\' : c : rest -> case c of

@@ -9,12 +9,13 @@ module Him.Theme.Load
 
 import Control.Exception (IOException, try)
 import Data.List (nub, sort)
+import Data.Maybe (isNothing)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Him.Paths (themeDirs)
-import Him.Render.Theme (Theme, fromScopes)
+import Him.Render.Theme (Theme, defaultTheme, fromScopes)
 import Him.Theme
 import System.Directory (doesFileExist, listDirectory)
 import System.Environment (lookupEnv)
@@ -29,13 +30,21 @@ hasTrueColor = maybe False (`elem` ["truecolor", "24bit"]) <$> lookupEnv "COLORT
 loadTheme :: Bool -> Text -> IO (Either Text (Theme, [Text]))
 loadTheme trueColor name = do
   dirs <- themeDirs
-  chain dirs (0 :: Int) 0 name >>= \case
-    Left e -> pure (Left e)
-    Right tf ->
-      let (scopes, warnings) = resolveTheme tf
-          scopes' = if trueColor then scopes else Map.map downsample scopes
-       in pure (Right (fromScopes name scopes', warnings))
+  -- The built-in theme is parsed once ('defaultTheme'), unless a file
+  -- replaces it.
+  own <- if name == "default" then find dirs 0 name else pure Nothing
+  -- (Its colours are palette indexes, so it needs no 256-colour fallback.)
+  if name == "default" && isNothing own
+    then pure (Right (defaultTheme, []))
+    else load dirs
   where
+    load dirs =
+      chain dirs (0 :: Int) 0 name >>= \case
+        Left e -> pure (Left e)
+        Right tf ->
+          let (scopes, warnings) = resolveTheme tf
+              scopes' = if trueColor then scopes else Map.map downsample scopes
+           in pure (Right (fromScopes name scopes', warnings))
     -- The file and its ancestors, merged. A theme inheriting its own name
     -- (a user's tweak of a Helix theme) gets the next one found.
     chain dirs depth from n
@@ -54,7 +63,7 @@ loadTheme trueColor name = do
                     Nothing -> pure (Right tf)
                     Just parent -> fmap (`mergeThemeFiles` tf) <$> chain dirs (depth + 1) (if parent == n then i + 1 else 0) parent
     find dirs from n = do
-      let candidates = drop from (zip [0 ..] [d </> T.unpack n <> ".toml" | d <- dirs])
+      let candidates = drop from (zip [0 :: Int ..] [d </> T.unpack n <> ".toml" | d <- dirs])
       found <- traverse (\(i, p) -> (\ok -> (i, p, ok)) <$> doesFileExist p) candidates
       pure (case [(i, p) | (i, p, True) <- found] of
         x : _ -> Just x

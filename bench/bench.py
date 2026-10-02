@@ -318,7 +318,7 @@ def scenario_jump(editor: Editor, ctx) -> dict:
 
 
 def scenario_edit_save(editor: Editor, ctx) -> dict:
-    target = ctx.workdir / f"edit-{editor.name}.txt"
+    target = ctx.workdir / f"edit-{editor.name}{ctx.large_file.suffix}"
     shutil.copyfile(ctx.large_file, target)
     script = [b"i", TYPED.encode(), Pause(ESC_PAUSE), b"\x1b", Pause(ESC_PAUSE)] + editor.write_quit()
     result = scripted(editor, target, script, wait_paint=True)
@@ -383,7 +383,7 @@ def search_session(editor: Editor, ctx, body, verify_target: str | None = None) 
     """Run `body` on a copy of the large file. With `verify_target`, finish
     by searching for it once more, typing HIT before the match and saving:
     the edited file shows whether the editor really found the right place."""
-    target_file = ctx.workdir / f"search-{editor.name}.txt"
+    target_file = ctx.workdir / f"search-{editor.name}{ctx.large_file.suffix}"
     shutil.copyfile(ctx.large_file, target_file)
     s = Session(editor.cmd + [str(target_file)], editor.env)
     try:
@@ -530,7 +530,14 @@ def editors(workdir: Path, him: str | None) -> dict[str, Editor]:
     helix_config.write_text("[editor]\nauto-completion = false\nauto-pairs = false\n")
     found = {}
     if him:
-        found["him"] = Editor("him", [him], goto_end=b"ge", goto_top=b"gg")
+        # Own config files, so the user's config does not change the numbers:
+        # every plugin (the default), and none (a "lightweight" him).
+        full = workdir / "him-full.toml"
+        full.write_text("")
+        lite = workdir / "him-lite.toml"
+        lite.write_text("[plugins]\ngit = false\nlsp = false\nrepl = false\n")
+        found["him"] = Editor("him", [him], goto_end=b"ge", goto_top=b"gg", env={"HIM_CONFIG": str(full)})
+        found["him-lite"] = Editor("him-lite", [him], goto_end=b"ge", goto_top=b"gg", env={"HIM_CONFIG": str(lite)})
     if shutil.which("vim"):
         # No vimrc, plugins, swap or viminfo; short key-code timeout.
         found["vim"] = Editor(
@@ -546,8 +553,9 @@ def editors(workdir: Path, him: str | None) -> dict[str, Editor]:
 
 
 def editor_version(editor: Editor) -> str:
-    if editor.name == "him":
-        return f"him (this repository, {editor.cmd[0]})"
+    if editor.name.startswith("him"):
+        plugins = "plugins off" if editor.name == "him-lite" else "all plugins"
+        return f"him (this repository, {plugins}, {editor.cmd[0]})"
     cmd = {"vim": ["vim", "--version"], "helix": ["hx", "--version"]}[editor.name]
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout.splitlines()[0]
@@ -600,7 +608,7 @@ def print_table(results: dict, names: list[str]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--editors", default="him,vim,helix", help="comma-separated (default: him,vim,helix)")
+    ap.add_argument("--editors", default="him,him-lite,vim,helix", help="comma-separated (default: him,him-lite,vim,helix)")
     ap.add_argument("--scenarios", default=",".join(SCENARIOS), help="comma-separated scenario names")
     ap.add_argument("--runs", type=int, default=5, help="runs per scenario; the median is reported")
     ap.add_argument("--lines", type=int, default=200_000, help="lines in the large file")
@@ -610,6 +618,8 @@ def main() -> int:
     ap.add_argument("--search-samples", type=int, default=10, help="searches measured per search run")
     ap.add_argument("--him", help="path to the him binary (default: from `stack path`)")
     ap.add_argument("--json", help="also write all raw results to this file")
+    ap.add_argument("--ext", default="txt", help="extension of the large file (e.g. rs: highlighting and language servers start)")
+    ap.add_argument("--git", action="store_true", help="make the work directory a git repository with the file committed (git signs have work to do)")
     args = ap.parse_args()
 
     workdir = Path(tempfile.mkdtemp(prefix="him-bench-"))
@@ -624,8 +634,11 @@ def main() -> int:
             print("no editors to benchmark", file=sys.stderr)
             return 1
 
-        large = workdir / "large.txt"
+        large = workdir / f"large.{args.ext}"
         make_large_file(large, args.lines)
+        if args.git:
+            for cmd in (["git", "init", "-q"], ["git", "add", large.name], ["git", "-c", "user.name=b", "-c", "user.email=b@b", "commit", "-qm", "bench"]):
+                subprocess.run(cmd, cwd=workdir, check=True)
         ctx = Context(workdir, large, args.moves, args.jumps, args.samples, args.search_samples, args.lines)
         size_mb = large.stat().st_size / 1e6
         print(f"terminal {COLS}x{ROWS}, large file: {args.lines} lines ({size_mb:.1f} MB), "
