@@ -35,6 +35,7 @@ import Him.Runtime qualified as Runtime
 import Control.Concurrent.STM (atomically, newTChanIO, readTChan, writeTChan)
 import System.Timeout (timeout)
 import Him.Ignore
+import Him.Diff
 import Him.Palette (paletteItems)
 import Him.Json hiding (path)
 import Him.Json qualified as J
@@ -395,6 +396,7 @@ main = do
     , group "Him.Picker" pickerTests
     , group "Him.Ignore" ignoreTests
     , group "Him.Json" jsonTests
+    , group "Him.Diff" diffTests'
     , group "Him.Process" processes
     , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests
@@ -798,6 +800,42 @@ ignoreTests =
   ]
   where
     ign pat path = isIgnored [(Below "", parseIgnore pat)] path False
+
+diffTests' :: [Test]
+diffTests' =
+  [ test "identical texts have no hunks" (assertEqual [] (diffLines ["a", "b"] ["a", "b"]))
+  , test "an added line" (assertEqual [Hunk 1 0 1 1] (diffLines ["a", "c"] ["a", "b", "c"]))
+  , test "a removed line" (assertEqual [Hunk 1 1 1 0] (diffLines ["a", "b", "c"] ["a", "c"]))
+  , test "a changed line" (assertEqual [Hunk 1 1 1 1] (diffLines ["a", "b", "c"] ["a", "x", "c"]))
+  , test "separate hunks" (assertEqual [Hunk 0 1 0 1, Hunk 3 0 3 1] (diffLines ["a", "b", "c"] ["x", "b", "c", "d"]))
+  , test "kinds" (assertEqual [Added, Removed, Changed] (map hunkKind [Hunk 1 0 1 2, Hunk 1 2 1 0, Hunk 0 1 0 1]))
+  , test "mapLine shifts lines after a hunk" $
+      -- A line inserted before old line 1; old line 2 replaced by new line 3.
+      assertEqual [0, 2, 3, 4] (map (mapLine [Hunk 1 0 1 1, Hunk 2 1 3 1]) [0, 1, 2, 3])
+  , test "random edits: hunks rebuild the new text and are minimal" (mapM_ diffModel (take 400 (chunks' (randoms 29))))
+  , test "a huge rewrite falls back to one hunk" $
+      let old = [T.pack (show i) | i <- [1 .. 3000 :: Int]]
+          new = [T.pack ("x" <> show i) | i <- [1 .. 3000 :: Int]]
+       in assertEqual [Hunk 0 3000 0 3000] (diffLines old new)
+  ]
+  where
+    chunks' xs = let (a, b) = splitAt 30 xs in a : chunks' b
+    diffModel rs = case rs of
+      (r1 : r2 : more) ->
+        let alphabet = ["a", "b", "c", "d"]
+            old = [alphabet !! (r `mod` 4) | r <- take (r1 `mod` 12) more]
+            new = [alphabet !! (r `div` 5 `mod` 4) | r <- take (r2 `mod` 12) (drop 12 more)]
+            hs = diffLines old new
+            changed = sum [hOldCount h + hNewCount h | h <- hs]
+            optimal = length old + length new - 2 * lcs old new
+         in if applyHunks hs old new /= new
+              then Left ("does not rebuild: " <> show (old, new, hs))
+              else if changed /= optimal then Left ("not minimal: " <> show (old, new, hs)) else Right ()
+      _ -> Right ()
+    -- Longest common subsequence, by the textbook dynamic program.
+    lcs xs ys = last (foldl step (replicate (length ys + 1) 0) xs)
+      where
+        step prev x = scanl (\left (y, diag, up) -> if x == y then diag + 1 else max left up) 0 (zip3 ys prev (drop 1 prev))
 
 jsonTests :: [Test]
 jsonTests =

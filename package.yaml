@@ -39,6 +39,7 @@ ghc-options:
 library:
   source-dirs: src
   dependencies:
+  - array
   - bytestring
   - containers
   - directory
