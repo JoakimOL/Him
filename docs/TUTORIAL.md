@@ -900,6 +900,28 @@ elsewhere is part of your program's memory safety. him now builds its own gramma
 (`him --build-grammars`, with `-fno-strict-aliasing`) instead of trusting prebuilt
 ones.
 
+### 5.10 A language-server client without blocking (ADR-29)
+
+LSP is JSON-RPC over a pipe. The design question is where the waiting happens, and the
+answer is: never on the main thread. Three pieces cooperate:
+- **The runtime** owns the server processes. A reader thread turns the byte stream into
+  messages with a pure framer (`feedFramer`, tested at every split point of a stream),
+  and a writer thread drains a queue. Requests from the server that need no decision,
+  such as "send me your configuration", are answered right there.
+- **The editor** builds messages as plain JSON values and sends them as an effect
+  (`LspSend`). It records what each request was for: `IntMap Pending`, keyed by id.
+- **Replies** arrive as events. `answered` is a pure function from `Pending` and the
+  result to an editor change: a hover popup, a jump, a picker, a completion menu.
+
+Positions are where clients often go wrong. LSP counts UTF-16 code units by default;
+him counts characters. The client offers UTF-8, which clangd and rust-analyzer accept,
+and converts columns per line (`toLspColumn` / `fromLspColumn`). The conversions are
+tested with an emoji, which is 1 character, 2 UTF-16 units and 4 UTF-8 bytes.
+
+The tests drive a real clangd: open a C file with a type error, wait for the
+diagnostic, hover, jump to a definition, fix the error and watch the diagnostic
+disappear, then complete a word.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with

@@ -36,6 +36,11 @@ the commands as you type (`tab` completes). In a git repository the gutter shows
 lines; `space g s` stages the selected lines (`space g u` unstages, `] g` jumps). After a prefix key such as `g` or `space`, a
 menu shows what can follow. The full key list is in docs/PLAN.md §6.
 
+With a language server installed (clangd, rust-analyzer, haskell-language-server,
+typescript-language-server, …), diagnostics show in the gutter. `space k` shows
+documentation, `g d` goes to a definition, `g R` lists references, and completion opens
+while you type.
+
 Syntax highlighting uses tree-sitter grammars that him compiles itself. Fetch grammar
 sources once with Helix (`hx --grammar fetch`), then run `him --build-grammars`. That
 builds them into `~/.config/him/runtime/grammars`; the highlight queries are read from
