@@ -24,6 +24,7 @@ import Data.Text (Text)
 import Him.Document (Document)
 import Him.Key (Key)
 import Him.Mode (Mode (..))
+import Him.Picker (Picker)
 import Him.Search (Direction)
 import Him.Selection (Selection)
 import Him.Buffer qualified as Buffer
@@ -88,6 +89,8 @@ data Editor = Editor
   , edPreviewPending :: !Bool
   -- ^ The search text changed; the incremental search preview is computed
   -- once before the next render, not for every key of a burst.
+  , edPicker :: !(Maybe Picker)
+  -- ^ The open picker, shown in 'Picking' mode.
   , edInfo :: !(Maybe InfoBox)
   , edCompletions :: ![Text]
   -- ^ Candidates from the last @tab@ on the command line, shown until the
@@ -114,6 +117,7 @@ newEditor size doc =
     , edCmdLine = ""
     , edPrompt = ExPrompt
     , edPreviewPending = False
+    , edPicker = Nothing
     , edInfo = Nothing
     , edCompletions = []
     , edRegisters = Map.empty

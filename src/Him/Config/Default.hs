@@ -21,6 +21,7 @@ import Him.Commands.CommandLine qualified as CommandLine
 import Him.Commands.Edit qualified as Edit
 import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
+import Him.Commands.Picker qualified as Picker
 import Him.Commands.Search qualified as Search
 import Him.Config (Bindings, Config (..), buildConfig, overrideBindings)
 import Him.Ex (ExCommand)
@@ -33,6 +34,7 @@ allActions =
     <> Edit.actions
     <> Search.actions
     <> File.actions
+    <> Picker.actions
     <> CommandLine.actions exCommands
 
 exCommands :: [ExCommand]
@@ -81,6 +83,8 @@ normalBindings =
        , ("g e", "goto_last_line")
        , ("g h", "goto_line_start")
        , ("g l", "goto_line_end")
+       , ("space f", "file_picker")
+       , ("space b", "buffer_picker")
        , ("g n", "buffer_next")
        , ("g p", "buffer_previous")
        , ("i", "insert_mode")
@@ -119,6 +123,20 @@ commandBindings =
   , ("backspace", "cmdline_backspace")
   ]
 
+pickerBindings :: [(Text, Text)]
+pickerBindings =
+  [ ("esc", "picker_close")
+  , ("C-c", "picker_close")
+  , ("ret", "picker_accept")
+  , ("down", "picker_next")
+  , ("C-n", "picker_next")
+  , ("tab", "picker_next")
+  , ("up", "picker_previous")
+  , ("C-p", "picker_previous")
+  , ("S-tab", "picker_previous")
+  , ("backspace", "picker_backspace")
+  ]
+
 -- | The default bindings. Select mode also gets normal mode's bindings
 -- (see 'Him.Config.inheritsFrom').
 defaultBindings :: Bindings
@@ -128,6 +146,7 @@ defaultBindings =
     , (Select, selectBindings)
     , (Insert, insertBindings)
     , (CmdLine, commandBindings)
+    , (Picking, pickerBindings)
     ]
 
 -- | The default configuration. Every binding is checked against the
@@ -155,5 +174,6 @@ fallback mode (Key (KChar c) mods)
   | Set.null (Set.delete Shift mods) = case mode of
       Insert -> Just (Edit.insertChar c)
       CmdLine -> Just (CommandLine.cmdlineInsert c)
+      Picking -> Just (Picker.pickerInsert c)
       _ -> Nothing
 fallback _ _ = Nothing

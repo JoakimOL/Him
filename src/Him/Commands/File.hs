@@ -2,6 +2,7 @@
 module Him.Commands.File
   ( exCommands
   , actions
+  , openFile
   ) where
 
 import Control.Exception (IOException, try)

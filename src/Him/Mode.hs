@@ -13,6 +13,8 @@ data Mode
     Select
   | -- | Typing a @:@ command.
     CmdLine
+  | -- | Choosing from a picker (@space f@).
+    Picking
   deriving stock (Eq, Ord, Show, Enum, Bounded)
 
 -- | Short label for the status line.
@@ -22,3 +24,4 @@ modeLabel = \case
   Insert -> "INS"
   Select -> "SEL"
   CmdLine -> "CMD"
+  Picking -> "PIK"

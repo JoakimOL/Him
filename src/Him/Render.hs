@@ -18,6 +18,7 @@ import Him.Render.CommandLine
 import Him.Render.Frame
 import Him.Render.Gutter
 import Him.Render.Info
+import Him.Render.Picker
 import Him.Render.StatusLine
 import Him.Render.TextArea
 import Him.Render.Theme
@@ -69,14 +70,19 @@ render theme prev ed =
     frame =
       drawCommandLine theme ed cmdR
         . drawStatusLine theme ed statusR
-        . drawInfo theme ed (Rect 0 0 (rectHeight textR) cols)
+        . drawPicker theme ed overlay
+        . drawInfo theme ed overlay
         . drawTextArea theme prev ed textR
         . drawGutter theme ed gutterR
         $ blankFrame rows cols
+    -- Popups cover the text area and the gutter.
+    overlay = Rect 0 0 (rectHeight textR) cols
     cursor = case edMode ed of
       CmdLine -> Just (commandLineCursor ed cmdR)
+      Picking -> pickerCursor ed overlay
       _ -> cursorPosition ed textR
     shape = case edMode ed of
       Insert -> CursorBar
       CmdLine -> CursorBar
+      Picking -> CursorBar
       _ -> CursorBlock

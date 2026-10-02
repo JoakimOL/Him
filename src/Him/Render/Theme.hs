@@ -20,6 +20,7 @@ data Theme = Theme
   , themeInfo :: Style
   , themePopup :: Style
   , themePopupKey :: Style
+  , themePopupSelected :: Style
   , themeError :: Style
   }
 
@@ -37,6 +38,7 @@ defaultTheme =
     , themeInfo = defaultStyle
     , themePopup = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 252}
     , themePopupKey = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 110, styleBold = True}
+    , themePopupSelected = defaultStyle {styleBg = Indexed 24, styleFg = Indexed 255}
     , themeError = defaultStyle {styleFg = Ansi 9}
     }
   where
@@ -45,3 +47,4 @@ defaultTheme =
       Insert -> Indexed 150
       Select -> Indexed 180
       CmdLine -> Indexed 176
+      Picking -> Indexed 176

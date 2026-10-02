@@ -25,7 +25,9 @@ import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
-import System.Directory (getTemporaryDirectory, removeFile)
+import System.Directory (createDirectoryIfMissing, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
+import Him.Commands.Picker (listFiles)
+import Him.Picker
 import Him.Key
 import Him.Keymap
 import Him.Mode (Mode (..))
@@ -135,6 +137,18 @@ openBufferTests = do
   savedB <- readFile fileB
   quitAfter <- ex "q" writtenAll
   scratch <- ex "n" start
+  pickedBuffer <- keys "space b down ret" opened
+  pickerTyped <- keys "space b 2 backspace" opened
+  pickerEsc <- keys "space b esc" opened
+  pickedFile <- foldlM run start ([plain (KChar ' '), plain (KChar 'f')] <> map charKey "test/Spec.hs" <> [plain KEnter])
+  -- listFiles on a small tree with a hidden directory.
+  let tree = dir <> "/him-test-tree"
+  createDirectoryIfMissing True (tree <> "/sub/deeper")
+  createDirectoryIfMissing True (tree <> "/.hidden")
+  mapM_ (\f -> writeFile (tree <> "/" <> f) "") ["b.txt", "a.txt", "sub/c.txt", "sub/deeper/d.txt", ".hidden/x.txt", ".dotfile"]
+  listed <- listFiles 100 tree
+  listedFew <- listFiles 2 tree
+  removeDirectoryRecursive tree
   mapM_ removeFile [fileA, fileB]
   pure
     [ test "zipper: open, switch and close" $
@@ -157,6 +171,12 @@ openBufferTests = do
     , test ":wa writes the other buffer and stays" (assertEqual ("Xbeta\n", a) (savedB, docPath (edDoc writtenAll)))
     , test ":q quits once everything is saved" (assertEqual True (edQuit quitAfter))
     , test ":n opens a scratch buffer" (assertEqual (Nothing, (1, 2)) (current scratch))
+    , test "space b picks a buffer" (assertEqual (a, (0, 2), Normal) (docPath (edDoc pickedBuffer), bufferIndex pickedBuffer, edMode pickedBuffer))
+    , test "typing narrows the picker, backspace widens it" (assertEqual (Just ("", 2)) ((\p -> (pkQuery p, length (pkMatches p))) <$> edPicker pickerTyped))
+    , test "esc closes the picker" (assertEqual (Nothing, Normal, b) (pkTitle <$> edPicker pickerEsc, edMode pickerEsc, docPath (edDoc pickerEsc)))
+    , test "space f opens the chosen file" (assertEqual (Just "test/Spec.hs", (1, 2)) (docPath (edDoc pickedFile), bufferIndex pickedFile))
+    , test "listFiles lists files sorted, skipping hidden entries" (assertEqual ["a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt"] listed)
+    , test "listFiles stops at the limit" (assertEqual ["a.txt", "b.txt"] listedFew)
     ]
 
 main :: IO ()
@@ -176,6 +196,7 @@ main = do
     , group "Him.History" historyTests
     , group "Him.Keymap" keymapTests
     , group "Him.Action" actionTests
+    , group "Him.Picker" pickerTests
     , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests
     , group "Him.Ex" exTests
@@ -553,6 +574,23 @@ multiSelectionTests =
     deleteAll t dels offs =
       let t' = T.pack [c | (i, c) <- zip [0 ..] (T.unpack t), i `notElem` dels]
        in (t', [o - length [d | d <- dels, d < o] | o <- offs])
+
+pickerTests :: [Test]
+pickerTests =
+  [ test "fuzzy: characters in order" (assertEqual (Just 0, Just 2, Nothing) (fuzzyScore "ab" "xaby", fuzzyScore "ab" "axxb", fuzzyScore "ba" "ab"))
+  , test "fuzzy: the best start wins" (assertEqual (Just 0) (fuzzyScore "ab" "a_xab"))
+  , test "fuzzy: case is ignored" (assertEqual (Just 0) (fuzzyScore "SPEC" "test/Spec.hs"))
+  , test "matches: best first, shorter on ties" $
+      assertEqual ["src/ab.hs", "a/b.hs", "src/a/long/b.hs"] (map piLabel (matches "ab" (items ["src/a/long/b.hs", "a/b.hs", "src/ab.hs", "xyz"])))
+  , test "an empty query keeps the order" (assertEqual ["b", "a"] (map piLabel (matches "" (items ["b", "a"]))))
+  , test "moving wraps around" $
+      let p = newPicker "t" (items ["a", "b", "c"])
+       in assertEqual [1, 0, 2] (map (pkSelected . ($ p)) [moveSelection 1, moveSelection 3, moveSelection (-1)])
+  , test "a new query selects the best match" $
+      assertEqual (Just "b") (piLabel <$> selectedItem (setQuery "b" (moveSelection 2 (newPicker "t" (items ["a", "b", "c"])))))
+  ]
+  where
+    items = map (\l -> PickerItem l (PickFile (T.unpack l)))
 
 actionTests :: [Test]
 actionTests =
