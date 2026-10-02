@@ -26,7 +26,7 @@ import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
-import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesPathExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
+import System.Directory (getHomeDirectory, canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesPathExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
 import Him.FileTree (listFiles)
 import Him.Picker
 import Him.Effect (Effect (..), Job (..), JobResult (..))
@@ -37,6 +37,11 @@ import System.Timeout (timeout)
 import Him.Ignore
 import Him.Diff
 import Him.Syntax
+import Him.Regex
+import Him.Syntax.TreeSitter (findRuntime, readQuery, treeSitter)
+import System.FilePath ((</>))
+import Data.List (find)
+import Data.Maybe (isJust)
 import Him.Language (detectLanguage, langName, languages)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Him.GitState
@@ -284,7 +289,7 @@ openBufferTests = do
   -- File operations in a listing.
   let otree = dir <> "/him-test-ops"
       typeLine t ed = foldlM run ed (map charKey (T.unpack t) <> [plain KEnter])
-      find t = typeLine t <=< keys "/"
+      findEntry t = typeLine t <=< keys "/"
       exists p = doesPathExist (otree <> "/" <> p)
       entryLine ed = (\e -> deName e) <$> entryAt (cursorLine ed) (edDoc ed)
   createDirectoryIfMissing True otree
@@ -298,14 +303,14 @@ openBufferTests = do
   createdTwice <- typeLine "a.txt" =<< keys "a" ops
   newExists <- mapM exists ["new.txt", "deep/x.txt", "made", "plus"]
   -- Open a.txt, go back to the listing, rename a.txt: the buffer follows.
-  withA <- keys "space d" =<< keys "ret" =<< find "a.txt" ops
-  renamed <- typeLine "renamed.txt" =<< keys "r backspace backspace backspace backspace backspace" =<< find "a.txt" withA
+  withA <- keys "space d" =<< keys "ret" =<< findEntry "a.txt" ops
+  renamed <- typeLine "renamed.txt" =<< keys "r backspace backspace backspace backspace backspace" =<< findEntry "a.txt" withA
   renameExists <- mapM exists ["a.txt", "renamed.txt"]
-  notDeleted <- typeLine "n" =<< keys "d" =<< find "b.txt" renamed
+  notDeleted <- typeLine "n" =<< keys "d" =<< findEntry "b.txt" renamed
   bStill <- exists "b.txt"
-  deleted <- typeLine "y" =<< keys "d" =<< find "b.txt" renamed
+  deleted <- typeLine "y" =<< keys "d" =<< findEntry "b.txt" renamed
   bGone <- exists "b.txt"
-  deletedTwo <- typeLine "y" =<< keys "x x d" =<< find "f1" deleted
+  deletedTwo <- typeLine "y" =<< keys "x x d" =<< findEntry "f1" deleted
   fsGone <- mapM exists ["f1", "f2"]
   deleteUp <- keys "g g j d" deleted
   hiddenShown <- keys "g ." ops
@@ -314,7 +319,7 @@ openBufferTests = do
   createDirectoryIfMissing True outside
   writeFile (outside <> "/keep.txt") "keep\n"
   createDirectoryLink outside (otree <> "/link")
-  linkDeleted <- typeLine "y" =<< keys "d" =<< find "link" =<< keys "g r" ops
+  linkDeleted <- typeLine "y" =<< keys "d" =<< findEntry "link" =<< keys "g r" ops
   linkGone <- not <$> exists "link"
   targetKept <- doesPathExist (outside <> "/keep.txt")
   removeDirectoryRecursive outside
@@ -399,6 +404,7 @@ main = do
   processes <- processTests
   gitIO <- gitTests
   syntaxIO <- syntaxIOTests
+  treeSitterIO <- treeSitterTests
   bufferIO <- openBufferTests
   loading <- loadingTests
   runTests
@@ -419,7 +425,9 @@ main = do
     , group "Him.GitState" gitStateTests
     , group "git (in a temporary repository)" gitIO
     , group "Him.Syntax" syntaxTests
+    , group "Him.Regex" regexTests
     , group "highlighting through a provider" syntaxIO
+    , group "Him.Syntax.TreeSitter (with the installed grammars)" treeSitterIO
     , group "Him.Process" processes
     , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests
@@ -928,6 +936,43 @@ gitTests = do
     , test "outside a repository there is no git state" (assertEqual GitOutside (docGit (edDoc outside)))
     ]
 
+regexTests :: [Test]
+regexTests =
+  [ test "matches from the query files" $
+      assertEqual
+        (replicate 12 True <> replicate 6 False)
+        ( map (uncurry m)
+            [ ("^[A-Z][A-Z\\d_]*$", "MAX_SIZE2")
+            , ("^_", "_unused")
+            , ("^(self|super)$", "super")
+            , ("^[A-Z]", "Maybe")
+            , ("^(true|false)$", "true")
+            , ("\\.(js|ts)$", "a.ts")
+            , ("a.*?b", "xaxxbyb")
+            , ("^a{2,3}$", "aaa")
+            , ("\\bend\\b", "the end")
+            , ("^[^0-9]+$", "abc")
+            , ("x(?:ab)+y", "xababy")
+            , ("^$", "")
+            , ("^[A-Z][A-Z\\d_]*$", "Max")
+            , ("^(self|super)$", "superb")
+            , ("^a{2,3}$", "aaaa")
+            , ("\\bend\\b", "endless")
+            , ("^[^0-9]+$", "ab1")
+            , ("x(?:ab)+y", "xy")
+            ]
+        )
+  , test "the first match and its extent" $
+      assertEqual [Just (1, 4), Just (2, 3), Nothing] [findRegex' "b+c" "abbcd", findRegex' "a*?b" "xxb", findRegex' "z" "abc"]
+  , test "Lua patterns" $
+      assertEqual [True, True, False, True] [lua "^%u%l+$" "Hello", lua "^%d+%.%d+$" "1.25", lua "^%a+$" "ab1", lua "^a.-b$" "axxb"]
+  , test "bad patterns are errors" (assertEqual [True, True] (map (either (const True) (const False) . compileRegex) ["(ab", "[ab"]))
+  ]
+  where
+    m pat str = either (const False) (`matchesRegex` str) (compileRegex pat)
+    findRegex' pat str = either (const Nothing) (`findRegex` str) (compileRegex pat)
+    lua pat str = either (const False) (`matchesRegex` str) (compileLua pat)
+
 syntaxTests :: [Test]
 syntaxTests =
   [ test "flatten: the earlier span wins an overlap" $
@@ -971,6 +1016,39 @@ fakeProvider = SyntaxProvider "fake" $ \language ->
           }
   where
     occurrences needle hay = [T.length before | (before, _) <- T.breakOnAll needle hay]
+
+-- | The tree-sitter provider on real grammars, when a runtime directory
+-- with the Rust grammar exists (otherwise the tests pass, saying so).
+treeSitterTests :: IO [Test]
+treeSitterTests =
+  findRuntime "rust" >>= \case
+    Nothing -> pure [test "tree-sitter runtime not found: skipped" (Right ())]
+    Just _ -> do
+      let rust = fromMaybe (error "rust") (find ((== "rust") . langName) languages)
+          source = B.fromText "// note\nfn main() {\n    let x = \"hi\\n\";\n}"
+      session <- spStart treeSitter rust
+      spans <- case session of
+        Nothing -> pure IntMap.empty
+        Just s -> ssUpdate s 1 source [] >> ssHighlight s 0 3
+      home <- getHomeDirectory
+      inherited <- readQuery (home </> ".config/helix/runtime/queries") "typescript"
+      let scopesOn l = [lsScope sp | sp <- IntMap.findWithDefault [] l spans]
+      pure
+        [ test "a Rust grammar loads" (assertEqual True (isJust session))
+        , test "a comment" (assertEqual ["comment.line"] (map (T.take 12) (scopesOn 0)))
+        , test "keywords, functions and strings" $
+            assertEqual (True, True, True)
+              ( any ("keyword" `T.isPrefixOf`) (scopesOn 1)
+              , any ("function" `T.isPrefixOf`) (scopesOn 1)
+              , any ("string" `T.isPrefixOf`) (scopesOn 2)
+              )
+        , test "an escape inside a string wins over the string" $
+            assertEqual True (any ("constant.character.escape" `T.isPrefixOf`) (scopesOn 2))
+        , test "spans are sorted and do not overlap" $
+            assertEqual True (and [lsEnd a <= lsStart b | l <- [0 .. 3], let ss = IntMap.findWithDefault [] l spans, (a, b) <- zip ss (drop 1 ss)])
+        , test "inherited queries are read in place of the inherits line" $
+            assertEqual (Just False) (T.isInfixOf "; inherits" <$> inherited)
+        ]
 
 -- | Highlighting through an injected provider.
 syntaxIOTests :: IO [Test]

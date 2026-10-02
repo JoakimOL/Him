@@ -8,6 +8,10 @@ category:            Editor
 description:         Please see docs/PLAN.md
 
 extra-source-files:
+- cbits/tree-sitter/include/tree_sitter/*.h
+- cbits/tree-sitter/src/*.c
+- cbits/tree-sitter/src/*.h
+- cbits/tree-sitter/src/**/*.h
 - README.md
 - CHANGELOG.md
 - docs/PLAN.md
@@ -52,6 +56,11 @@ library:
   c-sources:
   - cbits/winsize.c
   - cbits/text.c
+  - cbits/ts_runtime.c
+  - cbits/ts_shim.c
+  include-dirs:
+  - cbits/tree-sitter/include
+  - cbits/tree-sitter/src
   cc-options:
   - -O2
 
@@ -68,6 +77,8 @@ executables:
     - '"-with-rtsopts=-xn"'
     dependencies:
     - him
+    - directory
+    - text
 
 tests:
   him-test:
@@ -82,6 +93,7 @@ tests:
     - bytestring
     - containers
     - directory
+    - filepath
     - stm
     - text
     - transformers

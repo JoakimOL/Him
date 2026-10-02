@@ -29,6 +29,8 @@ import Him.Config (Bindings, Config (..), buildConfig, overrideBindings)
 import Him.Ex (ExCommand)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))
+import Him.Syntax (SyntaxProvider)
+import Him.Syntax.TreeSitter (treeSitter)
 
 allActions :: [Action]
 allActions =
@@ -187,7 +189,12 @@ defaultConfig = configWith Map.empty
 configWith :: Bindings -> Either Text Config
 configWith user = do
   config <- buildConfig allActions (overrideBindings user defaultBindings) fallback
-  pure config {cfgExCommands = exCommands, cfgPrefixNames = prefixNames}
+  pure config {cfgExCommands = exCommands, cfgPrefixNames = prefixNames, cfgSyntaxProviders = syntaxProviders}
+
+-- | Highlighters, tried in order for each language (ADR-26). A TextMate
+-- provider would be added here, and nowhere else.
+syntaxProviders :: [SyntaxProvider]
+syntaxProviders = [treeSitter]
 
 -- | Titles of the key prefixes, shown above the keys that can follow them.
 prefixNames :: Map.Map [Key] Text
