@@ -29,7 +29,7 @@ import System.Process (createPipe)
 import System.Timeout (timeout)
 import Him.Chat.Tools
 import Him.Diff (diffLines)
-import Him.Review (DisplayRow (..), approveHunk, denyHunk, displayRows, hunkAtLine, rowOfLine)
+import Him.Review (DisplayRow (..), approveHunk, approveOnto, denyHunk, displayRows, hunkAtLine, rowOfLine)
 import Him.Selection (primary, rangeHead)
 import Him.Position (Pos (..))
 import Him.Config (Config (..))
@@ -255,6 +255,22 @@ pureTests =
               assertEqual (1, ["a", "B", "c", "d"], ["a", "b", "c", "D", "e"])
                 (length rest, approveHunk h base current, denyHunk h base current)
             [] -> Left "expected changes"
+  , test "approving writes only the chat's change; the user's own unsaved edits stay unsaved" $
+      -- On disk "b"; the user changed it to "USER" (unsaved) before the
+      -- chat changed "d" to "CHAT".
+      let disk = ["a", "b", "c", "d"]
+          base = ["a", "USER", "c", "d"]
+          current = ["a", "USER", "c", "CHAT"]
+       in case diffLines base current of
+            [h] -> assertEqual (Just ["a", "b", "c", "CHAT"], Just ["a", "USER", "c", "CHAT"]) (approveOnto h base current disk, approveOnto h base current base)
+            _ -> Left "expected one change"
+  , test "a chat change overlapping the user's own unsaved edit is not approved" $
+      let disk = ["a", "b", "c"]
+          base = ["a", "USER", "c"]
+          current = ["a", "CHAT", "c"]
+       in case diffLines base current of
+            [h] -> assertEqual Nothing (approveOnto h base current disk)
+            _ -> Left "expected one change"
   , test "the change at a line: its added lines, or for a removal the line after it" $
       let changed = diffLines ["a", "b", "c"] ["a", "X", "c"]
           removed = diffLines ["a", "b", "c"] ["a", "c"]

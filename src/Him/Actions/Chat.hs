@@ -44,7 +44,7 @@ import Him.Transcript (insertOutput, takeInput)
 import Him.View (View (..))
 import Him.Window (Axis (..), Box (..), Window (..))
 import Him.Diff (Hunk (..), diffLines)
-import Him.Review (approveHunk, denyHunk, hunkAtLine, hunkLabel)
+import Him.Review (approveHunk, approveOnto, denyHunk, hunkAtLine, hunkLabel)
 import Him.Picker (PickTarget (..), newPicker, pickerItem)
 import Data.IntMap.Strict qualified as IntMap
 import System.Directory (doesFileExist, getCurrentDirectory)
@@ -439,12 +439,19 @@ decideAtCursor approve = do
     Just rv -> case hunkAtLine (Buffer.lineCount (docBuffer d)) line (rvHunks rv) of
       Nothing -> failWith "the cursor is not on a proposed change (] c goes to the next)"
       Just (_, h) -> do
-        decide approve rv h
+        ok <- decide approve rv h
         left <- gets (\e -> maybe 0 (length . rvHunks) (reviewFor e (docId d)))
-        info ((if approve then "approved" else "denied") <> (if left == 0 then "; no changes left here" else "; " <> T.pack (show left) <> " left here (] c: next)"))
+        when ok $ info ((if approve then "approved" else "denied") <> (if left == 0 then "; no changes left here" else "; " <> T.pack (show left) <> " left here (] c: next)"))
 
--- | Approve (write to the file) or deny (put back) one change.
-decide :: Bool -> Review -> Hunk -> EditorM ()
+-- | Approve (write to the file) or deny (put back) one change; 'False' when
+-- it could not be approved.
+--
+-- Approving writes the file as it is on disk with this change applied. If
+-- the buffer had unsaved edits by hand before the chat's first change, the
+-- file differs from the review's base: the change is moved onto the file's
+-- text past them, and they stay unsaved ('approveOnto'). A change that
+-- overlaps one of them is refused (ADR-43).
+decide :: Bool -> Review -> Hunk -> EditorM Bool
 decide approve rv h = do
   chat <- gets (fmap (docId . fst) . chatOf)
   ed <- get
@@ -452,19 +459,25 @@ decide approve rv h = do
     (Just i, Just d) -> do
       let current = Buffer.toLines (docBuffer d)
           label = hunkLabel (rvPath rv) h
-      if approve
-        then do
-          let base' = approveHunk h (rvBase rv) current
-          ok <- writeBase d (rvPath rv) base'
-          when ok $ do
-            setBase i rv base'
-            note i ("approved " <> label)
-        else do
-          let current' = Buffer.fromLines (denyHunk h (rvBase rv) current)
-          modify' (modifyDocument (docId d) (\doc -> replaceBuffer current' (clampSelection current' (docSelection doc)) doc))
-          note i ("rejected " <> label <> ", its old lines are back")
+      ok <-
+        if approve
+          then case approveOnto h (rvBase rv) current (Buffer.toLines (docSavedBuffer d)) of
+            Nothing ->
+              False <$ failWith "this change overlaps your own unsaved edit; save it (:w) or undo it first"
+            Just written -> do
+              ok <- writeBase d (rvPath rv) written
+              when ok $ do
+                setBase i rv (approveHunk h (rvBase rv) current)
+                note i ("approved " <> label)
+              pure ok
+          else do
+            let current' = Buffer.fromLines (denyHunk h (rvBase rv) current)
+            modify' (modifyDocument (docId d) (\doc -> replaceBuffer current' (clampSelection current' (docSelection doc)) doc))
+            note i ("rejected " <> label <> ", its old lines are back")
+            pure True
       refreshReviews
-    _ -> pure ()
+      pure ok
+    _ -> pure False
 
 -- | Approve or deny every proposed change.
 decideAll :: Bool -> EditorM ()
@@ -472,23 +485,35 @@ decideAll approve =
   gets chatOf >>= \case
     Just (chat, cs) | not (null (csReviews cs)) -> do
       ed <- get
-      sequence_
-        [ if approve
-            then do
-              ok <- writeBase d (rvPath rv) (Buffer.toLines (docBuffer d))
-              when ok $ do
-                setBase (docId chat) rv (Buffer.toLines (docBuffer d))
-                note (docId chat) ("approved all changes to " <> T.pack (rvPath rv))
-            else do
-              let base = Buffer.fromLines (rvBase rv)
-              modify' (modifyDocument (docId d) (\doc -> replaceBuffer base (clampSelection base (docSelection doc)) doc))
-              note (docId chat) ("rejected all changes to " <> T.pack (rvPath rv))
-        | rv <- csReviews cs
-        , Just d <- [find ((== rvDoc rv) . docId) (allDocuments ed)]
-        ]
+      ok <-
+        if approve
+          then -- One change at a time, from the last (the earlier ones keep
+          -- their places), each checked like a single approval.
+            and <$> mapM (approveAllOf . rvDoc) (csReviews cs)
+          else do
+            sequence_
+              [ do
+                  let base = Buffer.fromLines (rvBase rv)
+                  modify' (modifyDocument (docId d) (\doc -> replaceBuffer base (clampSelection base (docSelection doc)) doc))
+                  note (docId chat) ("rejected all changes to " <> T.pack (rvPath rv))
+              | rv <- csReviews cs
+              , Just d <- [find ((== rvDoc rv) . docId) (allDocuments ed)]
+              ]
+            pure True
       refreshReviews
-      info (if approve then "approved every proposed change" else "denied every proposed change")
+      when ok $ info (if approve then "approved every proposed change" else "denied every proposed change")
     _ -> failWith "no proposed changes"
+
+-- | Approve a document's changes, last first, until none are left or one
+-- cannot be approved.
+approveAllOf :: Int -> EditorM Bool
+approveAllOf doc = do
+  refreshReviews
+  gets (`reviewFor` doc) >>= \case
+    Just rv | h : _ <- reverse (rvHunks rv) -> do
+      ok <- decide True rv h
+      if ok then approveAllOf doc else pure False
+    _ -> pure True
 
 -- | Write a document's file with these lines (its line endings kept); the
 -- document stays as it is (other changes may still be proposed).

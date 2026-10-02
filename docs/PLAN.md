@@ -988,6 +988,14 @@ that are easier to understand.
   / `D` act on all of them. `] c` / `[ c` move between changes, and `space c l` lists
   them in a picker with a preview. When a turn ends with proposals, the editor window
   takes the focus, in normal mode, with the cursor on the first change.
+- **Your own unsaved edits are kept out of approvals** (`approveOnto`). Approving
+  writes the file *as it is on disk* with the one change applied. If you had unsaved
+  edits before the chat's first change, the file differs from the base: the change is
+  moved onto the file's text past your edits (`mapLine` over the base-to-file diff),
+  and they stay unsaved in the buffer. A change that overlaps one of them, or meets
+  it at an insertion, is refused ("save it (:w) or undo it first"), because which
+  lines are whose is not clear. Approving all goes change by change, from the last,
+  with the same check.
 - **Telling the model:** decisions are collected and put before the user's next
   message, with what still waits ("[The user reviewed your proposed changes: approved
   a.txt:2 (-1 +2) …] [Still waiting for review: …]").
@@ -1286,8 +1294,10 @@ documents.
     misalign their right border.
   - An unfocused window's selection is not moved by edits made in another window on
     the same document; it is clamped (ADR-37).
-  - Approving a proposed change writes the review's base with it applied, so unsaved
-    edits made by hand before the chat's first change are written too (ADR-43).
+  - A proposed change that overlaps an unsaved edit of your own (made before the
+    chat's first change to that file) cannot be approved until you save or undo
+    your edit (ADR-43). `:w` on a buffer under review writes what it shows,
+    proposals included.
   - The MCP bridge's pipes are opened read-write by the editor, which Linux allows but
     POSIX leaves undefined (ADR-42).
 - **Working rules:**

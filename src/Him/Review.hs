@@ -4,6 +4,7 @@
 -- lines of each change and a header above it.
 module Him.Review
   ( approveHunk
+  , approveOnto
   , denyHunk
   , hunkAtLine
   , hunkLabel
@@ -17,11 +18,33 @@ import Data.List (find)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Chat (Review (..))
-import Him.Diff (Hunk (..), applyHunks)
+import Him.Diff (Hunk (..), applyHunks, diffLines, mapLine)
 
 -- | The base with one change applied (what is written when it is approved).
 approveHunk :: Hunk -> [Text] -> [Text] -> [Text]
 approveHunk h base current = applyHunks [h] base current
+
+-- | The file's text with one change applied, when the file differs from the
+-- base: the user changed the buffer by hand (unsaved) before the chat's
+-- first change. The change is moved onto the file's text past the user's
+-- own edits, which stay unsaved in the buffer. 'Nothing' when the change
+-- overlaps one of them: then which lines are whose is not clear.
+approveOnto :: Hunk -> [Text] -> [Text] -> [Text] -> Maybe [Text]
+approveOnto h base current disk
+  | disk == base = Just (approveHunk h base current)
+  | any touches own = Nothing
+  | otherwise = Just (take start disk <> added <> drop (start + hOldCount h) disk)
+  where
+    -- The user's own edits: base to file (old side: base lines).
+    own = diffLines base disk
+    start = mapLine own (hOldStart h)
+    added = take (hNewCount h) (drop (hNewStart h) current)
+    -- Line ranges [s, s + n) in the base overlap, or meet where one is an
+    -- insertion (which could belong to either side).
+    touches o = overlap (hOldStart h, hOldCount h) (hOldStart o, hOldCount o)
+    overlap (a, n) (b, m)
+      | n == 0 || m == 0 = a <= b + m && b <= a + n
+      | otherwise = max a b < min (a + n) (b + m)
 
 -- | The buffer's lines with one change undone (the base's lines back).
 denyHunk :: Hunk -> [Text] -> [Text] -> [Text]
