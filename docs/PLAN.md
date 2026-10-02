@@ -351,6 +351,38 @@ directly. Every action would change, and tests would need a full runtime.
 - **Ties:** among equal fuzzy scores, an exact first word or file name wins
   (`goto_line` before `goto_line_end`), then the shorter label.
 
+**ADR-25: Git through the `git` program; the diff in-process.**
+- **Base texts:** a document's git state (`docGit`, `Him.GitState`) holds its file's
+  index and HEAD versions. They are loaded by a `GitLoad` job running `git rev-parse`,
+  `ls-files --stage` and `show :path` / `show HEAD:path` (`Him.Git` through
+  `Him.Process`). This happens when the document becomes current, after a save, and
+  after staging. An untracked file has an empty index version, so every line shows as
+  added. Outside a repository there is no state.
+- **Diffs:** `Him.Diff` is Myers' algorithm after trimming the common prefix and suffix.
+  A middle that needs more than 1000 edits becomes one hunk. Unstaged hunks are
+  index → buffer. Staged hunks are HEAD → index, with their new side moved onto buffer
+  lines by `mapLine` through the unstaged hunks. One `GitDiff` job runs per document at
+  a time; when it answers for an older version, the next event asks again. On 200k
+  lines a diff costs 5–53 ms, on a background thread (`bench/DiffBench.hs`).
+- **Gutter:** a one-column sign lane in front of the line numbers. Added and changed
+  lines get `▎`, a removal gets `▁` on the line above; staged signs are dimmer, and
+  unstaged ones win.
+- **Staging is one pure function.** `applySelected old new hunks selected` applies the
+  selected changes. In a changed hunk, old and new lines are paired by position, so a
+  single line can be taken. The extra new lines count as additions, and the extra old
+  lines as a removal attached to the hunk's last line. With it:
+  - staging is applying index → buffer;
+  - unstaging is applying the *unselected* HEAD → index changes, which reverts the
+    selected ones;
+  - resetting is the same on the buffer, as one undoable change.
+  The new index version is written with `git hash-object -w --stdin --path=` and
+  `git update-index --cacheinfo`. Staging writes what the buffer shows, even unsaved,
+  as `git add -p` does with the work tree.
+
+*Alternatives:* parsing `git diff` output. That only sees saved files, and a patch for
+partial hunks is fragile; computing the diff ourselves sees every keystroke. Linking
+libgit2 is not a boot library.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -382,6 +414,8 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Info` | ✅ | `refreshInfo`: the info box after a prefix key or on the `:` line (ADR-20). |
 | `Him.Ignore`, `Him.FileTree` | ✅ | The gitignore matcher (pure), and the ignore-aware breadth-first file walk for the picker (ADR-21). |
 | `Him.Directory`, `Him.Commands.Directory` | ✅ | Directory listings as read-only documents (`loadPath`, `loadDirectory`, `entryAt`, `selectEntry`), and their actions (ADR-22). |
+| `Him.Diff` | ✅ | Myers line diff with trimming; `applyHunks`, `mapLine` (ADR-25). |
+| `Him.GitState`, `Him.Git`, `Him.Commands.Git` | ✅ | A document's git state, gutter signs and `applySelected` (pure); the `git` commands; housekeeping, change navigation, stage/unstage/reset actions (ADR-25). |
 | `Him.Effect`, `Him.Runtime` | ✅ | Effects as data (`RunAction`, `OpenPalette`, `StartJob`, `CancelJob`) and the background-job runtime (ADR-23). |
 | `Him.Invocation` | ✅ | Pure invocation parsing/rendering (re-exported by `Him.Action`). |
 | `Him.Process`, `Him.Json` | ✅ | External programs with stdin/stdout/stderr; a JSON value type, parser and encoder. |
@@ -455,6 +489,9 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **21. Foundation, palette, async picker** (roadmap phases 0–1). Effects and
   background jobs (ADR-23), `:action`, `Him.Json`, `Him.Process`; the command palette
   `space ?`; the streaming, parallel file picker with background filtering (ADR-24).
+- [x] **22. Git** (roadmap phase 2). Gutter signs for added/changed/removed lines,
+  staged ones dimmer; `] g` / `[ g`; stage, unstage or reset the selected lines or the
+  file from the editor (ADR-25).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -479,6 +516,7 @@ Implemented (defined in `Him.Config.Default`):
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
 | `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
 | Directory listings | `:o dir`, `him dir`, `space d` (the current file's directory, cursor on the file), `space D` (the working directory). In a listing: normal motions and search, `ret` (enter a directory / open a file), `-` or `backspace` (parent), `g r` (refresh), `a` (new file, or directory with a trailing `/`), `+` (new directory), `r` (rename/move), `d` (delete the selected entries, asks `y`), `g .` (show/hide dotfiles). `:cd [dir]` (default: the listed directory), `:pwd`. |
+| Git | Gutter signs (green added, yellow changed, red removed; dimmer when staged). `] g` / `[ g` next/previous change; `space g s` / `space g u` stage/unstage the selected lines, `space g S` / `space g U` the whole file, `space g r` reset the selected lines to the index. |
 | Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker), `space ?` (command palette: every action, its keys and doc; one with arguments opens `:action <name> `). `:action <invocation>` runs any action. In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
 
 Actions that take arguments, and have no default key yet: `move_char_left/right`,
@@ -557,9 +595,11 @@ numbers are provisional.*
   order and tick phases off here.
   - [x] Phase 0, foundation (milestone 21, ADR-23).
   - [x] Phase 1, command palette and async picker (milestone 21, ADR-24).
-  - [ ] Phase 2, git signs and staging. **Next.** Start with `Him.Diff` (a pure Myers
-    diff with randomized tests), then `Him.Git` jobs, the gutter sign lane, and staging.
-  - [ ] Phase 3, syntax highlighting.
+  - [x] Phase 2, git signs and staging (milestone 22, ADR-25).
+  - [ ] Phase 3, syntax highlighting. **Next.** Start with the common provider API
+    (`Him.Syntax`, with a fake provider in tests), scopes and the theme, and the language
+    table. Then vendor tree-sitter (`cbits/tree-sitter/` from the cargo registry copy)
+    and write the provider.
   - [ ] Phase 4, LSP client.
 - **Next suggestions:**
   1. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
@@ -578,6 +618,9 @@ numbers are provisional.*
   - `s` searches from each range's start, and a range without a match can scan on to
     the next match beyond it. With many ranges and few matches, that is slow.
   - Search (`/`, `n`) moves only the primary range.
+  - Git: the signs refresh when a buffer becomes current, on save and after staging, but
+    not when the files change outside the editor while it is shown. A diff of a huge file
+    with an edit in the middle takes about 50 ms (in the background).
   - The file picker skips hidden entries and lists at most 500,000 files. It does not
     read the global gitignore (ADR-21).
   - A directory listing does not refresh by itself; `g r` lists it again.
@@ -590,7 +633,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (336 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (359 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

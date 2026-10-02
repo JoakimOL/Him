@@ -32,7 +32,8 @@ In the editor, `space ?` lists every command with its keys, `space f` opens a fi
 `space b` a buffer picker, `space d` a directory listing (`ret` opens, `-` goes up, `a` /
 `+` / `r` / `d` create, rename and delete, `g .` shows dotfiles; also `:o dir` or
 `him dir`), and `:` shows
-the commands as you type (`tab` completes). After a prefix key such as `g` or `space`, a
+the commands as you type (`tab` completes). In a git repository the gutter shows changed
+lines; `space g s` stages the selected lines (`space g u` unstages, `] g` jumps). After a prefix key such as `g` or `space`, a
 menu shows what can follow. The full key list is in docs/PLAN.md §6.
 
 Debug logging: `HIM_LOG=/tmp/him.log make run ARGS=file.txt`.

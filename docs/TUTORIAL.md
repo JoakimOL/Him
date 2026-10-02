@@ -843,6 +843,33 @@ What remained was about 75 ms when every item matches. So instead of more micro-
 large pickers rank in a background job and keep showing their last results until the
 new ones arrive. Typing never waits.
 
+### 5.8 Git signs and staging lines (ADR-25)
+
+Git is two diffs away. The index and HEAD versions of a file come from
+`git show :path` and `git show HEAD:path`, run in a background job. Two diffs follow:
+- index → buffer, the *unstaged* changes;
+- HEAD → index, the *staged* ones, whose lines are moved onto the buffer through the
+  first diff.
+
+The diff is ours (Myers, after trimming the common prefix and suffix), so the signs
+follow every keystroke, not only saves. A randomized test checks every diff against a
+textbook longest-common-subsequence: it must be correct *and* minimal.
+
+Staging, unstaging and resetting look like three features, but they are one function:
+
+```haskell
+-- old with the selected changes towards new applied
+applySelected :: [Text] -> [Text] -> [Hunk] -> (Int -> Bool) -> [Text]
+
+stage   = applySelected index buffer (diffLines index buffer) selected
+unstage = applySelected head index  (diffLines head index)   (not . selected')
+reset   = applySelected index buffer (diffLines index buffer) (not . selected)
+```
+
+Reverting the selected changes is the same as applying the unselected ones. The new
+index version goes in with `git hash-object -w --stdin` and `git update-index
+--cacheinfo`. No patches are built, so partial hunks cannot produce an invalid patch.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with
