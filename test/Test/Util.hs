@@ -80,7 +80,7 @@ settle config ed0 = do
 testRuntime :: Config -> IO (Runtime, TChan Event)
 testRuntime config = do
   events <- newTChanIO
-  runtime <- newRuntime (cfgSyntaxProviders config) (cfgServers config) (cfgRepls config) (atomically . writeTChan events)
+  runtime <- newRuntime config (atomically . writeTChan events)
   pure (runtime, events)
 
 -- | Handle job results until the editor satisfies a condition, or a

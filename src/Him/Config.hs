@@ -23,6 +23,7 @@ import Him.Action
 import Him.EditorM (EditorM)
 import Him.Ex (ExCommand)
 import Him.Repl (ReplTable, defaultRepls)
+import Him.Chat (ChatConfig, ChatProvider, defaultChatConfig)
 import Him.Effect (JobResult)
 import Him.Lsp.Config (ServerTable, defaultServers)
 import Him.Syntax (SyntaxProvider)
@@ -47,6 +48,9 @@ data Config = Config
   -- ^ Language servers by language.
   , cfgRepls :: ReplTable
   -- ^ REPLs by language.
+  , cfgChat :: ChatConfig
+  , cfgChatProviders :: [ChatProvider]
+  -- ^ Chat providers ("Him.Chat"); @[chat] provider@ names the one used.
   , cfgPlugins :: [Plugin]
   -- ^ The enabled plugins, in order (their actions, keys and commands are
   -- in the fields above already).
@@ -102,6 +106,7 @@ inheritsFrom = \case
   Directory -> Just Normal
   Completing -> Just Insert
   Repl -> Just Insert
+  Chat -> Just Insert
   _ -> Nothing
 
 -- | Validate every binding against the actions and build the keymaps.
@@ -132,6 +137,8 @@ buildConfig actions bindings fallback = do
           , cfgSyntaxProviders = []
           , cfgServers = defaultServers
           , cfgRepls = defaultRepls
+          , cfgChat = defaultChatConfig
+          , cfgChatProviders = []
           , cfgPlugins = []
           }
     errs -> Left (T.intercalate "\n" errs)

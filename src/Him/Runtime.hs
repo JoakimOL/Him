@@ -7,8 +7,7 @@ module Him.Runtime
   , newRuntime
   , perform
   , shutdown
-  , setServerTable
-  , setReplTable
+  , reconfigure
   ) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
@@ -16,9 +15,11 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, new
 import Control.Monad (when)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Him.Lsp.Config (ServerConfig (..), ServerTable, serverFor)
+import Him.Lsp.Config (ServerConfig (..), serverFor)
 import Him.Lsp.Server (Server, findRoot, sendMessage, startServer, stopServer)
-import Him.Repl (ReplConfig (..), ReplTable)
+import Him.Repl (ReplConfig (..))
+import Him.Chat (ChatConfig (..), ChatEvent (..), ChatProvider (..))
+import Him.Config (Config (..))
 import Him.Repl.Process (ReplProcess, interruptRepl, sendRepl, startRepl, stopRepl)
 import Him.Lsp.State (ServerInfo)
 import Control.Exception (IOException, try)
@@ -51,33 +52,32 @@ data Runtime = Runtime
   , rtProviders :: [SyntaxProvider]
   , rtSessions :: MVar (Map Int SyntaxSession)
   -- ^ Highlighters by document id. The editor only sees their results.
-  , rtServerTable :: IORef ServerTable
-  -- ^ Which server serves which language (from the config).
-  , rtReplTable :: IORef ReplTable
+  , rtConfig :: IORef Config
+  -- ^ The tables it reads (servers, REPLs, the chat provider); replaced
+  -- when the config is reloaded ('reconfigure').
   , rtRepls :: MVar (Map Int ReplProcess)
   -- ^ Running REPLs, by the id of their buffer.
+  , rtChats :: MVar (Map Int (IO ()))
+  -- ^ Chat requests in flight, by chat buffer: how to cancel them.
   , rtServers :: MVar (Map Text (MVar (Either Text (Server, ServerInfo))))
   -- ^ Language servers by key; the inner variable is filled once the
   -- server has started (or failed to).
   }
 
-newRuntime :: [SyntaxProvider] -> ServerTable -> ReplTable -> (Event -> IO ()) -> IO Runtime
-newRuntime providers table repls post = do
+newRuntime :: Config -> (Event -> IO ()) -> IO Runtime
+newRuntime config post = do
   jobs <- newMVar Map.empty
   sessions <- newMVar Map.empty
-  tableRef <- newIORef table
-  replTable <- newIORef repls
+  configRef <- newIORef config
   replProcesses <- newMVar Map.empty
+  chats <- newMVar Map.empty
   servers <- newMVar Map.empty
-  pure (Runtime post jobs providers sessions tableRef replTable replProcesses servers)
+  pure (Runtime post jobs (cfgSyntaxProviders config) sessions configRef replProcesses chats servers)
 
--- | Use another server table from now on (after the config is reloaded;
--- running servers keep running).
-setServerTable :: Runtime -> ServerTable -> IO ()
-setServerTable rt = writeIORef (rtServerTable rt)
-
-setReplTable :: Runtime -> ReplTable -> IO ()
-setReplTable rt = writeIORef (rtReplTable rt)
+-- | Use another config's tables from now on (after a reload; running
+-- servers and REPLs keep running).
+reconfigure :: Runtime -> Config -> IO ()
+reconfigure rt = writeIORef (rtConfig rt)
 
 -- | Carry out an effect that needs the runtime; others are ignored (the
 -- main loop handles them before).
@@ -104,7 +104,7 @@ perform rt = \case
     mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) stopped
   ReplStart doc language file -> do
     -- Started at once (not as a job), so text sent right after reaches it.
-    table <- readIORef (rtReplTable rt)
+    table <- cfgRepls <$> readIORef (rtConfig rt)
     case Map.lookup language table of
       Nothing -> rtPost rt (EvJob (ReplExited doc ("no REPL for " <> language <> " (add [repl." <> language <> "] to the config)")))
       Just config -> do
@@ -118,6 +118,22 @@ perform rt = \case
           Right rp -> do
             modifyMVar_ (rtRepls rt) (pure . Map.insert doc rp)
             post (ReplStarted doc config root)
+  ChatSend doc req -> do
+    config <- readIORef (rtConfig rt)
+    let cc = cfgChat config
+        post = rtPost rt . EvJob . ChatReply doc
+    case [p | p <- cfgChatProviders config, cpName p == ccProvider cc] of
+      [] -> post (ChatFailed ("no chat provider named " <> ccProvider cc))
+      provider : _ -> do
+        -- One request per chat; a new one replaces it.
+        cancelChatIn rt doc
+        cancel <- cpSend provider cc req (\ev -> do
+          case ev of
+            ChatText _ -> pure ()
+            _ -> modifyMVar_ (rtChats rt) (pure . Map.delete doc)
+          post ev)
+        modifyMVar_ (rtChats rt) (pure . Map.insert doc cancel)
+  ChatCancel doc -> cancelChatIn rt doc
   ReplSend doc asCode text -> withRepl rt doc (\rp -> sendRepl rp asCode text)
   ReplInterrupt doc -> withRepl rt doc interruptRepl
   ReplStop doc -> modifyMVar (rtRepls rt) (\m -> pure (Map.delete doc m, Map.lookup doc m)) >>= mapM_ stopRepl
@@ -125,6 +141,10 @@ perform rt = \case
     stopped <- modifyMVar (rtServers rt) (\servers -> pure (Map.empty, Map.elems servers))
     mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) stopped
   _ -> pure ()
+
+-- | Cancel a chat's request, if one runs.
+cancelChatIn :: Runtime -> Int -> IO ()
+cancelChatIn rt doc = modifyMVar (rtChats rt) (\m -> pure (Map.delete doc m, Map.lookup doc m)) >>= sequence_
 
 -- | Run something with a REPL, if it is running.
 withRepl :: Runtime -> Int -> (ReplProcess -> IO ()) -> IO ()
@@ -183,7 +203,7 @@ runJob rt = \case
       mapM_ ssClose (Map.lookup doc sessions)
       pure (maybe (Map.delete doc sessions) (\(_, session) -> Map.insert doc session sessions) started)
     post (EvJob (SyntaxStarted doc (fst <$> started)))
-  LspEnsure doc language file -> readIORef (rtServerTable rt) >>= \table -> case serverFor table language of
+  LspEnsure doc language file -> (cfgServers <$> readIORef (rtConfig rt)) >>= \table -> case serverFor table language of
     Nothing -> post (EvJob (LspUnavailable doc "no language server configured"))
     Just config -> do
       absolute <- makeAbsolute file

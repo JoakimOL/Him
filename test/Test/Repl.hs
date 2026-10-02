@@ -19,7 +19,7 @@ import Him.Event (Event (..))
 import Him.Key (parseKeys)
 import Him.Position (Pos (..))
 import Him.Repl
-import Him.Repl.Transcript
+import Him.Transcript
 import Him.Selection (point, primary, rangeHead, single)
 import Him.Session (handleEvent)
 import Test.Harness
@@ -54,6 +54,8 @@ replTests = do
         assertEqual (False, docHistory typing) (docDirty withOutput, docHistory withOutput)
     , test "code of several lines is wrapped; one line is not" $
         assertEqual [":{\na\nb\n:}\n", "a\n", "a\nb\n"] [wrapCode (Just ghci) "a\nb\n", wrapCode (Just ghci) "a", wrapCode Nothing "a\nb"]
+    , test "a transcript typed in is never unsaved (quitting does not ask)" $
+        assertEqual (False, True) (unsaved replDoc {docDirty = True}, unsaved (newDocument Nothing (buf "x")) {docDirty = True})
     , test "escape sequences and carriage returns are dropped from output" $
         assertEqual "red\nline\n" (cleanOutput "\ESC[31mred\ESC[0m\r\n\ESC]0;title\aline\n")
     , test ":repl opens a REPL beside the file and starts it" $

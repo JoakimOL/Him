@@ -56,7 +56,7 @@ run files = do
     onResize (atomically . writeTChan events . uncurry EvResize)
     -- The escape timeout is read once, here (a reload does not change it).
     startInputReader (optEscapeTimeout (userOptions userConfig)) events
-    runtime <- newRuntime (cfgSyntaxProviders config) (cfgServers config) (cfgRepls config) (atomically . writeTChan events)
+    runtime <- newRuntime config (atomically . writeTChan events)
     -- Start what the first document needs (its git state) before any key.
     let opened = applyEditorOptions userConfig (openAll size docs)
     start <- execStateT (housekeeping config) (withPlugins config opened) {edStatus = Status Error <$> (problem <|> themeProblem)}
@@ -121,8 +121,7 @@ eventLoop (Loop configRef userRef themeRef trueColor) runtime suspend events = g
           old <- readIORef configRef
           writeIORef configRef config
           writeIORef userRef uc
-          Runtime.setServerTable runtime (cfgServers config)
-          Runtime.setReplTable runtime (cfgRepls config)
+          Runtime.reconfigure runtime config
           switched <- execStateT (switchPlugins old config) ed
           -- The theme too (its file may have changed); everything is
           -- drawn again in its colours.

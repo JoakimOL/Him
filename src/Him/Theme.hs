@@ -191,6 +191,7 @@ defaultThemeText =
     , "\"ui.statusline\" = { fg = \"252\", bg = \"bar\" }"
     , "\"ui.statusline.inactive\" = { fg = \"244\", bg = \"bar\" }"
     , "\"ui.window\" = \"dim\""
+    , "\"ui.highlight\" = { bg = \"22\" }"
     , "\"ui.statusline.normal\" = { fg = \"235\", bg = \"blue\", modifiers = [\"bold\"] }"
     , "\"ui.statusline.insert\" = { fg = \"235\", bg = \"green\", modifiers = [\"bold\"] }"
     , "\"ui.statusline.select\" = { fg = \"235\", bg = \"sand\", modifiers = [\"bold\"] }"

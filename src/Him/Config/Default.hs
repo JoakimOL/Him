@@ -36,6 +36,9 @@ import Him.Actions.Search qualified as Search
 import Him.Actions.Window qualified as Window
 import Him.Actions.Match qualified as Match
 import Him.Actions.Repl qualified as Repl
+import Him.Actions.Chat qualified as Chat
+import Him.Chat (ChatProvider)
+import Him.Chat.Anthropic (anthropicProvider)
 import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))
@@ -44,7 +47,7 @@ import Him.Syntax.TreeSitter (treeSitter)
 
 -- | Every plugin there is (ADR-35), in the order their hooks run.
 plugins :: [Plugin]
-plugins = [Git.gitPlugin, Lsp.lspPlugin, Repl.replPlugin]
+plugins = [Git.gitPlugin, Lsp.lspPlugin, Repl.replPlugin, Chat.chatPlugin]
 
 -- | All of them switched on (the default).
 allPlugins :: Set.Set Text
@@ -267,8 +270,13 @@ configWith enabled user = do
       { cfgExCommands = exCommandsWith on
       , cfgPrefixNames = prefixNames <> Map.fromList (concatMap plPrefixNames on)
       , cfgSyntaxProviders = syntaxProviders
+      , cfgChatProviders = chatProviders
       , cfgPlugins = on
       }
+
+-- | Chat providers (ADR-41); @[chat] provider@ names the one used.
+chatProviders :: [ChatProvider]
+chatProviders = [anthropicProvider]
 
 -- | Highlighters, tried in order for each language (ADR-26). A TextMate
 -- provider would be added here, and nowhere else.

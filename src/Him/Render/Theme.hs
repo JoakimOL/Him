@@ -58,6 +58,8 @@ data Theme = Theme
   -- ^ Directory entries in a listing.
   , themeDirectoryHeader :: Style
   , themeError :: Style
+  , themeHighlight :: Style
+  -- ^ Lines to look at (a chat's pending edits): @ui.highlight@.
   }
 
 -- | The style for a scope, by its longest known prefix:
@@ -107,6 +109,7 @@ fromScopes name scopes =
     , themeDirectory = fromMaybe text {styleBold = True} (exact "ui.text.directory")
     , themeDirectoryHeader = fromMaybe text {styleBold = True} (exact "ui.text.focus")
     , themeError = get "error"
+    , themeHighlight = fromMaybe defaultStyle {styleBg = Indexed 22} (exact "ui.highlight")
     }
   where
     get = fromMaybe defaultStyle . lookupScope scopes
@@ -126,6 +129,7 @@ fromScopes name scopes =
             Directory -> ("directory", "normal")
             Completing -> ("completion", "insert")
             Repl -> ("repl", "insert")
+            Chat -> ("chat", "insert")
        in statusLine `patchStyle` fromMaybe (get ("ui.statusline." <> base)) (exact ("ui.statusline." <> own))
     gitSign kind staged =
       let scope = case kind of

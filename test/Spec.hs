@@ -11,6 +11,7 @@ import Test.Render
 import Test.Integration
 import Test.Windows
 import Test.Match
+import Test.Chat
 import Test.Repl
 
 main :: IO ()
@@ -27,6 +28,7 @@ main = do
   loading <- loadingTests
   windows <- windowTests
   match <- matchTests
+  chat <- chatTests
   repl <- replTests
   runTests
     [ group "Him.Key" keyTests
@@ -69,6 +71,7 @@ main = do
     , group "Him.Render" renderTests
     , group "Him.Render.Diff" diffTests
     , group "match mode (m) and I / A" match
+    , group "AI chat (scripted provider; nothing live)" chat
     , group "windows (splits)" windows
     , group "REPL" repl
     , group "keys through the default config" integration

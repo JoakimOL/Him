@@ -55,6 +55,7 @@ import Him.Mode (Mode (..))
 import Him.Options
 import Him.Paths (configPath)
 import Him.Repl (ReplConfig (..), ReplTable, defaultRepls)
+import Him.Chat (ChatConfig (..), defaultChatConfig)
 import Him.Toml (parseToml, quoteKey, quoteString)
 import System.Directory (doesFileExist)
 
@@ -67,6 +68,7 @@ data UserConfig = UserConfig
   -- ^ Plugins switched on or off (@[plugins]@); the rest are on.
   , ucServers :: !(Map Text ServerOverride)
   , ucRepls :: !(Map Text ReplOverride)
+  , ucChat :: !ChatConfig
   }
   deriving stock (Eq, Show)
 
@@ -82,7 +84,7 @@ data ServerOverride = ServerOverride
   deriving stock (Eq, Show)
 
 emptyUserConfig :: UserConfig
-emptyUserConfig = UserConfig Map.empty [] Nothing Map.empty Map.empty Map.empty
+emptyUserConfig = UserConfig Map.empty [] Nothing Map.empty Map.empty Map.empty defaultChatConfig
 
 -- | The sections of @[keys]@, by mode.
 modeSections :: [(Text, Mode)]
@@ -95,6 +97,7 @@ modeSections =
   , ("directory", Directory)
   , ("completion", Completing)
   , ("repl", Repl)
+  , ("chat", Chat)
   ]
 
 -- | Read the config file; a missing file is an empty config.
@@ -124,7 +127,18 @@ parseUserConfig src = do
       ("language-server", v) -> servers v
       ("plugins", v) -> pluginSection v
       ("repl", v) -> repls v
-      (other, _) -> Left ["unknown section [" <> other <> "] (known: editor, keys, language-server, repl, plugins)"]
+      ("chat", v) -> chat v
+      (other, _) -> Left ["unknown section [" <> other <> "] (known: editor, keys, language-server, repl, chat, plugins)"]
+    chat v = do
+      kvs <- table "[chat]" v
+      fs <- collect (map chatKey kvs)
+      Right (\c -> c {ucChat = foldr ($) (ucChat c) fs})
+    chatKey = \case
+      ("provider", JString t) -> Right (\cc -> cc {ccProvider = t})
+      ("model", JString t) -> Right (\cc -> cc {ccModel = t})
+      ("effort", JString t) | t `elem` ["low", "medium", "high", "xhigh", "max"] -> Right (\cc -> cc {ccEffort = t})
+      ("max-tokens", JInt n) | n > 0 -> Right (\cc -> cc {ccMaxTokens = fromInteger n})
+      (k, _) -> Left ["chat." <> k <> ": unknown setting or wrong value (provider, model: strings; effort: low, medium, high, xhigh or max; max-tokens: a number)"]
     repls v = do
       langs <- table "[repl]" v
       overrides <- collect (map repl langs)
@@ -213,7 +227,7 @@ applyUserConfigWith enabled uc = do
   config <- configWith enabled (ucBindings uc)
   servers <- applyServers (ucServers uc) defaultServers
   repls <- applyRepls (ucRepls uc) defaultRepls
-  pure config {cfgServers = servers, cfgRepls = repls}
+  pure config {cfgServers = servers, cfgRepls = repls, cfgChat = ucChat uc}
 
 -- | Changes to a language's REPL; a language without a built-in one needs
 -- a command.
@@ -310,6 +324,13 @@ defaultConfigText =
       <> concatMap serverBlock (Map.toList defaultServers)
       <> concatMap replBlock (Map.toList defaultRepls)
       <> [ ""
+         , "[chat]   # the AI chat plugin (space c c); needs ANTHROPIC_API_KEY (or `ant auth login`)"
+         , "provider = " <> quoteString (ccProvider defaultChatConfig)
+         , "model = " <> quoteString (ccModel defaultChatConfig)
+         , "effort = " <> quoteString (ccEffort defaultChatConfig) <> "   # low, medium, high, xhigh or max"
+         , "max-tokens = " <> T.pack (show (ccMaxTokens defaultChatConfig))
+         ]
+      <> [ ""
          , "# Every action, by group (<required> and [optional] arguments):"
          ]
       <> [ "#   " <> T.justifyLeft 34 ' ' (actName a <> signature a) <> " " <> actDoc a
@@ -337,6 +358,7 @@ defaultConfigText =
       Select -> "   # select mode also has every normal-mode key"
       Directory -> "   # in a directory listing; also every normal-mode key"
       Repl -> "   # insert mode in a REPL buffer; also every insert-mode key"
+      Chat -> "   # insert mode in the chat buffer; also every insert-mode key"
       Completing -> "   # insert mode with the completion menu open; also every insert-mode key"
       _ -> ""
     describe inv = case parseInvocation inv >>= \i -> maybe (Left "") Right (lookupAction (invAction i) registry) of

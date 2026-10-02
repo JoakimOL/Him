@@ -11,8 +11,12 @@ module Him.Document
   , changeDocument
   , replaceBuffer
   , clampSelection
+  , inputPos
+  , unsaved
+  , setInputPos
   ) where
 
+import Data.Maybe (isNothing)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer (Buffer, clampPos)
@@ -20,6 +24,7 @@ import Him.GitState (GitInfo (..))
 import Him.History (History, Snapshot (..), beginChange, emptyHistory)
 import Him.Lsp.State (DocLsp (..))
 import Him.Repl (ReplState (..))
+import Him.Chat (ChatState (..))
 import Him.Syntax (SyntaxInfo, noSyntax)
 import Him.Position (Pos (..))
 import Him.Selection (Range (..), Selection, mapRanges, point, single)
@@ -35,6 +40,8 @@ data DocKind
     DirectoryDoc ![DirEntry]
   | -- | A REPL's transcript and input (see "Him.Repl").
     ReplDoc !ReplState
+  | -- | An AI chat's transcript and input (see "Him.Chat").
+    ChatDoc !ChatState
   deriving stock (Eq, Show)
 
 data DirEntry = DirEntry
@@ -49,6 +56,7 @@ isReadOnly d = case docKind d of
   DirectoryDoc _ -> True
   TextDoc -> False
   ReplDoc _ -> False
+  ChatDoc _ -> False
 
 data Document = Document
   { docId :: !Int
@@ -103,6 +111,7 @@ newDocument path buf =
 displayName :: Document -> Text
 displayName d = case docKind d of
   ReplDoc rs -> "[repl: " <> rsLanguage rs <> "]"
+  ChatDoc _ -> "[chat]"
   _ -> maybe "[scratch]" T.pack (docPath d)
 
 -- | A new text and selection as one undoable change: the old ones are kept
@@ -125,3 +134,21 @@ replaceBuffer buf sel d = (changeDocument buf sel d) {docDirty = buf /= docSaved
 -- | Keep every range inside a (changed) text.
 clampSelection :: Buffer -> Selection -> Selection
 clampSelection buf = mapRanges (\r -> r {rangeAnchor = clampPos buf (rangeAnchor r), rangeHead = clampPos buf (rangeHead r)})
+
+-- | Where a transcript's input starts (a REPL or chat buffer).
+inputPos :: Document -> Maybe Pos
+inputPos d = case docKind d of
+  ReplDoc rs -> Just (rsInput rs)
+  ChatDoc cs -> Just (csInput cs)
+  _ -> Nothing
+
+setInputPos :: Pos -> Document -> Document
+setInputPos p d = case docKind d of
+  ReplDoc rs -> d {docKind = ReplDoc rs {rsInput = p}}
+  ChatDoc cs -> d {docKind = ChatDoc cs {csInput = p}}
+  _ -> d
+
+-- | Changes that would be lost: a modified document, but not a REPL or
+-- chat transcript (those are never saved).
+unsaved :: Document -> Bool
+unsaved d = docDirty d && isNothing (inputPos d)

@@ -14,7 +14,7 @@ import Him.Effect (Effect (..))
 import Him.Buffer (lineCount)
 import Him.Buffer qualified as Buffer
 import Him.EditorM
-import Him.Document (Document (..), changeDocument, clampSelection, displayName, isReadOnly, newDocument)
+import Him.Document (Document (..), changeDocument, clampSelection, displayName, isReadOnly, newDocument, unsaved)
 import Him.Options (Options (..))
 import Him.Editor
 import Him.Ex (ExArgs (..), ExCommand (..))
@@ -51,7 +51,7 @@ exCommands =
   , ExCommand ["new", "n"] "Open a new scratch buffer" NoArgs $ \_ ->
       modify' (openBuffer (newDocument Nothing Buffer.empty))
   , ExCommand ["buffer-close", "bc", "bclose"] "Close the buffer (refuses with unsaved changes)" NoArgs $ \_ -> do
-      dirty <- docDirty <$> getDoc
+      dirty <- unsaved <$> getDoc
       if dirty
         then failWith "unsaved changes (use :bc! to discard them)"
         else closeCurrent
@@ -151,7 +151,7 @@ closeOrQuit quitting = gets closeWindow >>= maybe quitting put
 
 quitChecked :: EditorM ()
 quitChecked = do
-  dirty <- gets (filter docDirty . map bufDoc . fst . buffers)
+  dirty <- gets (filter unsaved . map bufDoc . fst . buffers)
   case dirty of
     [] -> quit
     [d] -> failWith ("unsaved changes in " <> displayName d <> " (use :q! to discard them, or :wq to save)")
@@ -195,7 +195,7 @@ writeAll = do
     else False <$ failWith (T.pack (show failed) <> " buffer(s) could not be written")
   where
     saveBuffer i doc
-      | not (docDirty doc) = pure Nothing
+      | not (unsaved doc) = pure Nothing
       | otherwise = do
           modify' (gotoBuffer i)
           Just <$> write []

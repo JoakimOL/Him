@@ -5,7 +5,7 @@ module Him.Render.StatusLine
   ) where
 
 import Data.Text qualified as T
-import Him.Document (Document (..), displayName)
+import Him.Document (Document (..), displayName, unsaved)
 import Him.Editor (Editor (..), allDocuments, keymapMode)
 import Data.List (findIndex)
 import Him.Key (showKeys)
@@ -26,7 +26,7 @@ drawStatusLine theme focused ed rect =
     style = if focused then themeStatusLine theme else themeStatusLineInactive theme
     doc = edDoc ed
     mode = if focused then " " <> modeLabel (keymapMode ed) <> " " else " "
-    dirty = if docDirty doc then " [+]" else ""
+    dirty = if unsaved doc then " [+]" else ""
     -- The shown document's place in the buffer list (an unfocused window
     -- shows one that need not be the current buffer).
     docs = allDocuments ed

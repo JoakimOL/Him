@@ -64,7 +64,7 @@ userConfigTests =
           assertEqual (Right defaultServers) (cfgServers <$> applyUserConfig uc)
   , test "unknown sections, modes and settings are reported, all of them" $
       assertEqual
-        (Left ["unknown section [keyz] (known: editor, keys, language-server, repl, plugins)", "unknown setting editor.tabs (known in [editor]: scrolloff, show-hidden-files, tab-width, expand-tab, line-number, escape-timeout)", "unknown mode [keys.nromal] (known: normal, select, insert, command, picker, directory, completion, repl)"])
+        (Left ["unknown section [keyz] (known: editor, keys, language-server, repl, chat, plugins)", "unknown setting editor.tabs (known in [editor]: scrolloff, show-hidden-files, tab-width, expand-tab, line-number, escape-timeout)", "unknown mode [keys.nromal] (known: normal, select, insert, command, picker, directory, completion, repl, chat)"])
         (parseUserConfig "[keyz]\n[editor]\ntabs = 2\n[keys.nromal]\n")
   , test "a binding must be an action in quotes" $
       assertEqual (Left ["keys.normal.j: the value must be an action in quotes, e.g. \"move_line_down\""]) (parseUserConfig "[keys.normal]\nj = 5\n")
@@ -159,7 +159,7 @@ pluginTests =
             )
   , test "[plugins] switches plugins off; unknown names are errors" $
       assertEqual
-        (Right (Set.fromList ["git", "repl"]), Left ["unknown plugin gti (known: git, lsp, repl)"])
+        (Right (Set.fromList ["chat", "git", "repl"]), Left ["unknown plugin gti (known: chat, git, lsp, repl)"])
         (enabledPlugins <$> parseUserConfig "[plugins]\nlsp = false\n", parseUserConfig "[plugins]\ngti = false\n")
   , test "without sign-drawing plugins the gutter has no sign lane" $
       let ed = (newEditor (5, 40) (newDocument Nothing (buf "hello"))) {edSignLane = False}

@@ -27,7 +27,7 @@ import Him.Language (detectLanguage, langName, languages)
 import Him.Mode (Mode (..))
 import Him.Position (Pos (..))
 import Him.Repl
-import Him.Repl.Transcript
+import Him.Transcript
 import Him.Selection (Range (..), point, primary, rangeEnd, rangeStart, ranges, single)
 import Him.Syntax (SyntaxInfo (..))
 import Him.View (View (..))
@@ -123,7 +123,7 @@ ensureRepl focus lang file = do
   existing <- gets (findRepl lang)
   i <- case existing of
     Just d -> do
-      shown <- gets (windowOf (docId d))
+      shown <- gets (windowShowing (docId d))
       case shown of
         Just w -> modify' (focusWindow w)
         Nothing -> modify' (showBuffer (docId d) . splitWindow Beside)
@@ -148,12 +148,6 @@ restart :: Document -> FilePath -> EditorM ()
 restart d file = do
   modify' (modifyDocument (docId d) (setStatus ReplStarting))
   request (ReplStart (docId d) (maybe "" rsLanguage (replState d)) file)
-
--- | The window showing a document, if any.
-windowOf :: Int -> Editor -> Maybe Int
-windowOf i ed
-  | docId (edDoc ed) == i = Just (edFocus ed)
-  | otherwise = fst <$> find ((== i) . winDoc . snd) (IntMap.toList (edWindows ed))
 
 -- | Send code to the language's REPL, shown in its buffer as if typed.
 sendCode :: Text -> FilePath -> Text -> EditorM ()

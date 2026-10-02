@@ -97,6 +97,7 @@ cursorKindFor o = \case
   Insert -> optCursorInsert o
   Completing -> optCursorInsert o
   Repl -> optCursorInsert o
+  Chat -> optCursorInsert o
   Select -> optCursorSelect o
   CmdLine -> optCursorCommand o
   Picking -> optCursorCommand o

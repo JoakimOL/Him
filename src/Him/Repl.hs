@@ -1,5 +1,5 @@
 -- | REPLs (ADR-38): what starts one for a language, and the state of a REPL
--- buffer. Pure; the transcript operations are in "Him.Repl.Transcript",
+-- buffer. Pure; the transcript operations are in "Him.Transcript",
 -- the process in "Him.Repl.Process", the actions in "Him.Actions.Repl".
 module Him.Repl
   ( ReplConfig (..)

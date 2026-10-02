@@ -12,7 +12,7 @@ import Him.Buffer (lineAt, lineCount)
 import Him.Document (DirEntry (..), DocKind (..), Document (..))
 import Him.Syntax (SyntaxInfo (..))
 import Him.Syntax.Span (LineSpan (..))
-import Him.Editor (Editor (..))
+import Him.Editor (Editor (..), pendingEditLines)
 import Him.Mode (Mode (..))
 import Him.Options (Options (..))
 import Him.Position (Pos (..))
@@ -64,7 +64,11 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawRow frame0 [0 .. rec
       DirectoryDoc entries
         | line == 0 -> 1
         | (e : _) <- drop (line - 1) entries, deIsDir e -> 2
+      _ | any (\(a, b) -> a <= line && line < b) pending -> 3
       _ -> 0 :: Int
+    -- Lines a chat edit changed that wait for approval (ADR-41).
+    pending = pendingEditLines ed (docId doc)
+    pendingStyle = packStyle (themeText theme `patchStyle` themeHighlight theme)
     diagnosticsByLine =
       IntMap.fromListWith (<>) [(sdLine sd, [(sdStart sd, sdEnd sd, sdSeverity sd)]) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) buf top bottom]
     sevRank = \case
@@ -102,6 +106,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawRow frame0 [0 .. rec
         base = case cls of
           1 -> headerStyle
           2 -> dirStyle
+          3 -> pendingStyle
           _ -> textStyle
         remember fr = fr {frameRowKeys = Map.insert (screenRow, rectCol rect) key (frameRowKeys fr)}
         line = top + r

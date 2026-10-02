@@ -28,6 +28,7 @@ import Him.Lsp.State (ServerInfo)
 import Him.Picker (PickerItem)
 import Him.FileTree (WalkOptions)
 import Him.Repl (ReplConfig)
+import Him.Chat (ChatEvent, ChatRequest)
 
 data Effect
   = -- | Run another action, e.g. the one chosen in the command palette.
@@ -63,6 +64,10 @@ data Effect
     ReplSend !Int !Bool !Text
   | ReplInterrupt !Int
   | ReplStop !Int
+  | -- | Send a chat buffer's conversation to the chat provider (a request
+    -- already running for it is cancelled).
+    ChatSend !Int !ChatRequest
+  | ChatCancel !Int
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were
@@ -132,6 +137,8 @@ data JobResult
   | -- | A REPL runs: buffer id, how it was started, where.
     ReplStarted !Int !ReplConfig !FilePath
   | ReplOutput !Int !Text
+  | -- | Something from the chat provider, for a chat buffer.
+    ChatReply !Int !ChatEvent
   | -- | It stopped (or could not start), and why.
     ReplExited !Int !Text
   | -- | A file read for the preview, or why not.

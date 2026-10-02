@@ -24,6 +24,8 @@ data Mode
     Directory
   | -- | Insert mode in a REPL buffer: a keymap layer (@ret@ sends the input).
     Repl
+  | -- | Insert mode in a chat buffer: a keymap layer (@ret@ sends).
+    Chat
   deriving stock (Eq, Ord, Show, Enum, Bounded)
 
 -- | Short label for the status line.
@@ -37,3 +39,4 @@ modeLabel = \case
   Directory -> "DIR"
   Completing -> "INS"
   Repl -> "INS"
+  Chat -> "INS"

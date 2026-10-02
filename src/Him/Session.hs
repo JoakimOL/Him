@@ -193,6 +193,8 @@ runEffects config = go (8 :: Int)
       ReplSend {} -> pure ()
       ReplInterrupt _ -> pure ()
       ReplStop _ -> pure ()
+      ChatSend {} -> pure ()
+      ChatCancel _ -> pure ()
       PluginCommand (Just _) -> pure ()
       PluginCommand Nothing ->
         let on = map plName (cfgPlugins config)

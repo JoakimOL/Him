@@ -32,6 +32,8 @@ module Him.Editor
   , onlyWindow
   , swapWindow
   , windowEditor
+  , windowShowing
+  , pendingEditLines
   , allDocuments
   ) where
 
@@ -51,6 +53,7 @@ import Him.Selection (Selection, primary, rangeHead)
 import Him.Buffer (Buffer)
 import Him.Buffer qualified as Buffer
 import Him.Document (DocKind (..), Document (..), clampSelection, newDocument)
+import Him.Chat (ChatState (..), EditDecision (..), PendingEdit (..))
 import Him.View (View, initialView)
 import Him.Window
 import Data.IntMap.Strict (IntMap)
@@ -239,6 +242,7 @@ keymapMode ed = case (edMode ed, docKind (edDoc ed)) of
   (Normal, DirectoryDoc _) -> Directory
   (Insert, _) | Just _ <- edCompletion ed -> Completing
   (Insert, ReplDoc _) -> Repl
+  (Insert, ChatDoc _) -> Chat
   (m, _) -> m
 
 -- | A document that is open but not shown, with its scroll position.
@@ -447,3 +451,23 @@ windowEditor ed w = case IntMap.lookup w (edWindows ed) of
           , edStatus = Nothing
           , edFocus = w
           }
+
+-- | The window showing a document, if any (the focused one first).
+windowShowing :: Int -> Editor -> Maybe Int
+windowShowing i ed
+  | docId (edDoc ed) == i = Just (edFocus ed)
+  | otherwise = case [w | (w, win) <- IntMap.toList (edWindows ed), winDoc win == i] of
+      w : _ -> Just w
+      [] -> Nothing
+
+-- | The line ranges @[from, to)@ of a document that a chat's edits changed
+-- and that wait for the user's decision (ADR-41).
+pendingEditLines :: Editor -> Int -> [(Int, Int)]
+pendingEditLines ed i =
+  [ (peLine pe, peLine pe + max 1 (length (peNew pe)))
+  | d <- allDocuments ed
+  , ChatDoc cs <- [docKind d]
+  , pe <- csEdits cs
+  , peDoc pe == i
+  , peDecision pe == Undecided
+  ]
