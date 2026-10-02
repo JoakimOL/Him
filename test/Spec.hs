@@ -385,6 +385,8 @@ keymapTests =
     km = either (error . show) id (fromBindings [("a", "one" :: Text), ("g g", "top")])
     keys = fromMaybe [] . parseKeys
 
+data CursorEdit = Insert' | Backspace' | Delete'
+
 multiSelectionTests :: [Test]
 multiSelectionTests =
   [ test "fromRanges sorts and keeps the primary" $
@@ -408,8 +410,16 @@ multiSelectionTests =
       let sel = sel_ [r 0 0 0 1, r 0 4 0 5, r 1 1 1 2] 0
           (b, _) = applyEdits (const deleteSelection) (buf "one two\nthree") sel
        in assertEqual "e o\ntee" (B.toText b)
-  , test "random multi-cursor inserts match a model" (multiModel 300 11 True)
-  , test "random multi-cursor backspaces match a model" (multiModel 300 13 False)
+  , test "random multi-cursor inserts match a model" (multiModel 300 11 Insert')
+  , test "random multi-cursor backspaces match a model" (multiModel 300 13 Backspace')
+  , test "random multi-cursor forward deletes match a model" (multiModel 300 19 Delete')
+  , test "random multi-range deletes match a model" (mapM_ deleteModel (take 400 (chunks (randoms 17))))
+  , test "deleting a line and the last line" $
+      let (b, _) = applyEdits (const deleteSelection) (buf "a\nb\nc") (sel_ [r 1 0 1 1, r 2 0 2 1] 0)
+       in assertEqual "a" (B.toText b)
+  , test "deleteForward at adjacent cursors" $
+      let (b, sel') = applyEdits (const deleteForward) (buf "abcd") (sel_ [r 0 1 0 1, r 0 2 0 2] 0)
+       in assertEqual ("ad", [r 0 1 0 1]) (B.toText b, ranges sel')
   , test "copy_selection_on_next_line skips short lines" $
       let sel = copySelectionBelow (buf "abcd\nx\nabcd") (single (r 0 2 0 3))
        in assertEqual ([r 0 2 0 3, r 2 2 2 3], 1) (shape sel)
@@ -429,36 +439,61 @@ multiSelectionTests =
     shape sel = (ranges sel, primaryIndex sel)
     -- Point cursors at random offsets (at least 2 apart), one random edit
     -- applied to all of them, compared with the same edit on a string.
-    multiModel :: Int -> Int -> Bool -> Either String ()
-    multiModel n seed inserting = mapM_ (one inserting) (take n (chunks (randoms seed)))
+    multiModel :: Int -> Int -> CursorEdit -> Either String ()
+    multiModel n seed kind = mapM_ (one kind) (take n (chunks (randoms seed)))
     chunks xs = let (a, b) = splitAt 8 xs in a : chunks b
-    one inserting rs = case rs of
+    one kind rs = case rs of
       (r1 : r2 : r3 : more) ->
         let txt = T.intercalate "\n" (take (2 + r1 `mod` 4) ["hello", "", "a b c", "xyz", "q"])
             len = T.length txt
             offs = spread (map (`mod` (len + 1)) (take (1 + r2 `mod` 4) more))
             ins = ["X", "\n", "ab\ncd", ""] !! (r3 `mod` 3)
             sel = sel_ [let p = posOf txt o in Range p p Nothing | o <- offs] 0
-            edit1 = if inserting then insertAtHead ins else deleteBackward
+            edit1 = case kind of
+              Insert' -> insertAtHead ins
+              Backspace' -> deleteBackward
+              Delete' -> deleteForward
             (b, sel') = applyEdits (const edit1) (buf txt) sel
-            (expectText, expectOffs)
-              | inserting = (insertAll txt offs ins, [o + i * T.length ins + T.length ins | (i, o) <- zip [0 ..] offs])
-              | otherwise = deleteAll txt offs
+            (expectText, expectOffs) = case kind of
+              Insert' -> (insertAll txt offs ins, [o + i * T.length ins + T.length ins | (i, o) <- zip [0 ..] offs])
+              Backspace' -> deleteAll txt [o - 1 | o <- offs, o > 0] offs
+              Delete' -> deleteAll txt [o | o <- offs, o < len] offs
             got = (B.toText b, map (offOf (B.toText b) . rangeHead) (ranges sel'))
-         in if got == (expectText, expectOffs) then Right () else Left (show (txt, offs, ins, got, (expectText, expectOffs)))
+         in if got == (expectText, nub expectOffs) then Right () else Left (show (txt, offs, ins, got, (expectText, expectOffs)))
       _ -> Right ()
+    -- Random sorted, non-overlapping (often adjacent) ranges deleted at
+    -- once, compared with deleting the characters they cover from a string.
+    deleteModel rs = case rs of
+      (r1 : r2 : more) ->
+        let txt = T.intercalate "\n" (take (2 + r1 `mod` 3) ["hello", "", "ab c", "xyz"])
+            len = T.length txt
+            cuts = nub (sort (map (`mod` (len + 1)) (take (2 + 2 * (r2 `mod` 3)) more)))
+            spans = pairs cuts
+            sel = sel_ [Range (posOf txt a) (posOf txt e) Nothing | (a, e) <- spans] 0
+            (b, _) = applyEdits (const deleteSelection) (buf txt) sel
+            covered = [i | (a, e) <- spans, i <- [a .. min (len - 1) e]]
+            -- A range from a line start to the end also takes the line
+            -- break before it.
+            trailing = [a - 1 | (a, e) <- take 1 (reverse spans), e >= len, a > 0, T.index txt (a - 1) == '\n']
+            gone = covered <> trailing
+            expect = T.pack [c | (i, c) <- zip [0 ..] (T.unpack txt), i `notElem` gone]
+         in if null spans || B.toText b == expect then Right () else Left (show (txt, spans, B.toText b, expect))
+      _ -> Right ()
+    pairs (a : e : more) = (a, e) : pairs more
+    pairs _ = []
     -- Sorted, at least 2 apart.
     spread = foldr keep [] . nub . sort
     keep o acc = case acc of
-      (x : _) | x - o < 2 -> acc
+      (x : _) | x - o < 1 -> acc
       _ -> o : acc
     posOf t o = let before = T.take o t in Pos (T.count "\n" before) (T.length (T.takeWhileEnd (/= '\n') before))
     offOf t (Pos l c) = sum [T.length x + 1 | x <- take l (T.splitOn "\n" t)] + c
     insertAll t offs ins = foldr (\o acc -> T.take o acc <> ins <> T.drop o acc) t offs
-    deleteAll t offs =
-      let dels = [o | o <- offs, o > 0]
-          t' = foldr (\o acc -> T.take (o - 1) acc <> T.drop o acc) t dels
-       in (t', [o - length [d | d <- dels, d <= o] | o <- offs])
+    -- Delete the characters at the given indices; each cursor moves left
+    -- by the deletions before it.
+    deleteAll t dels offs =
+      let t' = T.pack [c | (i, c) <- zip [0 ..] (T.unpack t), i `notElem` dels]
+       in (t', [o - length [d | d <- dels, d < o] | o <- offs])
 
 actionTests :: [Test]
 actionTests =
@@ -783,6 +818,9 @@ integrationTests = do
   splitLines <- textAfter "ab\ncd" "% A-s d"
   selectEsc <- typeKeys "l % s a esc" (start "a b a")
   selectNone <- typeKeys "% s z z ret" (start "a b a")
+  adjacentAppend <- typeKeys "% s a ret a backspace" (start "aab")
+  adjacentInsert <- textAfter "aab" "% s a ret i backspace esc"
+  adjacentType <- textAfter "aab" "% s a ret a X esc"
   multiUndo <- textAfter "ab\nab" "C i X Y esc u"
   countDown <- selectionAfter "a\nb\nc\nd\ne" "3 j"
   countTwelve <- selectionAfter (T.intercalate "\n" (replicate 20 "x")) "1 2 j"
@@ -840,6 +878,10 @@ integrationTests = do
     , test "A-s d deletes each line's text" (assertEqual "\n" splitLines)
     , test "esc on the s prompt restores the selection" (assertEqual [Range (Pos 0 0) (Pos 0 5) Nothing] (ranges (docSelection (edDoc selectEsc))))
     , test "s without matches is reported" (assertEqual (Just (Status Error "no matches: zz")) (edStatus selectNone))
+    , test "backspace at adjacent cursors deletes both characters" $
+        assertEqual ("b", [Range (Pos 0 0) (Pos 0 0) Nothing]) (B.toText (docBuffer (edDoc adjacentAppend)), ranges (docSelection (edDoc adjacentAppend)))
+    , test "backspace at adjacent cursors, one at the start" (assertEqual "ab" adjacentInsert)
+    , test "typing at adjacent cursors" (assertEqual "aXaXb" adjacentType)
     , test "u undoes a multi-cursor insert at once" (assertEqual "ab\nab" multiUndo)
     , test "a count repeats a motion" (assertEqual (Pos 3 0, Pos 3 0) countDown)
     , test "counts have several digits" (assertEqual (Pos 12 0, Pos 12 0) countTwelve)

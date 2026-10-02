@@ -211,9 +211,15 @@ unchanged. A single range takes a direct path, so typing costs what it did befor
 - **Registers:** a register holds one value per range. Pasting with as many values
   as ranges gives each range its own value; otherwise every range gets all of them,
   joined.
-- **Known limit:** two cursors next to each other (e.g. `ab` with cursors on `a` and on
-  `b`) can interact. A backspace at the second deletes the first one's character. Helix
-  merges such cursors; him does not yet.
+- **Adjacent ranges:** an edit may reach just outside its own range. A backspace
+  deletes the character before the cursor, and deleting the last lines takes the line
+  break before them. Either can touch the text of the range before it, but only after
+  that range's start, so that range's positions stay valid when its turn comes. The
+  stored results of later ranges lie after the change, so they are not affected either.
+  Randomized model tests cover inserts, backspaces, forward deletes, and range deletes
+  with ranges right next to each other. Cursors that end up on the same position are
+  merged. (An earlier version of this ADR listed adjacent cursors as a known limit.
+  That was wrong: the tests show the same results as the string model.)
 *Alternative:* change sets with position mapping (as in Helix). They are more general,
 and needed for an undo tree or collaboration, but they are much more code.
 
@@ -389,13 +395,11 @@ numbers are provisional.*
 - **Next suggestions:**
   1. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
      matcher. `s` would get regexes for free.
-  2. **Merge adjacent cursors** in insert mode (see ADR-18's known limit). Also `S` (split
-     the selection on a pattern) and `A-;` (flip the selections).
+  2. `S` (split the selection on a pattern) and `A-;` (flip the selections).
   3. Multiple buffers / `:e`, and a config file for keymaps (the parser only).
 - **Known issues:**
   - Zero-width combining characters are treated as width 1.
   - Case-insensitive search folds ASCII letters only.
-  - Adjacent cursors can interact on backspace (ADR-18).
   - `s` searches from each range's start, and a range without a match can scan on to
     the next match beyond it. With many ranges and few matches, that is slow.
   - Search (`/`, `n`) moves only the primary range.
@@ -405,7 +409,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (234 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (241 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.
