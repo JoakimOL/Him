@@ -26,7 +26,7 @@ import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
-import System.Directory (getHomeDirectory, canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesPathExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
+import System.Directory (findExecutable, getHomeDirectory, canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesPathExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
 import Him.FileTree (listFiles)
 import Him.Picker
 import Him.Effect (Effect (..), Job (..), JobResult (..))
@@ -39,6 +39,9 @@ import Him.Diff
 import Him.Syntax
 import Him.Regex
 import Him.Lsp.Protocol
+import Him.Lsp.State (DocLsp (..), ShownDiagnostic (..), shownDiagnostics)
+import Him.Commands.Lsp (lspFlush)
+import GHC.Clock (getMonotonicTime)
 import Him.Syntax.TreeSitter (findRuntime, readQuery, treeSitter)
 import System.FilePath ((</>))
 import Data.List (find)
@@ -184,6 +187,26 @@ testRuntime config = do
   events <- newTChanIO
   runtime <- newRuntime (cfgSyntaxProviders config) (atomically . writeTChan events)
   pure (runtime, events)
+
+-- | Handle job results until the editor satisfies a condition, or a
+-- timeout (milliseconds) passes. For answers that take a while (language
+-- servers).
+settleUntil :: Config -> (Runtime, TChan Event) -> Int -> (Editor -> Bool) -> Editor -> IO Editor
+settleUntil config (runtime, events) ms done ed0 = do
+  deadline <- (+ fromIntegral ms / 1000) <$> getMonotonicTime
+  let loop ed
+        | done ed = pure ed
+        | otherwise = do
+            mapM_ (Runtime.perform runtime) (edEffects ed)
+            now <- getMonotonicTime
+            next <- timeout (max 1 (round ((deadline - now) * 1000000))) (atomically (readTChan events))
+            case next of
+              Nothing -> pure ed {edEffects = []}
+              Just ev -> do
+                ed' <- execStateT (handleEvent config ev) ed {edEffects = []}
+                -- Like the main loop: send the text before the next frame.
+                execStateT lspFlush ed' >>= loop
+  loop ed0
 
 settleWith :: Config -> (Runtime, TChan Event) -> Editor -> IO Editor
 settleWith config (runtime, events) ed0 = do
@@ -406,6 +429,7 @@ main = do
   gitIO <- gitTests
   syntaxIO <- syntaxIOTests
   treeSitterIO <- treeSitterTests
+  lspIO <- lspTests
   bufferIO <- openBufferTests
   loading <- loadingTests
   runTests
@@ -428,6 +452,7 @@ main = do
     , group "Him.Syntax" syntaxTests
     , group "Him.Regex" regexTests
     , group "Him.Lsp.Protocol" lspProtocolTests
+    , group "LSP client (with clangd)" lspIO
     , group "highlighting through a provider" syntaxIO
     , group "Him.Syntax.TreeSitter (with the installed grammars)" treeSitterIO
     , group "Him.Process" processes
@@ -1091,6 +1116,41 @@ treeSitterTests =
             assertEqual True (and [lsEnd a <= lsStart b | l <- [0 .. 3], let ss = IntMap.findWithDefault [] l spans, (a, b) <- zip ss (drop 1 ss)])
         , test "inherited queries are read in place of the inherits line" $
             assertEqual (Just False) (T.isInfixOf "; inherits" <$> inherited)
+        ]
+
+-- | The LSP client against clangd, when it is installed.
+lspTests :: IO [Test]
+lspTests = do
+  clangd <- findExecutable "clangd"
+  case clangd of
+    Nothing -> pure [test "clangd not found: skipped" (Right ())]
+    Just _ -> do
+      config <- either (fail . T.unpack) pure defaultConfig
+      dir <- getTemporaryDirectory
+      let project = dir <> "/him-test-lsp"
+          file = project <> "/main.c"
+      createDirectoryIfMissing True project
+      writeFile file "int add(int a, int b) { return a + b; }\nint main(void) {\n    int x = add(1, \"two\");\n    return x;\n}\n"
+      writeFile (project <> "/compile_flags.txt") "-std=c11\n"
+      rt <- testRuntime config
+      doc <- either (fail . T.unpack) pure =<< loadDocument file
+      let start = newEditor (24, 80) doc
+          run ed k = execStateT (handleEvent config (EvKey k)) ed
+          keys ks ed = foldlM run ed (fromMaybe (error ks) (parseKeys (T.pack ks)))
+          diagnosed ed = not (null (shownDiagnostics (edLsp ed) (docLsp (edDoc ed)) (docBuffer (edDoc ed))))
+          errorsOn ed = [(sdLine sd, sdSeverity sd) | sd <- shownDiagnostics (edLsp ed) (docLsp (edDoc ed)) (docBuffer (edDoc ed)), sdSeverity sd == SevError]
+      attached <- settleUntil config rt 20000 diagnosed =<< execStateT (handleEvent config (EvResize 24 80)) start
+      -- Line 2 is `    int x = add(1, "two");`: add at 12, "two" at 19-23.
+      let selecting l a b ed = ed {edDoc = (edDoc ed) {docSelection = single (Range (Pos l a) (Pos l b) Nothing)}}
+      hovered <- settleUntil config rt 10000 (isJust . edPopup) =<< keys "space k" (selecting 2 12 12 attached)
+      defined <- settleUntil config rt 10000 ((/= Pos 2 12) . rangeHead . primary . docSelection . edDoc) =<< keys "g d" (selecting 2 12 12 attached)
+      fixed <- settleUntil config rt 20000 (null . errorsOn) =<< keys "c 2 esc" (selecting 2 19 23 attached)
+      pure
+        [ test "the document attaches to clangd" (assertEqual True (case docLsp (edDoc attached) of LspAttached _ -> True; _ -> False))
+        , test "an error is reported on its line" (assertEqual [(2, SevError)] (take 1 (errorsOn attached)))
+        , test "hover shows a popup" (assertEqual True (isJust (edPopup hovered)))
+        , test "g d goes to the definition of add" (assertEqual (Pos 0 4) (rangeHead (primary (docSelection (edDoc defined)))))
+        , test "fixing the error clears it" (assertEqual [] (errorsOn fixed))
         ]
 
 -- | Highlighting through an injected provider.
