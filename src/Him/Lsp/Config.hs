@@ -2,9 +2,13 @@
 -- root (ADR-29). Built in for now; a config file can extend it later.
 module Him.Lsp.Config
   ( ServerConfig (..)
+  , ServerTable
+  , defaultServers
   , serverFor
   ) where
 
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Him.Language (Language (..))
 
@@ -18,17 +22,26 @@ data ServerConfig = ServerConfig
   }
   deriving stock (Eq, Show)
 
-serverFor :: Language -> Maybe ServerConfig
-serverFor language = case langName language of
-  "haskell" -> Just (ServerConfig "haskell-language-server-wrapper" ["--lsp"] ["hie.yaml", "stack.yaml", "cabal.project", "package.yaml"] "haskell")
-  "rust" -> Just (ServerConfig "rust-analyzer" [] ["Cargo.toml"] "rust")
-  "c" -> Just (ServerConfig "clangd" [] ["compile_commands.json", ".clangd", "compile_flags.txt", "CMakeLists.txt", "Makefile"] "c")
-  "cpp" -> Just (ServerConfig "clangd" [] ["compile_commands.json", ".clangd", "compile_flags.txt", "CMakeLists.txt", "Makefile"] "cpp")
-  "typescript" -> ts "typescript"
-  "tsx" -> ts "typescriptreact"
-  "javascript" -> ts "javascript"
-  "python" -> Just (ServerConfig "pylsp" [] ["pyproject.toml", "setup.py", "setup.cfg"] "python")
-  "go" -> Just (ServerConfig "gopls" [] ["go.mod"] "go")
-  _ -> Nothing
+-- | Servers by language name (the config file can change it).
+type ServerTable = Map Text ServerConfig
+
+serverFor :: ServerTable -> Language -> Maybe ServerConfig
+serverFor table language = Map.lookup (langName language) table
+
+-- | The built-in servers.
+defaultServers :: ServerTable
+defaultServers =
+  Map.fromList
+    [ ("haskell", ServerConfig "haskell-language-server-wrapper" ["--lsp"] ["hie.yaml", "stack.yaml", "cabal.project", "package.yaml"] "haskell")
+    , ("rust", ServerConfig "rust-analyzer" [] ["Cargo.toml"] "rust")
+    , ("c", clangd "c")
+    , ("cpp", clangd "cpp")
+    , ("typescript", ts "typescript")
+    , ("tsx", ts "typescriptreact")
+    , ("javascript", ts "javascript")
+    , ("python", ServerConfig "pylsp" [] ["pyproject.toml", "setup.py", "setup.cfg"] "python")
+    , ("go", ServerConfig "gopls" [] ["go.mod"] "go")
+    ]
   where
-    ts lid = Just (ServerConfig "typescript-language-server" ["--stdio"] ["tsconfig.json", "jsconfig.json", "package.json"] lid)
+    clangd = ServerConfig "clangd" [] ["compile_commands.json", ".clangd", "compile_flags.txt", "CMakeLists.txt", "Makefile"]
+    ts = ServerConfig "typescript-language-server" ["--stdio"] ["tsconfig.json", "jsconfig.json", "package.json"]

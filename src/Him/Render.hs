@@ -48,12 +48,9 @@ layout ed =
     -- Drop the gutter on very narrow terminals.
     gutter = if cols > 20 then gutterWidth ed else 0
 
-scrolloff :: Int
-scrolloff = 3
-
 -- | Scroll the view so the primary cursor is on screen.
 ensureCursorVisible :: Editor -> Editor
-ensureCursorVisible ed = ed {edView = scrollToCursor (rectHeight r, rectWidth r) scrolloff cursor (edView ed)}
+ensureCursorVisible ed = ed {edView = scrollToCursor (rectHeight r, rectWidth r) (edScrolloff ed) cursor (edView ed)}
   where
     r = layoutText (layout ed)
     cursor = (posLine (rangeHead (primary (docSelection (edDoc ed)))), cursorDisplayCol ed)

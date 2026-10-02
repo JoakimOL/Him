@@ -26,11 +26,16 @@ import Him.Config.Default (defaultConfig)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
 import Him.Commands.Git qualified as Git
+import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
 import Him.Commands.Picker qualified as Picker
 import Him.Commands.Lsp qualified as Lsp
 import Him.Commands.Syntax qualified as Syntax
 import Him.Info (refreshInfo)
+import Him.UserConfig (UserConfig, applyEditorOptions, applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Control.Monad.IO.Class (liftIO)
+import System.Directory (doesFileExist)
 import Him.Runtime (Runtime, newRuntime)
 import Him.Runtime qualified as Runtime
 import Him.Palette (paletteItems)
@@ -55,7 +60,8 @@ import System.Exit (die)
 -- | Run the editor, opening the given files (the first one is shown).
 run :: [FilePath] -> IO ()
 run files = do
-  config <- either (die . T.unpack) pure defaultConfig
+  -- The user's config; a broken one starts the defaults and says why.
+  (userConfig, config, problem) <- loadConfig
   -- Load before entering raw mode, so errors print normally.
   docs <- traverse (\path -> loadPath False path >>= either (die . T.unpack) pure) files
   logMsg ("starting, files = " <> show files)
@@ -64,12 +70,34 @@ run files = do
     size <- fromMaybe (24, 80) <$> getWindowSize
     onResize (atomically . writeTChan events . uncurry EvResize)
     startInputReader events
-    runtime <- newRuntime (cfgSyntaxProviders config) (atomically . writeTChan events)
+    runtime <- newRuntime (cfgSyntaxProviders config) (cfgServers config) (atomically . writeTChan events)
     -- Start what the first document needs (its git state) before any key.
-    start <- execStateT housekeeping (openAll size docs)
+    let opened = applyEditorOptions userConfig (openAll size docs)
+    start <- execStateT housekeeping opened {edStatus = Status Error <$> problem}
     mapM_ (Runtime.perform runtime) (edEffects start)
-    eventLoop config runtime suspend events start {edEffects = []}
+    configRef <- newIORef config
+    eventLoop configRef runtime suspend events start {edEffects = []}
     Runtime.shutdown runtime
+
+-- | The config: the user's file on top of the defaults. On a problem, the
+-- defaults and a message naming the first one (all are logged).
+loadConfig :: IO (UserConfig, Config, Maybe T.Text)
+loadConfig = do
+  path <- configPath
+  defaults <- either (die . T.unpack) pure defaultConfig
+  loadUserConfig path >>= \case
+    Left errs -> broken path defaults errs
+    Right uc -> case applyUserConfig uc of
+      Left e -> broken path defaults (T.lines e)
+      Right config -> pure (uc, config, Nothing)
+  where
+    broken path defaults errs = do
+      logMsg ("config " <> path <> ": " <> T.unpack (T.unlines errs))
+      let first = case errs of
+            e : _ -> e
+            [] -> "?"
+          more = if length errs > 1 then " (and " <> T.pack (show (length errs - 1)) <> " more)" else ""
+      pure (emptyUserConfig, defaults, Just ("config: " <> first <> more <> "; using the defaults (:config-open)"))
 
 -- | An editor showing the first document, with the others open behind it.
 openAll :: (Int, Int) -> [Document] -> Editor
@@ -83,8 +111,8 @@ openAll size docs = case docs of
 maxBatch :: Int
 maxBatch = 512
 
-eventLoop :: Config -> Runtime -> IO () -> TChan Event -> Editor -> IO ()
-eventLoop config runtime suspend events = go Nothing
+eventLoop :: IORef Config -> Runtime -> IO () -> TChan Event -> Editor -> IO ()
+eventLoop configRef runtime suspend events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
@@ -100,6 +128,17 @@ eventLoop config runtime suspend events = go Nothing
       unless (edQuit next) (go (Just frame) next)
 
     -- Handle an event, then whatever else is already queued.
+    -- :config-reload: a new config for the loop, the runtime's server table
+    -- and the editor's settings; a broken file keeps the current config.
+    reloadConfig ed = do
+      (uc, config, problem) <- loadConfig
+      case problem of
+        Just e -> pure ed {edStatus = Just (Status Error e)}
+        Nothing -> do
+          writeIORef configRef config
+          Runtime.setServerTable runtime (cfgServers config)
+          pure (applyEditorOptions uc ed) {edStatus = Just (Status Info "config reloaded")}
+
     batch :: Int -> Editor -> Event -> IO Editor
     batch n ed ev = do
       ed' <- step ed ev
@@ -111,14 +150,16 @@ eventLoop config runtime suspend events = go Nothing
             Just ev' -> batch (n - 1) (ensureCursorVisible ed') ev'
 
     step :: Editor -> Event -> IO Editor
-    step ed ev =
+    step ed ev = readIORef configRef >>= \config ->
       -- A bug in a command should not take the editor (and unsaved work)
       -- down with it.
       try (execStateT (handleEvent config ev) ed) >>= \case
         Right ed' -> do
           -- Start or cancel the background jobs the event asked for.
           mapM_ (Runtime.perform runtime) (edEffects ed')
-          if Suspend `elem` edEffects ed'
+          if ReloadConfig `elem` edEffects ed'
+            then reloadConfig ed' {edEffects = filter (/= ReloadConfig) (edEffects ed')}
+            else if Suspend `elem` edEffects ed'
             then do
               suspend
               -- The window may have changed meanwhile.
@@ -219,6 +260,7 @@ runEffects config = go (8 :: Int)
     immediate = \case
       RunAction _ -> True
       OpenPalette -> True
+      OpenConfig -> True
       _ -> False
     perform = \case
       StartJob _ -> pure ()
@@ -226,6 +268,16 @@ runEffects config = go (8 :: Int)
       LspSend _ _ -> pure ()
       LspStop _ -> pure ()
       Suspend -> pure ()
+      ReloadConfig -> pure ()
+      OpenConfig -> do
+        path <- liftIO configPath
+        exists <- liftIO (doesFileExist path)
+        if exists
+          then File.openFile path
+          else do
+            -- A new file, with the defaults to start from (saved with :w).
+            modify' (openBuffer ((newDocument (Just path) (Buffer.fromText defaultConfigText)) {docDirty = True}))
+            Command.info "a new config file with the defaults: change what you like, then :w and :config-reload"
       RunAction inv -> either failWith boundRun (bindInvocation (cfgActions config) inv)
       OpenPalette -> modify' $ \e ->
         e {edPicker = Just (newPicker "commands" (paletteItems config (keymapMode e))), edMode = Picking}

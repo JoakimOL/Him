@@ -150,6 +150,8 @@ data Editor = Editor
   -- ^ The completion menu, in insert mode.
   , edPopup :: !(Maybe InfoBox)
   -- ^ A box shown until the next key (e.g. hover documentation).
+  , edScrolloff :: !Int
+  -- ^ Lines kept visible above and below the cursor.
   , edShowHidden :: !Bool
   -- ^ Directory listings show dotfiles (@g .@ toggles).
   , edInfo :: !(Maybe InfoBox)
@@ -188,6 +190,7 @@ newEditor size doc =
     , edLsp = emptyLsp
     , edCompletion = Nothing
     , edPopup = Nothing
+    , edScrolloff = 3
     , edShowHidden = False
     , edInfo = Nothing
     , edCompletions = []

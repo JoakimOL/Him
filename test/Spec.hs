@@ -39,6 +39,11 @@ import Him.Runtime qualified as Runtime
 import Control.Concurrent.STM (TChan, atomically, newTChanIO, readTChan, writeTChan)
 import System.Timeout (timeout)
 import Him.Ignore
+import Him.Toml (parseToml)
+import Him.UserConfig
+import Him.Lsp.Config (ServerConfig (..), defaultServers)
+import Him.Config.Default (defaultBindings)
+import System.Environment (setEnv, unsetEnv)
 import Him.Diff
 import Him.Syntax
 import Him.Regex
@@ -198,7 +203,7 @@ settle config ed0 = do
 testRuntime :: Config -> IO (Runtime, TChan Event)
 testRuntime config = do
   events <- newTChanIO
-  runtime <- newRuntime (cfgSyntaxProviders config) (atomically . writeTChan events)
+  runtime <- newRuntime (cfgSyntaxProviders config) (cfgServers config) (atomically . writeTChan events)
   pure (runtime, events)
 
 -- | Handle job results until the editor satisfies a condition, or a
@@ -473,6 +478,7 @@ main = do
   processes <- processTests
   gitIO <- gitTests
   syntaxIO <- syntaxIOTests
+  remapIO <- remapTests
   treeSitterIO <- treeSitterTests
   lspIO <- lspTests
   bufferIO <- openBufferTests
@@ -501,6 +507,9 @@ main = do
     , group "Him.Lsp.Protocol" lspProtocolTests
     , group "Him.Lsp.Sync" syncTests
     , group "Him.Lsp.Edit" lspEditTests
+    , group "Him.Toml" tomlTests
+    , group "Him.UserConfig" userConfigTests
+    , group "a remapping config file, through the keys" remapIO
     , group "LSP client (with clangd)" lspIO
     , group "highlighting through a provider" syntaxIO
     , group "Him.Syntax.TreeSitter (with the installed grammars)" treeSitterIO
@@ -1098,6 +1107,51 @@ lspProtocolTests =
   where
     rng a b c d = JObject [("start", JObject [("line", JInt a), ("character", JInt b)]), ("end", JObject [("line", JInt c), ("character", JInt d)])]
 
+tomlTests :: [Test]
+tomlTests =
+  [ test "tables, keys and values" $
+      assertEqual
+        (Right (JObject [("a", JInt 1), ("t", JObject [("s", JString "x\ty"), ("lit", JString "c:\\p"), ("b", JBool True), ("q k", JArray [JInt 1, JInt 2])])]))
+        (parseToml "a = 1 # one\n\n[t]\ns = \"x\\ty\"\nlit = 'c:\\p'\nb = true\n\"q k\" = [1,\n  2, # two\n]\n")
+  , test "dotted headers and keys" $
+      assertEqual (Right (JObject [("keys", JObject [("normal", JObject [("g g", JString "x")])]), ("a", JObject [("b", JInt 3)])]))
+        (parseToml "[keys.normal]\n\"g g\" = \"x\"\n[a]\nb = 3\n")
+  , test "a # inside a string is not a comment" (assertEqual (Right (JObject [("k", JString "a # b")])) (parseToml "k = \"a # b\""))
+  , test "errors name the line" $
+      assertEqual [Left "line 2: k is set twice", Left "line 1: expected = after the key", Left "line 1: unterminated string"]
+        [parseToml "k = 1\nk = 2", parseToml "k 1", parseToml "k = \"abc"]
+  ]
+
+userConfigTests :: [Test]
+userConfigTests =
+  [ test "the dumped defaults read back as the defaults" $
+      case parseUserConfig defaultConfigText of
+        Left e -> Left (show e)
+        Right uc -> do
+          assertEqual defaultBindings (ucBindings uc)
+          assertEqual (Just 3, Just False) (ucScrolloff uc, ucShowHidden uc)
+          assertEqual (Right defaultServers) (cfgServers <$> applyUserConfig uc)
+  , test "unknown sections, modes and settings are reported, all of them" $
+      assertEqual
+        (Left ["unknown section [keyz] (known: editor, keys, language-server)", "unknown setting editor.tabs (known: scrolloff, show-hidden-files)", "unknown mode [keys.nromal] (known: normal, select, insert, command, picker, directory, completion)"])
+        (parseUserConfig "[keyz]\n[editor]\ntabs = 2\n[keys.nromal]\n")
+  , test "a binding must be an action in quotes" $
+      assertEqual (Left ["keys.normal.j: the value must be an action in quotes, e.g. \"move_line_down\""]) (parseUserConfig "[keys.normal]\nj = 5\n")
+  , test "an unknown action is caught when applied" $
+      assertEqual (Left "Normal mode, j: unknown action: fly") (() <$ (applyUserConfig =<< either (Left . T.unlines) Right (parseUserConfig "[keys.normal]\nj = \"fly\"\n")))
+  , test "servers: change, disable, add" $
+      let uc = either (error . show) id (parseUserConfig "[language-server.rust]\nargs = [\"--x\"]\n[language-server.go]\nenabled = false\n[language-server.lua]\ncommand = \"lua-ls\"\n")
+          table = either (error . T.unpack) cfgServers (applyUserConfig uc)
+       in assertEqual (Just ("rust-analyzer", ["--x"]), Nothing, Just "lua-ls")
+            (fmap (\sc -> (scCommand sc, scArgs sc)) (Map.lookup "rust" table), Map.lookup "go" table, scCommand <$> Map.lookup "lua" table)
+  , test "a new language needs a command" $
+      assertEqual (Left "language-server.zig: no built-in server, so a command is needed") (() <$ (applyUserConfig =<< either (Left . T.unlines) Right (parseUserConfig "[language-server.zig]\nargs = []\n")))
+  , test "editor settings apply to the editor" $
+      let uc = either (error . show) id (parseUserConfig "[editor]\nscrolloff = 7\nshow-hidden-files = true\n")
+          ed = applyEditorOptions uc (newEditor (24, 80) (newDocument Nothing (buf "")))
+       in assertEqual (7, True) (edScrolloff ed, edShowHidden ed)
+  ]
+
 lspEditTests :: [Test]
 lspEditTests =
   [ test "edits apply from the end, positions in the old text" $
@@ -1359,6 +1413,33 @@ lspTests = do
         , test "ret inserts the selected completion" $
             assertEqual (True, Nothing) ("add" `T.isPrefixOf` T.strip (B.lineAt 2 (docBuffer (edDoc accepted))), edCompletion accepted)
         ]
+
+-- | A user config remapping keys, used like the editor uses it.
+remapTests :: IO [Test]
+remapTests = do
+  let uc = either (error . show) id (parseUserConfig "[keys.normal]\n\"j\" = \"move_line_up\"\n\"C-j\" = \"move_line_down 2\"\n\"x\" = \"no_op\"\n[keys.insert]\n\"C-a\" = \"normal_mode\"\n")
+  config <- either (fail . T.unpack) pure (applyUserConfig uc)
+  let start t = newEditor (24, 80) (newDocument Nothing (buf t))
+      run ed k = execStateT (handleEvent config (EvKey k)) ed
+      keys ks ed = foldlM run ed (fromMaybe (error ks) (parseKeys (T.pack ks)))
+      headOf = rangeHead . primary . docSelection . edDoc
+  down <- keys "C-j" (start "a\nb\nc\nd")
+  up <- keys "j" =<< keys "C-j" (start "a\nb\nc\nd")
+  unbound <- keys "x" (start "a\nb")
+  insertExit <- keys "i C-a" (start "")
+  dir <- getTemporaryDirectory
+  let path = dir <> "/him-test-config/config.toml"
+  setEnv "HIM_CONFIG" path
+  opened <- keys ": c o n f i g minus o p e n ret" (start "")
+  unsetEnv "HIM_CONFIG"
+  pure
+    [ test "a key bound to an action with an argument" (assertEqual (Pos 2 0) (headOf down))
+    , test "a default key rebound" (assertEqual (Pos 1 0) (headOf up))
+    , test "a key unbound with no_op" (assertEqual (Pos 0 0, Pos 0 0) (rangeAnchor (primary (docSelection (edDoc unbound))), headOf unbound))
+    , test "insert-mode bindings" (assertEqual Normal (edMode insertExit))
+    , test ":config-open on a missing file shows the defaults, unsaved, at the path" $
+        assertEqual (Just path, True, True) (docPath (edDoc opened), docDirty (edDoc opened), "[keys.normal]" `T.isInfixOf` B.toText (docBuffer (edDoc opened)))
+    ]
 
 -- | Highlighting through an injected provider.
 syntaxIOTests :: IO [Test]

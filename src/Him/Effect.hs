@@ -44,6 +44,10 @@ data Effect
   | -- | Suspend the editor (Ctrl-Z): give the terminal back to the shell
     -- until it is continued (@fg@).
     Suspend
+  | -- | Read the config file again and use it.
+    ReloadConfig
+  | -- | Open the config file (with the defaults in it if it does not exist).
+    OpenConfig
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were

@@ -20,6 +20,7 @@ import Data.Text qualified as T
 import Him.Action
 import Him.Command (EditorM)
 import Him.Ex (ExCommand)
+import Him.Lsp.Config (ServerTable, defaultServers)
 import Him.Syntax (SyntaxProvider)
 import Him.Key (Key)
 import Him.Keymap (Keymap, fromBindings, unionKeymap)
@@ -38,6 +39,8 @@ data Config = Config
   , cfgSyntaxProviders :: [SyntaxProvider]
   -- ^ Highlighters, tried in order for each document's language
   -- ("Him.Syntax").
+  , cfgServers :: ServerTable
+  -- ^ Language servers by language.
   }
 
 -- | Per mode, @(keys, action invocation)@ pairs such as
@@ -85,5 +88,6 @@ buildConfig actions bindings fallback = do
           , cfgExCommands = []
           , cfgPrefixNames = Map.empty
           , cfgSyntaxProviders = []
+          , cfgServers = defaultServers
           }
     errs -> Left (T.intercalate "\n" errs)

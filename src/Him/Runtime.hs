@@ -7,6 +7,7 @@ module Him.Runtime
   , newRuntime
   , perform
   , shutdown
+  , setServerTable
   ) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
@@ -14,7 +15,7 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, new
 import Control.Monad (when)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Him.Lsp.Config (ServerConfig (..), serverFor)
+import Him.Lsp.Config (ServerConfig (..), ServerTable, serverFor)
 import Him.Lsp.Server (Server, findRoot, sendMessage, startServer, stopServer)
 import Him.Lsp.State (ServerInfo)
 import Control.Exception (IOException, try)
@@ -25,7 +26,7 @@ import System.Directory (getFileSize, makeAbsolute)
 import System.IO (IOMode (..), withBinaryFile)
 import Control.Exception (evaluate)
 import Data.Foldable (toList)
-import Data.IORef (atomicModifyIORef', newIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -47,17 +48,25 @@ data Runtime = Runtime
   , rtProviders :: [SyntaxProvider]
   , rtSessions :: MVar (Map Int SyntaxSession)
   -- ^ Highlighters by document id. The editor only sees their results.
+  , rtServerTable :: IORef ServerTable
+  -- ^ Which server serves which language (from the config).
   , rtServers :: MVar (Map Text (MVar (Either Text (Server, ServerInfo))))
   -- ^ Language servers by key; the inner variable is filled once the
   -- server has started (or failed to).
   }
 
-newRuntime :: [SyntaxProvider] -> (Event -> IO ()) -> IO Runtime
-newRuntime providers post = do
+newRuntime :: [SyntaxProvider] -> ServerTable -> (Event -> IO ()) -> IO Runtime
+newRuntime providers table post = do
   jobs <- newMVar Map.empty
   sessions <- newMVar Map.empty
+  tableRef <- newIORef table
   servers <- newMVar Map.empty
-  pure (Runtime post jobs providers sessions servers)
+  pure (Runtime post jobs providers sessions tableRef servers)
+
+-- | Use another server table from now on (after the config is reloaded;
+-- running servers keep running).
+setServerTable :: Runtime -> ServerTable -> IO ()
+setServerTable rt = writeIORef (rtServerTable rt)
 
 -- | Carry out an effect that needs the runtime; others are ignored (the
 -- main loop handles them before).
@@ -137,7 +146,7 @@ runJob rt = \case
       mapM_ ssClose (Map.lookup doc sessions)
       pure (maybe (Map.delete doc sessions) (\(_, session) -> Map.insert doc session sessions) started)
     post (EvJob (SyntaxStarted doc (fst <$> started)))
-  LspEnsure doc language file -> case serverFor language of
+  LspEnsure doc language file -> readIORef (rtServerTable rt) >>= \table -> case serverFor table language of
     Nothing -> post (EvJob (LspUnavailable doc "no language server configured"))
     Just config -> do
       absolute <- makeAbsolute file

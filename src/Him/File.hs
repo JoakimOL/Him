@@ -42,7 +42,8 @@ import Data.Text.Encoding (Decoding (..), decodeUtf8Lenient, encodeUtf8Builder, 
 import Data.Text.Encoding.Error (lenientDecode)
 import Him.Buffer qualified as Buffer
 import Him.Document
-import System.Directory (doesDirectoryExist, doesFileExist)
+import System.FilePath (takeDirectory)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist)
 import System.IO (BufferMode (..), Handle, IOMode (..), hFileSize, hGetBuf, hIsEOF, hPutBuf, hSetBuffering, withBinaryFile)
 
 -- | Load a file. A file that does not exist yet gives an empty document bound
@@ -148,7 +149,8 @@ completePrefix bs = case [i | i <- [len - 1, len - 2 .. max 0 (len - 4)], B.inde
 -- | Write the document to a path. Returns the number of bytes written.
 saveDocument :: FilePath -> Document -> IO (Either Text Int)
 saveDocument path doc =
-  try (withBinaryFile path WriteMode write) >>= \case
+  -- Missing directories are created (a first ~/.config/him/config.toml).
+  try (createDirectoryIfMissing True (takeDirectory path) >> withBinaryFile path WriteMode write) >>= \case
     Left e -> pure (Left (T.pack (show (e :: IOException))))
     Right n -> pure (Right (fromIntegral n))
   where

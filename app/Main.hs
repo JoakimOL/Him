@@ -3,17 +3,20 @@ module Main (main) where
 import Him.App qualified as App
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
+import Him.UserConfig (defaultConfigText)
 import Him.GrammarBuild (buildGrammars, defaultSourceDirs, himGrammarDir)
 import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
--- | @him [FILE...]@, or @him --build-grammars [SOURCES] [NAME...]@.
+-- | @him [FILE...]@, @him --dump-default-config@, or
+-- @him --build-grammars [SOURCES] [NAME...]@.
 main :: IO ()
 main =
   getArgs >>= \case
     "--build-grammars" : rest -> buildCommand rest
+    ["--dump-default-config"] -> TIO.putStr defaultConfigText
     files -> App.run files
 
 -- | Compile tree-sitter grammars for him (see "Him.GrammarBuild").
