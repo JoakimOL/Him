@@ -1210,12 +1210,24 @@ lspTests = do
       -- Completion: type "ad" on a new line; the menu opens by itself.
       menu <- settleUntil config rt 10000 (isJust . edCompletion) =<< keys "g g j o a d" fixed
       accepted <- keys "ret" menu
+      -- Server commands (last: a restart replaces the server the states
+      -- above were talking to).
+      let ex line ed = foldlM run ed ([plain (KChar ':')] <> map (\c -> plain (KChar c)) (T.unpack line) <> [plain KEnter])
+          isAttached ed = case docLsp (edDoc ed) of LspAttached _ -> True; _ -> False
+      infoShown <- ex "lsp-info" attached
+      stopped <- ex "lsp-stop" attached
+      restarted <- settleUntil config rt 20000 (\ed -> isAttached ed && diagnosed ed) =<< ex "lsp-restart" attached
+      startedAgain <- settleUntil config rt 20000 isAttached =<< ex "lsp-start" stopped
       pure
         [ test "the document attaches to clangd" (assertEqual True (case docLsp (edDoc attached) of LspAttached _ -> True; _ -> False))
         , test "an error is reported on its line" (assertEqual [(2, SevError)] (take 1 (errorsOn attached)))
         , test "hover shows a popup" (assertEqual True (isJust (edPopup hovered)))
         , test "g d goes to the definition of add" (assertEqual (Pos 0 4) (rangeHead (primary (docSelection (edDoc defined)))))
         , test "fixing the error clears it" (assertEqual [] (errorsOn fixed))
+        , test ":lsp-info names the server" (assertEqual True (maybe False (\(Status _ m) -> "clangd" `T.isInfixOf` m) (edStatus infoShown)))
+        , test ":lsp-stop detaches and drops the diagnostics" (assertEqual (LspNone, False) (docLsp (edDoc stopped), diagnosed stopped))
+        , test ":lsp-restart attaches again and diagnostics return" (assertEqual (True, True) (isAttached restarted, diagnosed restarted))
+        , test ":lsp-start starts a stopped server" (assertEqual True (isAttached startedAgain))
         , test "typing a word opens the completion menu" $
             assertEqual (True, Completing) (any ((== "add") . ciInsert) (maybe [] cmShown (edCompletion menu)), keymapMode menu)
         , test "ret inserts the selected completion" $

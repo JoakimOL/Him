@@ -46,7 +46,7 @@ allActions =
     <> CommandLine.actions exCommands
 
 exCommands :: [ExCommand]
-exCommands = File.exCommands
+exCommands = File.exCommands <> Lsp.exCommands
 
 -- | Movement keys shared by normal, select and insert mode.
 arrowBindings :: [(Text, Text)]

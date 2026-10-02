@@ -9,6 +9,7 @@ module Him.Commands.Lsp
   , lspFlush
   , applyLspResult
   , completionHousekeeping
+  , exCommands
   ) where
 
 import Control.Monad.Trans.State.Strict (get, gets, modify')
@@ -32,6 +33,7 @@ import Him.Lsp.Protocol hiding (request)
 import Him.Lsp.Protocol qualified as P
 import Him.Lsp.State
 import Him.Lsp.Sync (syncMessages)
+import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Mode (Mode (..))
 import Him.Picker (PickTarget (..), fuzzyScore, newPicker, pickerItem)
 import Him.Position (Pos (..))
@@ -334,3 +336,63 @@ completionHousekeeping = do
     isCompletion = \case
       PendingCompletion {} -> True
       _ -> False
+
+-- * Commands
+
+exCommands :: [ExCommand]
+exCommands =
+  [ ExCommand ["lsp-info"] "Show the language server of this file" NoArgs $ \_ -> do
+      ed <- get
+      info $ case docLsp (edDoc ed) of
+        LspAttached at -> case Map.lookup (atServer at) (lsServers (edLsp ed)) of
+          Just si ->
+            siName si <> " in " <> T.pack (siRoot si) <> " (" <> encodingName (siEncoding si) <> ", " <> syncName (siSync si) <> " sync)"
+          Nothing -> atServer at
+        LspStarting -> "the language server is starting"
+        _ -> "no language server for this file"
+  , ExCommand ["lsp-stop"] "Stop the language server of this file" NoArgs $ \_ ->
+      withServer $ \server -> do
+        stopServer server LspNone
+        info "language server stopped (:lsp-start starts it again)"
+  , ExCommand ["lsp-start"] "Start the language server of this file" NoArgs $ \_ -> do
+      d <- getDoc
+      case docLsp d of
+        LspAttached _ -> info "the language server is running (:lsp-restart restarts it)"
+        LspStarting -> info "the language server is starting"
+        _ -> modifyDoc (\doc -> doc {docLsp = LspUnknown})
+  , ExCommand ["lsp-restart"] "Restart the language server of this file" NoArgs $ \_ ->
+      withServer $ \server -> do
+        -- Every document it served attaches again (the current one now,
+        -- the others when they are shown).
+        stopServer server LspUnknown
+        info "restarting the language server"
+  ]
+  where
+    withServer k =
+      docLsp <$> getDoc >>= \case
+        LspAttached at -> k (atServer at)
+        _ -> failWith "no language server for this file"
+    syncName = \case
+      SyncNone -> "no"
+      SyncFull -> "full"
+      SyncIncremental -> "incremental"
+
+-- | Stop a server and forget it; its documents get the given state, and
+-- its requests and diagnostics are dropped.
+stopServer :: Text -> DocLsp -> EditorM ()
+stopServer server after = do
+  ed <- get
+  let served = [p | d <- allDocs ed, LspAttached at <- [docLsp d], atServer at == server, let p = atPath at]
+  request (LspStop server)
+  modify' $ \e ->
+    (mapDocuments (\d -> case docLsp d of LspAttached at | atServer at == server -> d {docLsp = after}; _ -> d) e)
+      { edLsp =
+          (edLsp e)
+            { lsServers = Map.delete server (lsServers (edLsp e))
+            , lsDiagnostics = foldr Map.delete (lsDiagnostics (edLsp e)) served
+            , lsPending = IntMap.empty
+            }
+      , edCompletion = Nothing
+      }
+  where
+    allDocs ed = map bufDoc (fst (buffers ed))

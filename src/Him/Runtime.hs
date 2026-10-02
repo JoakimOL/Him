@@ -73,6 +73,10 @@ perform rt = \case
           Just (Right (server, _)) -> sendMessage server msg
           _ -> pure ()
       Nothing -> pure ()
+  LspStop key -> do
+    -- Forget it first, so a restart starts a new one.
+    stopped <- modifyMVar (rtServers rt) (\servers -> pure (Map.delete key servers, Map.lookup key servers))
+    mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) stopped
   _ -> pure ()
 
 -- | Stop every language server (when the editor quits).
@@ -142,8 +146,13 @@ runJob rt = \case
           pure (Map.insert key v servers, (v, True))
       when fresh $ do
         result <- startServer config root (post . EvJob . LspMessage key) $ do
-          modifyMVar_ (rtServers rt) (pure . Map.delete key)
-          post (EvJob (LspExited key))
+          -- Only report the exit of the server still registered under the
+          -- key (not one that was stopped or replaced by a restart).
+          current <- modifyMVar (rtServers rt) $ \servers ->
+            if Map.lookup key servers == Just started
+              then pure (Map.delete key servers, True)
+              else pure (servers, False)
+          when current (post (EvJob (LspExited key)))
         putMVar started result
       readMVar started >>= \case
         Right (_, info) -> post (EvJob (LspReady doc key absolute (scLanguageId config) info))

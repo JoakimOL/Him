@@ -198,6 +198,7 @@ runEffects config = go (8 :: Int)
       StartJob _ -> pure ()
       CancelJob _ -> pure ()
       LspSend _ _ -> pure ()
+      LspStop _ -> pure ()
       RunAction inv -> either failWith boundRun (bindInvocation (cfgActions config) inv)
       OpenPalette -> modify' $ \e ->
         e {edPicker = Just (newPicker "commands" (paletteItems config (keymapMode e))), edMode = Picking}

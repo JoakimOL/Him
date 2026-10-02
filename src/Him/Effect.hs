@@ -39,6 +39,8 @@ data Effect
   | -- | Send a message to a language server (by its key); queued, never
     -- blocks.
     LspSend !Text !Value
+  | -- | Stop a language server (by its key).
+    LspStop !Text
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were
