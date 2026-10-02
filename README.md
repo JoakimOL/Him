@@ -49,7 +49,9 @@ make fmt / make lint         # format / lint
     `space a` code actions, completion, `:format`. Servers: clangd, rust-analyzer,
     haskell-language-server, typescript-language-server, pylsp, gopls.
   - **repl:** `:repl` opens one beside the file (`stack ghci` in a Haskell project),
-    `space e` sends the selection, and saving reloads.
+    `space e` sends the selection, and saving reloads. Like the chat, it is a
+    transcript: only the input after the prompt can change, but you can select and
+    yank anywhere.
   - **chat:** `space c c` opens an AI chat beside the code. By default it runs
     through Claude Code (`claude`, with your login), which gets him's file tools over
     MCP. `provider = "anthropic"` in `[chat]` uses the API with `ANTHROPIC_API_KEY`
