@@ -155,8 +155,8 @@ gitHousekeeping = do
       | gtReload t -> do
           setTracking t {gtReload = False}
           request (StartJob (GitLoad (docId d) path))
-      | gtVersion t /= docVersion d && not (gtPending t) -> do
-          setTracking t {gtPending = True}
+      | gtVersion t /= docVersion d && gtRequested t /= docVersion d -> do
+          setTracking t {gtRequested = docVersion d}
           request (StartJob (GitDiff (docId d) (docVersion d) (gtBase t) (docBuffer d)))
     _ -> pure ()
   where
@@ -170,13 +170,13 @@ applyGitResult = \case
     d
       { docGit = GitTracked $ case docGit d of
           -- Keep the old hunks on screen until the new diff arrives.
-          GitTracked t -> t {gtBase = base, gtVersion = -1, gtPending = False}
-          _ -> GitTracking base [] [] (-1) False False
+          GitTracked t -> t {gtBase = base, gtVersion = -1, gtRequested = -1}
+          _ -> GitTracking base [] [] (-1) (-1) False
       }
   GitDiffed doc version unstaged staged -> modify' $ modifyDocument doc $ \d -> case docGit d of
     GitTracked t
-      | docVersion d == version -> d {docGit = GitTracked t {gtUnstaged = unstaged, gtStaged = staged, gtVersion = version, gtPending = False}}
-      | otherwise -> d {docGit = GitTracked t {gtPending = False}}
+      | docVersion d == version -> d {docGit = GitTracked t {gtUnstaged = unstaged, gtStaged = staged, gtVersion = version}}
+      | otherwise -> d
     _ -> d
   GitWritten doc result -> do
     modify' (modifyDocument doc markGitReload)

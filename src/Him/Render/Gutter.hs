@@ -8,7 +8,7 @@ import Data.Text qualified as T
 import Him.Buffer (lineCount)
 import Data.IntMap.Strict qualified as IntMap
 import Him.GitState (Sign (..), SignKind (..), gitSigns, tracking)
-import Him.Lsp.State (ShownDiagnostic (..), shownDiagnostics)
+import Him.Lsp.State (ShownDiagnostic (..), shownDiagnosticsIn)
 import Him.Document (Document (..))
 import Him.Editor (Editor (..))
 import Him.Options (LineNumbers (..), Options (..))
@@ -42,7 +42,7 @@ drawGutter theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 
     signs = maybe mempty (\t -> gitSigns t top (top + rectHeight rect - 1)) (tracking (docGit doc))
     -- Diagnostics win over git signs: the most severe on each line.
     diagnostics =
-      IntMap.fromListWith min [(sdLine sd, sdSeverity sd) | sd <- shownDiagnostics (edLsp ed) (docLsp doc) (docBuffer doc), sdLine sd >= top, sdLine sd < top + rectHeight rect]
+      IntMap.fromListWith min [(sdLine sd, sdSeverity sd) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) (docBuffer doc) top (top + rectHeight rect)]
     drawRow f r
       | line >= lineCount (docBuffer doc) = f
       | otherwise =

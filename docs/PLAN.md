@@ -811,6 +811,22 @@ How it is built:
 suite. Selecting an expression (a test, or a call into the module being written) and
 pressing `space e` evaluates it. Saving reloads. See the tutorial, §5.11.
 
+**ADR-39: Per-key work follows what is visible or settled (2026-10-02).**
+These are the low-hanging fixes from the 2026-10-02 benchmark:
+- **Diagnostics are converted per frame for the drawn lines only**
+  (`shownDiagnosticsIn`). A server can publish thousands of them.
+- **The git diff is debounced:** the job waits 50 ms, and a newer version's job
+  replaces it. Typing in a large tracked file therefore diffs once per pause instead
+  of once per key, and the gutter catches up 50 ms after typing stops.
+- **The built-in theme is parsed once,** and the TOML reader skips the character walks
+  on lines that cannot need them.
+
+Not done, on purpose:
+- Moving diagnostic parsing off the main loop. It is rare (one publish per server
+  pass), and doing it would need a second representation of the state.
+- Writing the default theme as Haskell values, which would give two sources for one
+  theme.
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -1034,9 +1050,10 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-02. Themes, settings, plugins, modules, splits and the REPL (milestones 30–35, ADR-33–38) are done; next is benchmarking (queue item 7). Benchmarking
-is **on hold**: the user was using the machine during the runs, so this session's
-numbers are provisional.*
+*Last updated 2026-10-02. The queue agreed with the user is done: themes, settings,
+plugins, modules, splits, the REPL plugin (milestones 30–35, ADR-33–38) and a full
+benchmark run on an idle machine with low-hanging fixes (ADR-39, `docs/BENCHMARK.md`
+2026-10-02, log 25–27).*
 
 - **Queue agreed with the user (2026-10-02), in this order:**
   1. [x] Theming (ADR-33).
@@ -1084,7 +1101,7 @@ numbers are provisional.*
      loads the project, `:reload` after saving, and the selection runs as an
      expression. It needs splits (5) and a buffer that holds a process's output and
      takes input.
-  7. [ ] **Benchmark again** (the user's request, 2026-10-02) against Helix and Vim,
+  7. [x] **Benchmark again** (ADR-39, `docs/BENCHMARK.md` 2026-10-02). The request (2026-10-02) against Helix and Vim,
      also with plugins on and off, and apply low-hanging optimizations that keep the
      code readable. See "Benchmarking on hold" below for where it stopped.
   5. [x] **Splits** (ADR-37, milestone 34). The plan was: with Helix's keys: `C-w` / `space w` then `v`/`s` (split
@@ -1094,30 +1111,20 @@ numbers are provisional.*
      (`edView` becomes per window, sharing documents), the layout to become a tree of
      rects, and rendering per window (gutter, text area, a status line each).
 
-- **Benchmarking on hold. Resume here when the machine is idle:**
-  1. Run the full suite again: `python3 bench/bench.py --runs 5`. Then add a dated results
-     section to `docs/BENCHMARK.md` (a draft table is below) and refresh the "final"
-     column of the table in `docs/TUTORIAL.md` §7.8.
-  2. **open_large is unresolved.** Log entry 16 recorded a first paint of 15 ms, but
-     every run this session measured 25–30 ms (Helix 22). A build of `b93060f`, the commit
-     before the action layer, also measured 25.7 and 26.8 ms in the same session as
-     27.9 ms for `9016654`, so the action layer did not cause it. Re-measure on an idle
-     machine. If it is still about 25 ms, profile the path from loading to the first paint.
-  3. **Provisional numbers (machine in use).** The focused run for strategies 19/20
-     (`search_next,latency`): `n` 1.4 ms (Helix 1.9), `j` 0.9 (Helix 1.5), typing 0.8
-     (Helix 1.3). These are recorded in log entries 19/20. A full run at `9016654`
-     (him / vim / helix):
-     - startup: 5.7 / 32.5 / 27.8 ms
-     - open_large first paint: 30.5 / 34.7 / 21.9 ms
-     - scroll: 18.4 / 72.2 / 649 ms
-     - jump: 4.2 / 33.8 / 115 ms
-     - edit_save: 10.7 / 29.9 / 18.8 ms (RSS 25.1 / 37.2 / 66.6 MB)
-     - `j` latency: 0.7 / 0.4 / 1.6 ms; typing 0.7 / 0.3 / 1.4 ms
-     - search_far: 9.7 / 28.7 / 23.0 ms; search_none: 4.3 / 23.4 / 45.4 ms
-     - `n`: 2.0 / 1.3 / 2.1 ms (p95 2.5 / 1.4 / 2.3); 200 × `n`: 13.9 / 58.1 / 93.9 ms
-  4. If `n` still ties Helix on an idle machine, the remaining ideas are: skip the diff
-     for rows whose `RowKey` matches the old row at the same screen position, or use a
-     cheaper row representation than `Seq Cell`.
+- **Benchmarks (2026-10-02, idle machine; `docs/BENCHMARK.md`):**
+  - `bench.py` has `him` (every plugin) and `him-lite` (none), plus `him-nogit` and
+    `him-nolsp` on request. Each has its own config file. `--ext rs --git` measures
+    an IDE-like setup.
+  - him leads Vim and Helix on startup, scrolling, jumps, saving and search. Vim keeps
+    the best per-key latency (0.5 vs about 1.1 ms). Helix keeps the fastest first
+    paint of a large plain file (23 vs 30 ms).
+  - Still open:
+    - `open_large` first paint: the first render and line indexing; Helix 23 vs 30
+      ms.
+    - Per-key latency vs Vim, mostly the thread handoff and the diff.
+    - Handling a server's large `publishDiagnostics` on the main loop.
+  - Two old provisional numbers did not reproduce (`n` 1.4 ms, `open_large` 15 ms).
+    The 2026-10-02 section is the reference.
 - **The action layer is done (ADR-17).** The config-file parser is still to do. It only
   has to produce `Bindings` (`Map Mode [(keys, invocation)]`) and call
   `Him.Config.Default.configWith`, which reports every bad binding.

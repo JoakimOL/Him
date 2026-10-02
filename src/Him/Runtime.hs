@@ -11,7 +11,7 @@ module Him.Runtime
   , setReplTable
   ) where
 
-import Control.Concurrent (ThreadId, forkIO, killThread)
+import Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
 import Control.Monad (when)
 import Data.Text (Text)
@@ -164,6 +164,9 @@ runJob rt = \case
     base <- loadBase path
     post (EvJob (GitLoaded doc base))
   GitDiff doc version base buffer -> do
+    -- Debounce: a newer version's job replaces this one (same key) while
+    -- it waits, so a burst of typing is diffed once, after it.
+    threadDelay 50000
     -- Unstaged: index -> buffer. Staged: HEAD -> index, moved onto buffer
     -- lines through the unstaged hunks.
     let current = Buffer.toLines buffer

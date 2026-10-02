@@ -80,7 +80,7 @@ gitStateTests =
           new = ["a", "B", "c", "D"]
        in assertEqual ["a", "b", "c", "D"] (apply old new (/= 1))
   , test "signs: added, changed, removed; unstaged wins" $
-      let t = GitTracking (GitBase "" "" "" [] True [] True) [Hunk 0 0 0 1, Hunk 2 1 3 0] [Hunk 0 1 0 1, Hunk 4 1 5 1] 0 False False
+      let t = GitTracking (GitBase "" "" "" [] True [] True) [Hunk 0 0 0 1, Hunk 2 1 3 0] [Hunk 0 1 0 1, Hunk 4 1 5 1] 0 (-1) False
        in assertEqual
             [(0, Sign SignAdded False), (2, Sign SignRemoved False), (5, Sign SignChanged True)]
             (IntMap.toList (gitSigns t 0 10))

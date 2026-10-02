@@ -39,6 +39,12 @@ already there and never downloads anything.
 - **Repetitions:** each scenario runs `--runs` times (default 5), and the median is
   reported.
 
+Configurations: `--editors` takes `him`, `him-lite`, `vim` and `helix` (the
+default). `him-lite` has every plugin off. `him-nogit` and `him-nolsp` switch off one
+plugin each. The him variants run with their own config files, never the user's.
+`--ext rs` gives the large file a code extension, so highlighting and language servers
+start. `--git` commits it in a git repository, so git signs have work to do.
+
 ## Scenarios
 
 | Scenario | What it does | Main metrics |
@@ -84,6 +90,83 @@ already there and never downloads anything.
 Newest first. Machine: 16 cores, Linux 6.6, Vim 9.2, Helix 25.07.1. 200,000 lines,
 5 runs, median. Vim/Helix numbers vary by a few ms between runs, so compare within
 one run.
+
+### 2026-10-02: themes, plugins, splits, REPL (`9c9b54c` + log 25–27)
+
+Machine idle (load 0.2–0.5). Optimized build (`stack build`). Vim 9.2, Helix 25.07.1.
+Two him configurations, each with its own config file so the user's config does not
+count:
+- **him:** every plugin on (git, LSP, REPL);
+- **him-lite:** every plugin off (`[plugins] git = false`, …).
+
+**Plain text** (200,000 lines, 14 MB, not in a git repository: the plugins have
+nothing to do):
+
+| Scenario / metric | him | him-lite | vim | helix |
+|---|---:|---:|---:|---:|
+| startup_empty: settled ms | 13.7 → **~12** (log 25) | 14.0 | 24.0 | 30.2 |
+| startup_empty: max RSS MB | 15.9 | **14.5** | 21.6 | 24.4 |
+| open_large: first paint ms | 30.2 | 31.4 | 34.8 | **22.8** |
+| open_large: max RSS MB | **30.2** | 30.1 | 37.2 | 46.8 |
+| scroll (2000 × `j`): work ms | 26.7* | **17.5** | 62.2 | 628 |
+| jump (100 × `ge gg`): work ms | 7.0 | **6.3** | 34.3 | 114 |
+| edit_save: work ms | 13.0 | **11.8** | 22.7 | 18.2 |
+| latency `j`: frame done ms (p95) | 1.3 (1.7) | 1.2 (1.8) | **0.5 (0.6)** | 2.0 (2.3) |
+| latency typing: frame done ms (p95) | 1.1 (1.4) | 1.0 (1.3) | **0.3 (0.5)** | 1.9 (2.2) |
+| search_far: ms | **11.2** | 11.5 | 30.3 | 25.7 |
+| search_none: ms | 5.1 | **4.9** | 24.9 | 47.6 |
+| search_next `n`: ms (p95) | 2.8 (3.5) | 2.9 (3.7) | **1.6 (2.0)** | 2.8 (3.3) |
+| search_next 200 × `n`: ms | **9.2** | 11.1 | 49.0 | 83.3 |
+
+\* Noise: a second run gave 19.4 (him) and 21.4 (him-lite).
+
+**Code, IDE-style** (`--ext rs --git --lines 20000`):
+- 1.4 MB of Rust-looking text, committed in a git repository;
+- tree-sitter highlighting (him and Helix);
+- git signs (him);
+- rust-analyzer (him with LSP, and Helix).
+
+Before log 26–27:
+
+| Scenario / metric | him | him-lite | vim | helix |
+|---|---:|---:|---:|---:|
+| open_large: first paint ms | 9.6 | **6.3** | 20.9 | 589 |
+| scroll: work ms | **9.4** | 11.1 | 60.6 | 627 |
+| edit_save: work ms | 6.3 | **4.5** | 10.7 | 598 |
+| latency `j`: ms (p95) | 1.0 (1.1) | **0.5 (0.6)** | 0.5 (0.6) | 2.1 (2.5) |
+| latency typing: ms (p95) | 3.4 (4.3) | **0.5 (0.6)** | 0.5 (0.7) | 10.9 (12.4) |
+| search_far / search_none: ms | 1.3 / 1.2 | 1.0 / 0.5 | 7.8 / 4.8 | 17.7 / 21.1 |
+| search_next `n`: ms | 1.4 | **0.8** | 1.7 | 2.7 |
+
+Per plugin (`him-nogit`, `him-nolsp`), latency in ms, before → after log 26–27:
+
+| | all on | git off | lsp off | all off |
+|---|---:|---:|---:|---:|
+| typing | 3.3 → **0.7** | 0.6 | 2.1 → 0.6 | 0.4 |
+| `j` | 1.0 | 0.9 | 0.5 | 0.5 |
+
+Findings:
+- **Typing with git on** cost about 2.7 ms per key. Each version started a diff of the
+  whole file, on another core but at the same moment as the frame, allocating enough
+  to trigger collections. Debouncing (log 27) brought it to 0.7 ms.
+- **`j` with the LSP on** stays about 0.5 ms slower. rust-analyzer is still working
+  on the file and sends progress and diagnostics between keys. Per-frame diagnostic
+  work is now bounded by the visible lines (log 26).
+- **Helix** highlights the whole file before its first paint (589 ms here); him
+  highlights the view in a job.
+
+No regression from this session's other changes: against the pre-session binary
+(`9696165`, measured in the same sitting), `n`, latency and `open_large` are equal.
+Startup was 4.5 ms slower after themes; log 25 recovers about half. The rest is the
+built-in theme's parse (0.4 ms warm) and code that is loaded the first time.
+
+Two earlier provisional numbers do not reproduce on this machine today, for the old
+binary either:
+- `n` at 1.4 ms (log 20) measures 2.6;
+- `open_large` at 15 ms (log 16) measures about 30.
+
+Those were measured with the machine in another state (CPU clock), so the numbers in
+this section are the reference.
 
 ### 2026-10-01: memory, search, and rendering pass (`edcc9ed`)
 
@@ -232,6 +315,9 @@ Measurements are on the 14 MB / 200,000-line benchmark file.
 | 22 | Parallel walk, `readdir` types | `listFiles` of 200k files: 732 ms, one `stat` per entry (`doesDirectoryExist`), one directory at a time | A pool of up to 8 workers over an STM queue; entry types from `readdir` (`unix` `readDirStreamWith`/`dirEntType`), so only links and unknown types are `stat`ed; directory links are followed once each, cycles skipped | 732 → 363–391 ms (−N1: 692 ms, so the gain is the parallelism); Helix's repo 19 → 16 ms. *Machine in use* |
 | 23 | Git diff cost (measurement) | `bench/DiffBench.hs`: 200k lines, the diff the git signs recompute after an edit | Myers after prefix/suffix trimming; at most one diff per document in flight, on a background thread | identical 5 ms; a line added at the top 9 ms; 10 spread edits 26 ms; one changed line in the middle 53 ms (list reversals while trimming the suffix; arrays would cut it if it ever matters). *Machine in use* |
 | 24 | Tree-sitter cost (measurement) | `bench/HighlightBench.hs` on Helix's `commands.rs` (7,241 lines) and `test/Spec.hs` (1,596) | Full parse per version in a job; highlight only the view ± 100 lines (`ts_query_cursor_set_byte_range`), one FFI call per request | Rust: parse 22 ms, 260-line window 3 ms, whole file 167 ms; Haskell: parse 18 ms, window 10 ms; grammar and query load 29 / 157 ms once per document. *Machine in use* |
+| 25 | Parse the built-in theme once | startup_empty 14.5 ms vs 9.5 before themes; the built-in theme (≈100 TOML lines) was parsed twice, the reader walking every line as a `String` (1.3 ms cold) | `loadTheme "default"` reuses `defaultTheme`; the TOML reader skips the comment and bracket walks on lines without `#` or brackets, and reads strings without escapes as slices | startup 14.5 → ~12 ms (Vim 24, Helix 30) |
+| 26 | Visible diagnostics only | Every frame converted and sorted *all* of a document's diagnostics, three times (text area, gutter, command line); with thousands from a server, that is per key | `shownDiagnosticsIn` skips diagnostics outside the drawn lines before any column conversion | per-frame cost bounded by the screen; no visible change on the benchmark (the server's own traffic dominates) |
+| 27 | Debounced git diff | Typing in a 20k-line file in git: 3.3 ms per key (p95 4.3) vs 0.4 without git; each version diffed the whole file right away | The diff job sleeps 50 ms first; a newer version's job replaces it (same job key), and housekeeping tracks the version it asked for instead of a pending flag | typing 3.3 → 0.7 ms (p95 4.3 → 0.9); signs follow 50 ms after typing stops |
 
 ## Profiling him
 

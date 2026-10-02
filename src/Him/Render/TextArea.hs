@@ -19,7 +19,7 @@ import Him.Position (Pos (..))
 import Him.Render.Frame
 import Him.Render.Theme
 import Him.Lsp.Protocol (Severity (..))
-import Him.Lsp.State (ShownDiagnostic (..), shownDiagnostics)
+import Him.Lsp.State (ShownDiagnostic (..), shownDiagnosticsIn)
 import Him.Terminal.Ansi (packStyle, patchStyle, unpackStyle)
 import Him.Selection
 import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
@@ -66,7 +66,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawRow frame0 [0 .. rec
         | (e : _) <- drop (line - 1) entries, deIsDir e -> 2
       _ -> 0 :: Int
     diagnosticsByLine =
-      IntMap.fromListWith (<>) [(sdLine sd, [(sdStart sd, sdEnd sd, sdSeverity sd)]) | sd <- shownDiagnostics (edLsp ed) (docLsp doc) buf, sdLine sd >= top, sdLine sd < bottom]
+      IntMap.fromListWith (<>) [(sdLine sd, [(sdStart sd, sdEnd sd, sdSeverity sd)]) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) buf top bottom]
     sevRank = \case
       SevError -> 0
       SevWarning -> 1

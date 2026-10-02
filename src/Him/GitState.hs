@@ -52,8 +52,10 @@ data GitTracking = GitTracking
   -- ^ HEAD → index, with the new side moved to buffer lines.
   , gtVersion :: !Int
   -- ^ The document version the hunks are for (-1: none yet).
-  , gtPending :: !Bool
-  -- ^ A diff job is running.
+  , gtRequested :: !Int
+  -- ^ The version a diff was last asked for (-1: none). A newer version
+  -- asks again; the job waits a moment first and is replaced by a newer
+  -- one, so typing diffs once it pauses (ADR-39).
   , gtReload :: !Bool
   -- ^ The base should be loaded again (after a save or staging).
   }

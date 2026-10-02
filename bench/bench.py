@@ -538,6 +538,11 @@ def editors(workdir: Path, him: str | None) -> dict[str, Editor]:
         lite.write_text("[plugins]\ngit = false\nlsp = false\nrepl = false\n")
         found["him"] = Editor("him", [him], goto_end=b"ge", goto_top=b"gg", env={"HIM_CONFIG": str(full)})
         found["him-lite"] = Editor("him-lite", [him], goto_end=b"ge", goto_top=b"gg", env={"HIM_CONFIG": str(lite)})
+        # One plugin off at a time, to see what each costs (not in the default list).
+        for plugin in ("git", "lsp"):
+            cfg = workdir / f"him-no{plugin}.toml"
+            cfg.write_text(f"[plugins]\n{plugin} = false\n")
+            found[f"him-no{plugin}"] = Editor(f"him-no{plugin}", [him], goto_end=b"ge", goto_top=b"gg", env={"HIM_CONFIG": str(cfg)})
     if shutil.which("vim"):
         # No vimrc, plugins, swap or viminfo; short key-code timeout.
         found["vim"] = Editor(
@@ -554,7 +559,7 @@ def editors(workdir: Path, him: str | None) -> dict[str, Editor]:
 
 def editor_version(editor: Editor) -> str:
     if editor.name.startswith("him"):
-        plugins = "plugins off" if editor.name == "him-lite" else "all plugins"
+        plugins = {"him-lite": "plugins off", "him-nogit": "git off", "him-nolsp": "lsp off"}.get(editor.name, "all plugins")
         return f"him (this repository, {plugins}, {editor.cmd[0]})"
     cmd = {"vim": ["vim", "--version"], "helix": ["hx", "--version"]}[editor.name]
     try:

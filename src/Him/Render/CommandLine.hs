@@ -7,7 +7,7 @@ module Him.Render.CommandLine
 import Data.List (sortOn)
 import Data.Text qualified as T
 import Him.Document (Document (..))
-import Him.Lsp.State (ShownDiagnostic (..), shownDiagnostics)
+import Him.Lsp.State (ShownDiagnostic (..), shownDiagnosticsIn)
 import Him.Position (Pos (..))
 import Him.Selection (primary, rangeHead)
 import Him.Editor
@@ -53,4 +53,4 @@ diagnosticsHere :: Editor -> [ShownDiagnostic]
 diagnosticsHere ed =
   let d = edDoc ed
       Pos l _ = rangeHead (primary (docSelection d))
-   in sortOn sdSeverity [sd | sd <- shownDiagnostics (edLsp ed) (docLsp d) (docBuffer d), sdLine sd == l]
+   in sortOn sdSeverity (shownDiagnosticsIn (edLsp ed) (docLsp d) (docBuffer d) l (l + 1))

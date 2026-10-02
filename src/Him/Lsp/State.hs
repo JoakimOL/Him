@@ -12,6 +12,7 @@ module Him.Lsp.State
   , ShownDiagnostic (..)
   , Completion (..)
   , shownDiagnostics
+  , shownDiagnosticsIn
   ) where
 
 import Data.IntMap.Strict (IntMap)
@@ -137,7 +138,13 @@ data ShownDiagnostic = ShownDiagnostic
 -- cover, sorted by position. Columns are converted against the current
 -- text (positions after an edit may be off until the server republishes).
 shownDiagnostics :: LspState -> DocLsp -> Buffer -> [ShownDiagnostic]
-shownDiagnostics st doc buf = case doc of
+shownDiagnostics st doc buf = shownDiagnosticsIn st doc buf 0 maxBound
+
+-- | The same for the lines @[from, to)@ only (what is on screen): the
+-- others are skipped before any column is converted, so a frame costs the
+-- visible diagnostics, not all of them (ADR-39).
+shownDiagnosticsIn :: LspState -> DocLsp -> Buffer -> Int -> Int -> [ShownDiagnostic]
+shownDiagnosticsIn st doc buf from to = case doc of
   LspAttached (Attachment server path _ _ _ _) ->
     let enc = maybe Utf16 siEncoding (Map.lookup server (lsServers st))
         n = lineCount buf
@@ -146,7 +153,8 @@ shownDiagnostics st doc buf = case doc of
           | d <- Map.findWithDefault [] path (lsDiagnostics st)
           , let (sl, sc) = diagStart d
                 (el, ec) = diagEnd d
-          , l <- [max 0 sl .. min el (n - 1)]
+          , sl < to && el >= from
+          , l <- [max from (max 0 sl) .. min (to - 1) (min el (n - 1))]
           , let text = lineAt l buf
                 s = if l == sl then fromLspColumn enc text sc else 0
                 e0 = if l == el then fromLspColumn enc text ec else T.length text
