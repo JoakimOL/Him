@@ -19,6 +19,7 @@ import Him.Editor
 import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Commands.Git (markGitReload)
 import Him.Directory (listingDir, loadPath)
+import Him.Lsp.Sync (closeEffects)
 import Him.File (saveDocument)
 import System.Directory (canonicalizePath, getCurrentDirectory, setCurrentDirectory)
 
@@ -52,9 +53,9 @@ exCommands =
       dirty <- docDirty <$> getDoc
       if dirty
         then failWith "unsaved changes (use :bc! to discard them)"
-        else modify' closeBuffer
+        else closeCurrent
   , ExCommand ["buffer-close!", "bc!", "bclose!"] "Close the buffer, discarding unsaved changes" NoArgs $ \_ ->
-      modify' closeBuffer
+      closeCurrent
   , ExCommand ["change-current-directory", "cd"] "Change the working directory (default: the listed one)" PathArgs $ \args -> do
       listed <- listingDir <$> getDoc
       case (args, listed) of
@@ -71,6 +72,12 @@ exCommands =
   , ExCommand ["buffer-next", "bn", "bnext"] "Go to the next buffer" NoArgs $ \_ -> modify' (switchBuffer 1)
   , ExCommand ["buffer-previous", "bp", "bprev"] "Go to the previous buffer" NoArgs $ \_ -> modify' (switchBuffer (-1))
   ]
+
+-- | Close the current buffer, telling its language server.
+closeCurrent :: EditorM ()
+closeCurrent = do
+  getDoc >>= mapM_ request . closeEffects
+  modify' closeBuffer
 
 -- | Quit unless a buffer has unsaved changes.
 quitChecked :: EditorM ()
@@ -140,7 +147,7 @@ write args = do
       liftIO (saveDocument path doc) >>= \case
         Left e -> False <$ failWith ("could not write " <> T.pack path <> ": " <> e)
         Right bytes -> do
-          modifyDoc (\d -> markGitReload d {docPath = Just path, docDirty = False, docSavedBuffer = docBuffer doc})
+          modifyDoc (\d -> markGitReload d {docPath = Just path, docDirty = False, docSavedBuffer = docBuffer doc, docSaves = docSaves d + 1})
           info $
             "\"" <> T.pack path <> "\" written, "
               <> T.pack (show (lineCount (docBuffer doc)))

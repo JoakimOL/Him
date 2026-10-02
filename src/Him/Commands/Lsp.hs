@@ -31,6 +31,7 @@ import Him.Language (detectLanguage, languages)
 import Him.Lsp.Protocol hiding (request)
 import Him.Lsp.Protocol qualified as P
 import Him.Lsp.State
+import Him.Lsp.Sync (syncMessages)
 import Him.Mode (Mode (..))
 import Him.Picker (PickTarget (..), fuzzyScore, newPicker, pickerItem)
 import Him.Position (Pos (..))
@@ -129,22 +130,13 @@ lspHousekeeping = do
 -- text of the current document (whole, as one change).
 lspFlush :: EditorM ()
 lspFlush = do
-  d <- getDoc
+  ed <- get
+  let d = edDoc ed
   case docLsp d of
-    LspAttached at
-      | atSent at /= docVersion d -> do
-          let uri = pathToUri (atPath at)
-              text = Buffer.toText (docBuffer d) <> "\n"
-              version = JInt (fromIntegral (docVersion d))
-              message
-                | atSent at < 0 =
-                    notification "textDocument/didOpen" $
-                      object [("textDocument", object [("uri", JString uri), ("languageId", JString (atLanguageId at)), ("version", version), ("text", JString text)])]
-                | otherwise =
-                    notification "textDocument/didChange" $
-                      object [("textDocument", object [("uri", JString uri), ("version", version)]), ("contentChanges", JArray [object [("text", JString text)]])]
-          request (LspSend (atServer at) message)
-          modifyDoc (\doc -> doc {docLsp = LspAttached at {atSent = docVersion d}})
+    LspAttached at -> do
+      let (messages, at') = syncMessages (Map.lookup (atServer at) (lsServers (edLsp ed))) at d
+      mapM_ (request . LspSend (atServer at)) messages
+      if at' /= at then modifyDoc (\doc -> doc {docLsp = LspAttached at'}) else pure ()
     _ -> pure ()
 
 -- | A server event or answer arrived.
@@ -152,7 +144,7 @@ applyLspResult :: JobResult -> EditorM ()
 applyLspResult = \case
   LspReady doc server path languageId serverInfo -> do
     modify' (\e -> e {edLsp = (edLsp e) {lsServers = Map.insert server serverInfo (lsServers (edLsp e))}})
-    modify' (modifyDocument doc (\d -> d {docLsp = LspAttached (Attachment server path languageId (-1))}))
+    modify' (modifyDocument doc (\d -> d {docLsp = LspAttached (Attachment server path languageId (-1) Nothing (docSaves d))}))
   LspUnavailable doc reason -> do
     modify' (modifyDocument doc (\d -> d {docLsp = LspNone}))
     current <- gets (docId . edDoc)

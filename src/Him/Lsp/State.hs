@@ -5,6 +5,7 @@ module Him.Lsp.State
   ( LspState (..)
   , emptyLsp
   , ServerInfo (..)
+  , Sync (..)
   , DocLsp (..)
   , Attachment (..)
   , Pending (..)
@@ -21,6 +22,7 @@ import Data.List (sortOn)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer (Buffer, lineAt, lineCount)
+import Him.Json (Value)
 import Him.Lsp.Protocol (CompletionItem, Diagnostic (..), Encoding (..), Severity, fromLspColumn)
 
 -- | What the editor needs to know about a running server.
@@ -28,7 +30,18 @@ data ServerInfo = ServerInfo
   { siEncoding :: !Encoding
   , siTriggers :: ![Text]
   -- ^ Characters that start completion.
+  , siSignatureTriggers :: ![Text]
+  -- ^ Characters that ask for signature help.
+  , siSync :: !Sync
+  , siName :: !Text
+  -- ^ The command, for messages.
+  , siRoot :: !FilePath
+  , siCapabilities :: !Value
   }
+  deriving stock (Eq, Show)
+
+-- | How the server wants text changes: not at all, whole, or as edits.
+data Sync = SyncNone | SyncFull | SyncIncremental
   deriving stock (Eq, Show)
 
 -- | A document's link to a server.
@@ -48,6 +61,10 @@ data Attachment = Attachment
   , atLanguageId :: !Text
   , atSent :: !Int
   -- ^ The version last sent (@-1@: not opened yet).
+  , atSentText :: !(Maybe Buffer)
+  -- ^ The text last sent, to compute the next change from.
+  , atSaves :: !Int
+  -- ^ The document's save count last reported (@didSave@).
   }
   deriving stock (Eq, Show)
 
@@ -103,7 +120,7 @@ data ShownDiagnostic = ShownDiagnostic
 -- text (positions after an edit may be off until the server republishes).
 shownDiagnostics :: LspState -> DocLsp -> Buffer -> [ShownDiagnostic]
 shownDiagnostics st doc buf = case doc of
-  LspAttached (Attachment server path _ _) ->
+  LspAttached (Attachment server path _ _ _ _) ->
     let enc = maybe Utf16 siEncoding (Map.lookup server (lsServers st))
         n = lineCount buf
      in sortOn (\sd -> (sdLine sd, sdStart sd)) $

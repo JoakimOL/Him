@@ -23,7 +23,7 @@ import Him.Json
 import Him.Log (logMsg)
 import Him.Lsp.Config (ServerConfig (..))
 import Him.Lsp.Protocol
-import Him.Lsp.State (ServerInfo (..))
+import Him.Lsp.State (ServerInfo (..), Sync (..))
 import System.Directory (doesPathExist)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (BufferMode (..), Handle, hClose, hFlush, hSetBinaryMode, hSetBuffering)
@@ -81,7 +81,7 @@ startServer config root deliver exited = do
       case answer of
         Just (Right result) -> do
           sendMessage server (notification "initialized" (object []))
-          pure (Right (server, serverInfo result))
+          pure (Right (server, serverInfo config root result))
         Just (Left e) -> Left ("initialize failed: " <> e) <$ stopServer server
         Nothing -> Left "initialize timed out" <$ stopServer server
     Right _ -> pure (Left "could not open pipes")
@@ -150,12 +150,27 @@ initializeParams pid root =
       )
     ]
 
-serverInfo :: Value -> ServerInfo
-serverInfo result =
+serverInfo :: ServerConfig -> FilePath -> Value -> ServerInfo
+serverInfo config root result =
   ServerInfo
-    { siEncoding = case path ["capabilities", "positionEncoding"] result >>= asText of
+    { siEncoding = case capability ["positionEncoding"] >>= asText of
         Just "utf-8" -> Utf8
         Just "utf-32" -> Utf32
         _ -> Utf16
-    , siTriggers = [t | Just ts <- [path ["capabilities", "completionProvider", "triggerCharacters"] result >>= asArray], Just t <- map asText ts]
+    , siTriggers = strings ["completionProvider", "triggerCharacters"]
+    , siSignatureTriggers = strings ["signatureHelpProvider", "triggerCharacters"] <> strings ["signatureHelpProvider", "retriggerCharacters"]
+    , siSync = case capability ["textDocumentSync"] of
+        Just v | Just n <- asInt v -> kind n
+        Just v | Just n <- key "change" v >>= asInt -> kind n
+        _ -> SyncFull
+    , siName = T.pack (scCommand config)
+    , siRoot = root
+    , siCapabilities = fromMaybe JNull (key "capabilities" result)
     }
+  where
+    capability ks = path ("capabilities" : ks) result
+    strings ks = [t | Just ts <- [capability ks >>= asArray], Just t <- map asText ts]
+    kind = \case
+      0 -> SyncNone
+      2 -> SyncIncremental
+      _ -> SyncFull

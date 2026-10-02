@@ -61,6 +61,8 @@ data Document = Document
   , docHistory :: !History
   , docSyntax :: !SyntaxInfo
   -- ^ Highlighting ("Him.Syntax").
+  , docSaves :: !Int
+  -- ^ How often it was saved (language servers hear about saves).
   , docLsp :: !DocLsp
   -- ^ The document's language server, if any ("Him.Lsp.State").
   , docGit :: !GitInfo
@@ -85,6 +87,7 @@ newDocument path buf =
     , docTrailingNewline = True
     , docHistory = emptyHistory
     , docSyntax = noSyntax
+    , docSaves = 0
     , docLsp = LspUnknown
     , docGit = GitUnknown
     , docSavedBuffer = buf

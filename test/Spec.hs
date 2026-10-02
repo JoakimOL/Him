@@ -39,7 +39,8 @@ import Him.Diff
 import Him.Syntax
 import Him.Regex
 import Him.Lsp.Protocol
-import Him.Lsp.State (Completion (..), DocLsp (..), ShownDiagnostic (..), shownDiagnostics)
+import Him.Lsp.State (Attachment (..), Completion (..), DocLsp (..), ServerInfo (..), ShownDiagnostic (..), Sync (..), shownDiagnostics)
+import Him.Lsp.Sync (syncMessages)
 import Him.Commands.Lsp (lspFlush)
 import GHC.Clock (getMonotonicTime)
 import Him.Syntax.TreeSitter (findRuntime, readQuery, treeSitter)
@@ -453,6 +454,7 @@ main = do
     , group "Him.Syntax" syntaxTests
     , group "Him.Regex" regexTests
     , group "Him.Lsp.Protocol" lspProtocolTests
+    , group "Him.Lsp.Sync" syncTests
     , group "LSP client (with clangd)" lspIO
     , group "highlighting through a provider" syntaxIO
     , group "Him.Syntax.TreeSitter (with the installed grammars)" treeSitterIO
@@ -1034,6 +1036,35 @@ lspProtocolTests =
   ]
   where
     rng a b c d = JObject [("start", JObject [("line", JInt a), ("character", JInt b)]), ("end", JObject [("line", JInt c), ("character", JInt d)])]
+
+syncTests :: [Test]
+syncTests =
+  [ test "the first sync opens the document" (assertEqual ["textDocument/didOpen"] (methods (fst (syncMessages info fresh (docAt 1 "ab")))))
+  , test "an edit is sent as one range change" $
+      let (_, at1) = syncMessages info fresh (docAt 1 "ab\ncd")
+          (msgs, _) = syncMessages info at1 (docAt 2 "ab\ncdX")
+       in assertEqual
+            [Just (JArray [JObject [("range", rangeOf 1 2 1 2), ("text", JString "X")]])]
+            [J.path ["params", "contentChanges"] m | m <- msgs]
+  , test "an undo back to the sent text sends nothing" $
+      let (_, at1) = syncMessages info fresh (docAt 1 "ab")
+       in assertEqual [] (fst (syncMessages info at1 (docAt 2 "ab")))
+  , test "a save is reported once" $
+      let (_, at1) = syncMessages info fresh (docAt 1 "ab")
+          saved = (docAt 1 "ab") {docSaves = 1}
+          (msgs, at2) = syncMessages info at1 saved
+       in assertEqual (["textDocument/didSave"], []) (methods msgs, methods (fst (syncMessages info at2 saved)))
+  , test "a full-sync server gets the whole text" $
+      let full = fmap (\i -> i {siSync = SyncFull}) info
+          (_, at1) = syncMessages full fresh (docAt 1 "ab")
+       in assertEqual [Just (JArray [JObject [("text", JString "ab!\n")]])] [J.path ["params", "contentChanges"] m | m <- fst (syncMessages full at1 (docAt 2 "ab!"))]
+  ]
+  where
+    info = Just (ServerInfo Utf8 [] [] SyncIncremental "fake" "/" JNull)
+    fresh = Attachment "fake" "/x.c" "c" (-1) Nothing 0
+    docAt v t = (newDocument (Just "/x.c") (buf t)) {docVersion = v}
+    methods = map (\m -> fromMaybe "" (J.path ["method"] m >>= asText))
+    rangeOf a b c d = JObject [("start", JObject [("line", JInt a), ("character", JInt b)]), ("end", JObject [("line", JInt c), ("character", JInt d)])]
 
 regexTests :: [Test]
 regexTests =
