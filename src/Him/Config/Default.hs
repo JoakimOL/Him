@@ -20,6 +20,7 @@ import Him.Command (EditorM)
 import Him.Commands.CommandLine qualified as CommandLine
 import Him.Commands.Directory qualified as Directory
 import Him.Commands.Edit qualified as Edit
+import Him.Commands.Git qualified as Git
 import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
 import Him.Commands.Picker qualified as Picker
@@ -37,6 +38,7 @@ allActions =
     <> File.actions
     <> Picker.actions
     <> Directory.actions
+    <> Git.actions
     <> CommandLine.actions exCommands
 
 exCommands :: [ExCommand]
@@ -90,6 +92,13 @@ normalBindings =
        , ("space ?", "command_palette")
        , ("space d", "directory_of_buffer")
        , ("space D", "directory_of_cwd")
+       , ("space g s", "git_stage_selection")
+       , ("space g u", "git_unstage_selection")
+       , ("space g S", "git_stage_file")
+       , ("space g U", "git_unstage_file")
+       , ("space g r", "git_reset_selection")
+       , ("] g", "goto_next_change")
+       , ("[ g", "goto_prev_change")
        , ("g n", "buffer_next")
        , ("g p", "buffer_previous")
        , ("i", "insert_mode")
@@ -186,6 +195,9 @@ prefixNames =
   Map.fromList
     [ ([plain (KChar 'g')], "goto")
     , ([plain (KChar ' ')], "space")
+    , ([plain (KChar ' '), plain (KChar 'g')], "git")
+    , ([plain (KChar ']')], "next")
+    , ([plain (KChar '[')], "previous")
     ]
 
 -- | Unbound printable characters are typed in insert and command mode.

@@ -25,6 +25,7 @@ import Him.Commands.Search (refreshSearchPreview)
 import Him.Config.Default (defaultConfig)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
+import Him.Commands.Git qualified as Git
 import Him.Commands.Picker qualified as Picker
 import Him.Info (refreshInfo)
 import Him.Runtime (Runtime, newRuntime)
@@ -61,7 +62,10 @@ run files = do
     onResize (atomically . writeTChan events . uncurry EvResize)
     startInputReader events
     runtime <- newRuntime (atomically . writeTChan events)
-    eventLoop config runtime events (openAll size docs)
+    -- Start what the first document needs (its git state) before any key.
+    start <- execStateT Git.gitHousekeeping (openAll size docs)
+    mapM_ (Runtime.perform runtime) (edEffects start)
+    eventLoop config runtime events start {edEffects = []}
 
 -- | An editor showing the first document, with the others open behind it.
 openAll :: (Int, Int) -> [Document] -> Editor
@@ -114,7 +118,9 @@ handleEvent :: Config -> Event -> Command.EditorM ()
 handleEvent _ (EvResize rows cols) = modify' (\e -> e {edSize = (rows, cols)})
 handleEvent config (EvJob result) = do
   Picker.applyJobResult result
+  Git.applyGitResult result
   runEffects config
+  Git.gitHousekeeping
 handleEvent config (EvKey key) = do
   ed <- get
   let pending = edPending ed
@@ -140,6 +146,7 @@ handleEvent config (EvKey key) = do
         when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
   runEffects config
   commitOutsideInsert
+  Git.gitHousekeeping
   modify' (refreshInfo config)
 
 -- | Carry out the effects the key's action requested that need the config

@@ -18,6 +18,7 @@ module Him.Editor
   , gotoBuffer
   , openBuffer
   , closeBuffer
+  , modifyDocument
   ) where
 
 import Data.Map.Strict (Map)
@@ -209,3 +210,11 @@ closeBuffer ed = case (edAfter ed, edBefore ed) of
   (next : after, _) -> ed {edDoc = bufDoc next, edView = bufView next, edAfter = after}
   ([], prev : before) -> ed {edDoc = bufDoc prev, edView = bufView prev, edBefore = before}
   ([], []) -> scratch ed
+
+-- | Change the open document with this id, wherever it is in the buffers.
+modifyDocument :: Int -> (Document -> Document) -> Editor -> Editor
+modifyDocument i f ed
+  | docId (edDoc ed) == i = ed {edDoc = f (edDoc ed)}
+  | otherwise = ed {edBefore = map g (edBefore ed), edAfter = map g (edAfter ed)}
+  where
+    g b = if docId (bufDoc b) == i then b {bufDoc = f (bufDoc b)} else b

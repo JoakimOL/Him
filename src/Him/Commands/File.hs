@@ -17,6 +17,7 @@ import Him.Command
 import Him.Document (Document (..), displayName, isReadOnly, newDocument)
 import Him.Editor
 import Him.Ex (ExArgs (..), ExCommand (..))
+import Him.Commands.Git (markGitReload)
 import Him.Directory (listingDir, loadPath)
 import Him.File (saveDocument)
 import System.Directory (canonicalizePath, getCurrentDirectory, setCurrentDirectory)
@@ -139,7 +140,7 @@ write args = do
       liftIO (saveDocument path doc) >>= \case
         Left e -> False <$ failWith ("could not write " <> T.pack path <> ": " <> e)
         Right bytes -> do
-          modifyDoc (\d -> d {docPath = Just path, docDirty = False, docSavedBuffer = docBuffer doc})
+          modifyDoc (\d -> markGitReload d {docPath = Just path, docDirty = False, docSavedBuffer = docBuffer doc})
           info $
             "\"" <> T.pack path <> "\" written, "
               <> T.pack (show (lineCount (docBuffer doc)))

@@ -15,6 +15,10 @@ module Him.Effect
 
 import Data.Sequence (Seq)
 import Data.Text (Text)
+import Him.Buffer (Buffer)
+import Him.Diff (Hunk)
+import Him.Document (LineEnding)
+import Him.GitState (GitBase)
 import Him.Invocation (Invocation)
 import Him.Picker (PickerItem)
 
@@ -37,19 +41,34 @@ data Job
     ScanFiles !Int !FilePath
   | -- | Rank a large picker's items for a query.
     FilterPicker !Int !Text !(Seq PickerItem)
+  | -- | Look up a document's file in git (by document id and path).
+    GitLoad !Int !FilePath
+  | -- | Diff a document version against its git base.
+    GitDiff !Int !Int !GitBase !Buffer
+  | -- | Write a new index version of a document's file ('Nothing' takes the
+    -- file out of the index).
+    GitWriteIndex !Int !GitBase !LineEnding !(Maybe [Text])
   deriving stock (Eq, Show)
 
-data JobKey = ScanJob | FilterJob
+data JobKey = ScanJob | FilterJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int
   deriving stock (Eq, Ord, Show)
 
 jobKey :: Job -> JobKey
 jobKey = \case
   ScanFiles {} -> ScanJob
   FilterPicker {} -> FilterJob
+  GitLoad d _ -> GitLoadJob d
+  GitDiff d _ _ _ -> GitDiffJob d
+  GitWriteIndex d _ _ _ -> GitWriteJob d
 
 data JobResult
   = FilesFound !Int ![FilePath]
   | ScanFinished !Int
   | -- | Generation, query, best matches, total number of matches.
     PickerFiltered !Int !Text ![PickerItem] !Int
+  | -- | Document id, and its git base ('Nothing': not in a repository).
+    GitLoaded !Int !(Maybe GitBase)
+  | -- | Document id, version, unstaged and staged hunks (buffer lines).
+    GitDiffed !Int !Int ![Hunk] ![Hunk]
+  | GitWritten !Int !(Either Text ())
   deriving stock (Eq, Show)

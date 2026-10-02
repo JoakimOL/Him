@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Control.Monad ((<=<))
+import Control.Monad (when, (<=<))
 import Control.Monad.Trans.State.Strict (execStateT)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
@@ -36,6 +36,9 @@ import Control.Concurrent.STM (atomically, newTChanIO, readTChan, writeTChan)
 import System.Timeout (timeout)
 import Him.Ignore
 import Him.Diff
+import Him.GitState
+import Him.Commands.Git (gitHousekeeping)
+import Data.IntMap.Strict qualified as IntMap
 import Him.Palette (paletteItems)
 import Him.Json hiding (path)
 import Him.Json qualified as J
@@ -380,6 +383,7 @@ main = do
   integration <- integrationTests
   rebinding <- rebindTests
   processes <- processTests
+  gitIO <- gitTests
   bufferIO <- openBufferTests
   loading <- loadingTests
   runTests
@@ -397,6 +401,8 @@ main = do
     , group "Him.Ignore" ignoreTests
     , group "Him.Json" jsonTests
     , group "Him.Diff" diffTests'
+    , group "Him.GitState" gitStateTests
+    , group "git (in a temporary repository)" gitIO
     , group "Him.Process" processes
     , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests
@@ -837,6 +843,74 @@ diffTests' =
       where
         step prev x = scanl (\left (y, diag, up) -> if x == y then diag + 1 else max left up) 0 (zip3 ys prev (drop 1 prev))
 
+gitStateTests :: [Test]
+gitStateTests =
+  [ test "stage all lines of a hunk" $
+      assertEqual ["a", "X", "c"] (apply ["a", "b", "c"] ["a", "X", "c"] (const True))
+  , test "stage nothing" (assertEqual ["a", "b", "c"] (apply ["a", "b", "c"] ["a", "X", "c"] (const False)))
+  , test "changed lines are paired, so one line can be staged" $
+      assertEqual ["X", "b", "c"] (apply ["a", "b", "c"] ["X", "Y", "c"] (== 0))
+  , test "extra added lines are staged when selected" $
+      assertEqual ["a", "new2", "b"] (apply ["a", "b"] ["a", "new1", "new2", "b"] (== 2))
+  , test "a removal is staged through the line above it" $
+      assertEqual (["a", "c"], ["a", "b", "c"]) (apply ["a", "b", "c"] ["a", "c"] (== 0), apply ["a", "b", "c"] ["a", "c"] (== 1))
+  , test "reverting = applying the unselected changes" $
+      let old = ["a", "b", "c", "d"]
+          new = ["a", "B", "c", "D"]
+       in assertEqual ["a", "b", "c", "D"] (apply old new (/= 1))
+  , test "signs: added, changed, removed; unstaged wins" $
+      let t = GitTracking (GitBase "" "" "" [] True [] True) [Hunk 0 0 0 1, Hunk 2 1 3 0] [Hunk 0 1 0 1, Hunk 4 1 5 1] 0 False False
+       in assertEqual
+            [(0, Sign SignAdded False), (2, Sign SignRemoved False), (5, Sign SignChanged True)]
+            (IntMap.toList (gitSigns t 0 10))
+  ]
+  where
+    apply old new = applySelected old new (diffLines old new)
+
+-- | Git end to end in a temporary repository.
+gitTests :: IO [Test]
+gitTests = do
+  config <- either (fail . T.unpack) pure defaultConfig
+  dir <- getTemporaryDirectory
+  let repo = dir <> "/him-test-git"
+      file = repo <> "/f.txt"
+      g args = runProcess "git" args (Just repo) ""
+      run ed k = execStateT (handleEvent config (EvKey k)) ed
+      keys ks ed = foldlM run ed (fromMaybe (error ks) (parseKeys (T.pack ks)))
+      stagedDiff = either (const "") (TE.decodeUtf8 . prStdout) <$> g ["diff", "--cached", "--no-color", "-U0"]
+  exists <- doesPathExist repo
+  when exists (removeDirectoryRecursive repo)
+  createDirectoryIfMissing True repo
+  _ <- g ["init", "-q"]
+  _ <- g ["config", "user.email", "t@t"]
+  _ <- g ["config", "user.name", "t"]
+  writeFile file "one\ntwo\nthree\n"
+  _ <- g ["add", "f.txt"]
+  _ <- g ["commit", "-q", "-m", "init"]
+  doc <- either (fail . T.unpack) pure =<< loadDocument file
+  opened <- settle config =<< execStateT gitHousekeeping (newEditor (24, 80) doc)
+  -- Change line 2, add a line after line 3.
+  edited <- settle config =<< keys "j e c T W O esc g e o f o u r esc" opened
+  let hunksOf ed = (gtUnstaged <$> tracking (docGit (edDoc ed)), gtStaged <$> tracking (docGit (edDoc ed)))
+  -- Stage only line 2 (the change), not the added line.
+  staged <- settle config =<< keys "g g j x space g s" edited
+  cached <- stagedDiff
+  unstaged <- settle config =<< keys "g g j x space g u" staged
+  cachedAfter <- stagedDiff
+  reset <- settle config =<< keys "g g j x space g r" edited
+  outside <- settle config =<< execStateT gitHousekeeping (newEditor (24, 80) (newDocument (Just "/") (buf "")))
+  removeDirectoryRecursive repo
+  pure
+    [ test "a tracked file gets its git base" (assertEqual (Just "f.txt") (gbPath . gtBase <$> tracking (docGit (edDoc opened))))
+    , test "edits show as unstaged hunks" (assertEqual (Just [Hunk 1 1 1 1, Hunk 3 0 3 1], Just []) (hunksOf edited))
+    , test "staging the selected line writes only it to the index" $
+        assertEqual True ("-two\n+TWO\n" `T.isInfixOf` cached && not ("+four" `T.isInfixOf` cached))
+    , test "after staging, the change is staged and the rest unstaged" (assertEqual (Just [Hunk 3 0 3 1], Just [Hunk 1 1 1 1]) (hunksOf staged))
+    , test "unstaging the line empties the index diff" (assertEqual ("", Just [Hunk 1 1 1 1, Hunk 3 0 3 1]) (cachedAfter, fst (hunksOf unstaged)))
+    , test "reset puts the index version of the selected line back" (assertEqual ["one", "two", "three", "four"] (B.toLines (docBuffer (edDoc reset))))
+    , test "outside a repository there is no git state" (assertEqual GitOutside (docGit (edDoc outside)))
+    ]
+
 jsonTests :: [Test]
 jsonTests =
   [ test "objects, arrays and literals" $
@@ -1038,8 +1112,8 @@ renderTests =
   [ test "a listing colours its header and directories" $
       let doc = listingDocument "/x" 0 [DirEntry "f" False, DirEntry "d" True]
           f = render defaultTheme Nothing (newEditor (8, 30) doc)
-          -- Column 5: past the gutter and the cursor cell.
-          styleOn row = fmap cellStyle (Seq.lookup 5 =<< Seq.lookup row (frameCells f))
+          -- Column 6: past the gutter (sign lane, number, padding) and the cursor cell.
+          styleOn row = fmap cellStyle (Seq.lookup 6 =<< Seq.lookup row (frameCells f))
        in assertEqual
             [Just (packStyle (themeDirectoryHeader defaultTheme)), Just (packStyle (themeDirectory defaultTheme)), Just (packStyle (themeText defaultTheme))]
             [styleOn 0, styleOn 2, styleOn 3]
@@ -1048,10 +1122,10 @@ renderTests =
           withBox = ed {edInfo = Just (InfoBox "goto" [("g", "Go to the first line")] BottomRight)}
           f1 = render defaultTheme Nothing withBox
        in assertEqual (frameCells (render defaultTheme Nothing ed)) (frameCells (render defaultTheme (Just f1) ed))
-  , test "gutter shows line numbers" (assertEqual "  1 hello" (T.take 9 (rowText (frameOf "hello") 0)))
+  , test "gutter shows a sign lane and line numbers" (assertEqual "   1 hello" (T.take 10 (rowText (frameOf "hello") 0)))
   , test "wide chars use a continuation cell" $
-      assertEqual [Just '漢', Just continuation, Just 'x'] (map (cellAt (frameOf "漢x") 0) [4, 5, 6])
-  , test "control chars are drawn as ^X" (assertEqual "^[x" (T.take 3 (T.drop 4 (rowText (frameOf "\ESCx") 0))))
+      assertEqual [Just '漢', Just continuation, Just 'x'] (map (cellAt (frameOf "漢x") 0) [5, 6, 7])
+  , test "control chars are drawn as ^X" (assertEqual "^[x" (T.take 3 (T.drop 5 (rowText (frameOf "\ESCx") 0))))
   , test "rendering with the previous frame gives the same frame" $
       let base = start "hello\nworld\nthird line"
           eds = [base, base {edMode = Insert}, base {edDoc = (edDoc base) {docSelection = single (Range (Pos 0 1) (Pos 1 2) Nothing)}}, base]

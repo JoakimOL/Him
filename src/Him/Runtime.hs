@@ -20,6 +20,10 @@ import GHC.Clock (getMonotonicTime)
 import Him.Effect
 import Him.Event (Event (..))
 import Him.FileTree (walkFiles)
+import Him.Buffer qualified as Buffer
+import Him.Diff (Hunk (..), diffLines, mapLine)
+import Him.Git (loadBase, removeFromIndex, writeIndex)
+import Him.GitState (GitBase (..))
 import Him.Picker (rank)
 
 data Runtime = Runtime
@@ -70,3 +74,17 @@ runJob post = \case
     let (best, total) = rank query (toList items)
     _ <- evaluate (length best + total)
     post (EvJob (PickerFiltered gen query best total))
+  GitLoad doc path -> do
+    base <- loadBase path
+    post (EvJob (GitLoaded doc base))
+  GitDiff doc version base buffer -> do
+    -- Unstaged: index -> buffer. Staged: HEAD -> index, moved onto buffer
+    -- lines through the unstaged hunks.
+    let current = Buffer.toLines buffer
+        unstaged = diffLines (gbIndex base) current
+        staged = [h {hNewStart = mapLine unstaged (hNewStart h)} | h <- diffLines (gbHead base) (gbIndex base)]
+    _ <- evaluate (length unstaged + length staged)
+    post (EvJob (GitDiffed doc version unstaged staged))
+  GitWriteIndex doc base ending new -> do
+    result <- maybe (removeFromIndex base) (writeIndex base ending) new
+    post (EvJob (GitWritten doc result))

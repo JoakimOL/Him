@@ -4,6 +4,7 @@ module Him.Render.Theme
   , defaultTheme
   ) where
 
+import Him.GitState (SignKind (..))
 import Him.Mode (Mode (..))
 import Him.Terminal.Ansi
 
@@ -23,6 +24,8 @@ data Theme = Theme
   , themePopupSelected :: Style
   , themePopupDetail :: Style
   -- ^ Only its foreground is used, over the row's background.
+  , themeGitSign :: SignKind -> Bool -> Style
+  -- ^ Gutter signs by kind; the flag is "staged" (drawn dimmer).
   , themeDirectory :: Style
   -- ^ Directory entries in a listing.
   , themeDirectoryHeader :: Style
@@ -45,11 +48,19 @@ defaultTheme =
     , themePopupKey = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 110, styleBold = True}
     , themePopupSelected = defaultStyle {styleBg = Indexed 24, styleFg = Indexed 255}
     , themePopupDetail = defaultStyle {styleFg = Indexed 245}
+    , themeGitSign = \kind staged -> defaultStyle {styleFg = gitColor kind staged}
     , themeDirectory = defaultStyle {styleFg = Indexed 110, styleBold = True}
     , themeDirectoryHeader = defaultStyle {styleFg = Indexed 180, styleBold = True}
     , themeError = defaultStyle {styleFg = Ansi 9}
     }
   where
+    gitColor kind staged = Indexed $ case (kind, staged) of
+      (SignAdded, False) -> 114
+      (SignChanged, False) -> 179
+      (SignRemoved, False) -> 167
+      (SignAdded, True) -> 65
+      (SignChanged, True) -> 101
+      (SignRemoved, True) -> 95
     modeColor = \case
       Normal -> Indexed 110
       Insert -> Indexed 150

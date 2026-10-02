@@ -56,6 +56,7 @@ data ActionGroup
   | GHistory
   | GSearch
   | GBuffers
+  | GGit
   | GPrompt
   | GMisc
   deriving stock (Eq, Ord, Show, Enum, Bounded)
@@ -70,6 +71,7 @@ groupName = \case
   GHistory -> "history"
   GSearch -> "search"
   GBuffers -> "buffers"
+  GGit -> "git"
   GPrompt -> "prompt"
   GMisc -> "misc"
 

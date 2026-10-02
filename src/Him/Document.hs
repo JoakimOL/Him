@@ -13,6 +13,7 @@ module Him.Document
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer (Buffer)
+import Him.GitState (GitInfo (..))
 import Him.History (History, emptyHistory)
 import Him.Position (Pos (..))
 import Him.Selection (Selection, point, single)
@@ -56,6 +57,8 @@ data Document = Document
   , docTrailingNewline :: !Bool
   -- ^ Whether the file ends with a line ending (written back on save).
   , docHistory :: !History
+  , docGit :: !GitInfo
+  -- ^ The file's state in git ("Him.GitState"), for gutter signs and staging.
   , docSavedBuffer :: !Buffer
   -- ^ The text as last loaded or saved, to recompute 'docDirty' after
   -- undo/redo.
@@ -75,6 +78,7 @@ newDocument path buf =
     , docLineEnding = LF
     , docTrailingNewline = True
     , docHistory = emptyHistory
+    , docGit = GitUnknown
     , docSavedBuffer = buf
     }
 
