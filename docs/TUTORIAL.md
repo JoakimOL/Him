@@ -804,6 +804,12 @@ What it adds is a keymap *layer*: in normal mode on a listing, `keymapMode` retu
 adds `ret` (open), `-` (up) and `g r` (refresh). The only other changes are guards that
 refuse edits and insert mode in a read-only document.
 
+File operations reuse the command line. `r` opens a prompt whose kind,
+`FilePrompt (RenameEntry dir old)`, says what `ret` will do, and the line starts out
+holding the old name. `d` collects the entries under *every* selection, so the
+multiple-selection tools from 5.4 double as dired's marks. One detail is worth a test of
+its own: deleting a symlink to a directory must unlink it, not delete what it points to.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with

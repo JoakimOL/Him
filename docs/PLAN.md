@@ -291,8 +291,21 @@ libraries, and a direct backtracking matcher over path strings is about 40 lines
 - **Colours:** the header and directories have their own styles. The row key gained
   the line's class (`rkClass`), so a cached row is never reused with the wrong colour.
 
+- **File operations** (milestone 20): `a` (new file; a trailing `/` makes a directory,
+  and missing parents are created), `+` (new directory), `r` (rename or move; the
+  prompt starts with the current name) and `d` (delete). `d` deletes every entry the
+  selections cover, so `x x d` or `% s` work, and asks for `y` first. Directories are
+  deleted recursively, but a symlink is only unlinked, never followed (tested). The
+  names are typed on the command line through a `FilePrompt` with a `FileAction`, so
+  editing the name uses the ordinary command-line keys. After a rename, buffers showing
+  the old path (or something inside a renamed directory) take the new path.
+- **Dotfiles** are hidden by default, like the file picker. The header counts them,
+  and `g .` (`edShowHidden`, shared by all listings) shows them.
+
 *Alternatives:* a separate directory UI component, which would have to reimplement
-movement and search. Or a real editor mode, which every `setMode Normal` would have to
+movement and search. Editing the listing text and applying the difference (as Emacs's
+wdired and oil.nvim do) would allow batch renames, but it needs a careful diff and
+confirmation; prompts were simpler and safer first. Or a real editor mode, which every `setMode Normal` would have to
 know about.
 
 **ADR-8: No test framework.**
@@ -390,6 +403,8 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **19. Ignore files and a directory viewer.** The file picker honours `.gitignore`
   and `.ignore` (ADR-21). Directories open as dired-style listings: `ret`, `-`, `g r`,
   `space d` / `space D`, `:cd`, `:pwd` (ADR-22).
+- [x] **20. File operations in listings.** `a`, `+`, `r`, `d` (with confirmation),
+  and `g .` for dotfiles (ADR-22).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -413,7 +428,7 @@ Implemented (defined in `Him.Config.Default`):
 | Normal (search) | `/` / `?` (search forward / backward, with preview), `n` / `N` (next / previous match), `*` (selection becomes the pattern) |
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
 | `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
-| Directory listings | `:o dir`, `him dir`, `space d` (the current file's directory, cursor on the file), `space D` (the working directory). In a listing: normal motions and search, `ret` (enter a directory / open a file), `-` or `backspace` (parent), `g r` (refresh). `:cd [dir]` (default: the listed directory), `:pwd`. |
+| Directory listings | `:o dir`, `him dir`, `space d` (the current file's directory, cursor on the file), `space D` (the working directory). In a listing: normal motions and search, `ret` (enter a directory / open a file), `-` or `backspace` (parent), `g r` (refresh), `a` (new file, or directory with a trailing `/`), `+` (new directory), `r` (rename/move), `d` (delete the selected entries, asks `y`), `g .` (show/hide dotfiles). `:cd [dir]` (default: the listed directory), `:pwd`. |
 | Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker). In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
 
 Actions that take arguments, and have no default key yet: `move_char_left/right`,
@@ -483,7 +498,7 @@ numbers are provisional.*
   `Him.Config.Default.configWith`, which reports every bad binding.
 - **Done this session:** count prefixes (`5 j`), multiple selections (milestone 17,
   ADR-18), buffers, info menus and pickers (milestone 18, ADR-19/20), ignore files and the
-  directory viewer (milestone 19, ADR-21/22).
+  directory viewer (milestone 19, ADR-21/22), file operations in listings (milestone 20).
 - **Next suggestions:**
   1. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
      matcher. `s` would get regexes for free.
@@ -493,8 +508,8 @@ numbers are provisional.*
   4. Pickers: global search (`space /`, which can reuse `listFiles` and the block
      search), and a `:help` picker of all actions (`registryActions` already lists them
      by group).
-  5. Directory listings: file operations (create, rename, delete) as dired has them, and
-     an option to show or hide dotfiles.
+  5. Directory listings: copy (`c`/`p`?), batch rename by editing the listing (wdired /
+     oil.nvim style), and marking entries.
 - **Known issues:**
   - Zero-width combining characters are treated as width 1.
   - Case-insensitive search folds ASCII letters only.
@@ -504,6 +519,7 @@ numbers are provisional.*
   - The file picker skips hidden entries and lists at most 50,000 files. It does not
     read the global gitignore (ADR-21).
   - A directory listing does not refresh by itself; `g r` lists it again.
+  - Deleting a file leaves an open buffer for it (saving it recreates the file).
   - The info box and picker measure text by characters, so wide characters in file
     names can misalign the right border.
 - **Working rule:** revert temporary instrumentation by editing it out (or with
@@ -512,7 +528,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (298 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (308 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

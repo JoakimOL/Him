@@ -28,8 +28,9 @@ make fmt / make lint    # format / lint
 ```
 
 In the editor, `space f` opens a file picker (it honours `.gitignore` and `.ignore`),
-`space b` a buffer picker, `space d` a directory listing (`ret` opens, `-` goes up; also
-`:o dir` or `him dir`), and `:` shows
+`space b` a buffer picker, `space d` a directory listing (`ret` opens, `-` goes up, `a` /
+`+` / `r` / `d` create, rename and delete, `g .` shows dotfiles; also `:o dir` or
+`him dir`), and `:` shows
 the commands as you type (`tab` completes). After a prefix key such as `g` or `space`, a
 menu shows what can follow. The full key list is in docs/PLAN.md §6.
 
