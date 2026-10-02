@@ -142,6 +142,12 @@ values (`\r\n` at line ends, since output processing is off), quitting on `q`. P
 arrow keys, `Ctrl-a` and `æ`. You'll see `[27,91,65]`, `[1]`, `[195,166]`. Then make the
 loop throw an exception and check with `stty -a` that the terminal is still fine.
 
+**Ctrl-Z.** Raw mode switches off the terminal's signal keys, so Ctrl-Z arrives as an
+ordinary key. To suspend the editor, give the terminal back exactly as you found it,
+then stop yourself with `raiseSignal sigTSTP`. The call returns when the shell sends
+`SIGCONT` (`fg`). At that point, set raw mode again and redraw everything: the screen
+belongs to whatever ran meanwhile (ADR-31).
+
 ### 1.2 Escape sequences as pure builders
 
 All output goes through pure `ByteString.Builder` values (`Him.Terminal.Ansi`), so it

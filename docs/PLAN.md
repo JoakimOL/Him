@@ -534,6 +534,17 @@ calls from actions, which would freeze the editor while a server thinks.
 *Alternative:* opening the file in a hidden buffer. That loads more than needed and
 mixes previews into the buffer list.
 
+**ADR-31: Ctrl-Z suspends the editor.** Raw mode turns off the terminal's own signal
+keys (`ISIG`), so Ctrl-Z arrives as a key. It is bound to `suspend`, which queues a
+`Suspend` effect. The main loop then:
+1. calls the suspend action that `withRawTerminal` hands it: leave the alternate
+   screen, restore the original terminal attributes, and stop the process with
+   `SIGTSTP` (the default action stops every thread);
+2. when the shell continues the process (`fg`), sets raw mode again and re-enters the
+   alternate screen;
+3. marks the editor `edRepaint`, so the next frame is drawn without diffing against the
+   old one, and reads the window size again in case it changed meanwhile.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -660,6 +671,8 @@ Each milestone ends with something runnable, and with this file updated.
   `:lsp-info` (ADR-29).
 - [x] **26. Previews, workspace symbols, imports.** Picker previews (ADR-30), `space S`,
   completion imports, references on `g r` (ADR-29).
+- [x] **27. Movement.** Page and half-page motions, `f t F T` with `A-.`, `<count> g g`,
+  and Ctrl-Z to suspend (ADR-31).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -677,6 +690,7 @@ Implemented (defined in `Him.Config.Default`):
 | Mode | Keys |
 |---|---|
 | Normal | counts (`5 j`, `3 w`, `2 x`) on `h j k l`, arrows, `w b e`, `x`; `h j k l`, arrows, `home`/`end`; `w b e` (select words), `x` (select line, repeat to extend), `;` (collapse), `v` (select mode), `d` (delete), `c` (change); `y` (yank), `p` / `P` (paste after / before); `u` / `U` (undo / redo); `g g` / `g e` (first / last line), `g h` / `g l` (line start / end); `i a o`; `:` |
+| Normal (movement) | `C-f` / `C-b` (also `pagedown` / `pageup`) page down / up, `C-d` / `C-u` half page; `f` / `t` + a character: select to / up to its next occurrence, `F` / `T` backwards (counts work, `ret` finds a line break); `A-.` repeats the last one; `<count> g g` goes to that line; `C-z` suspends (`fg` in the shell returns). |
 | Select | same as normal, but motions extend; `v` / `esc` → normal |
 | Insert | printable chars, `ret` (keeps indent), `tab`, `backspace`, `del`, arrows, `esc` |
 | Normal (selections) | `%` (select all), `s` (select matches in the selection, with preview), `C` (copy the selection onto the next line), `,` (keep the primary), `A-,` (remove the primary), `(` / `)` (rotate the primary), `A-s` (split into lines). The status line shows `i/n sels`. |
@@ -815,7 +829,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (427 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (445 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

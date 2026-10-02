@@ -48,6 +48,8 @@ sources once with Helix (`hx --grammar fetch`), then run `him --build-grammars`.
 builds them into `~/.config/him/runtime/grammars`; the highlight queries are read from
 Helix's runtime.
 
+`C-z` suspends the editor (`fg` brings it back).
+
 Debug logging: `HIM_LOG=/tmp/him.log make run ARGS=file.txt`.
 
 ## Layout
