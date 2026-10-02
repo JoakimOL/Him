@@ -25,10 +25,11 @@ import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
-import System.Directory (createDirectoryIfMissing, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
+import System.Directory (canonicalizePath, createDirectoryIfMissing, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
 import Him.FileTree (listFiles)
 import Him.Picker
 import Him.Ignore
+import Him.Directory (listingDocument)
 import Him.Key
 import Him.Keymap
 import Him.Mode (Mode (..))
@@ -43,7 +44,7 @@ import Him.View (View (..), scrollToCursor)
 import Him.TextWidth (charIndexAtCol, charWidth, displayCol, glyphs, isWide)
 import Him.Render (render)
 import Him.Render.Frame (Cell (..), Frame (..), ScrollInfo (..), continuation)
-import Him.Render.Theme (defaultTheme)
+import Him.Render.Theme (Theme (..), defaultTheme)
 import Data.Foldable (toList)
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
@@ -161,6 +162,26 @@ openBufferTests = do
   writeFile (tree <> "/.git/info/exclude") "d.txt\n"
   listedInRepo <- listFiles 100 (tree <> "/sub")
   removeDirectoryRecursive tree
+  -- Directory listings.
+  let dtree = dir <> "/him-test-dired"
+  createDirectoryIfMissing True (dtree <> "/sub")
+  mapM_ (\f -> writeFile (dtree <> "/" <> f) "x\n") ["b.txt", "a.txt", "sub/c.txt"]
+  dcanon <- canonicalizePath dtree
+  let lines' ed = B.toLines (docBuffer (edDoc ed))
+      cursorLine ed = posLine (rangeHead (primary (docSelection (edDoc ed))))
+  listing <- ex ("o " <> T.pack dtree) start
+  entered <- keys "ret" listing
+  backUp <- keys "minus" entered
+  openedFile <- keys "j ret" listing
+  backToListing <- keys "space D" =<< keys "space d" openedFile
+  ofFile <- keys "space d" openedFile
+  refused <- keys "i" listing
+  refusedDelete <- keys "x d" listing
+  refusedWrite <- ex "w" listing
+  writeFile (dtree <> "/new.txt") ""
+  refreshed <- keys "g r" listing
+  cwd <- canonicalizePath "."
+  removeDirectoryRecursive dtree
   mapM_ removeFile [fileA, fileB]
   pure
     [ test "zipper: open, switch and close" $
@@ -187,6 +208,18 @@ openBufferTests = do
     , test "typing narrows the picker, backspace widens it" (assertEqual (Just ("", 2)) ((\p -> (pkQuery p, length (pkMatches p))) <$> edPicker pickerTyped))
     , test "esc closes the picker" (assertEqual (Nothing, Normal, b) (pkTitle <$> edPicker pickerEsc, edMode pickerEsc, docPath (edDoc pickerEsc)))
     , test "space f opens the chosen file" (assertEqual (Just "test/Spec.hs", (1, 2)) (docPath (edDoc pickedFile), bufferIndex pickedFile))
+    , test ":o of a directory lists it" $
+        assertEqual (Just dcanon, [T.pack dcanon <> ":", "../", "sub/", "a.txt", "b.txt"], 2, Directory)
+          (docPath (edDoc listing), lines' listing, cursorLine listing, keymapMode listing)
+    , test "ret enters a directory in the same buffer" (assertEqual (Just (dcanon <> "/sub"), bufferIndex listing) (docPath (edDoc entered), bufferIndex entered))
+    , test "- goes up, onto the directory it came from" (assertEqual (Just dcanon, 2) (docPath (edDoc backUp), cursorLine backUp))
+    , test "ret on a file opens it as a buffer" (assertEqual (Just (dcanon <> "/a.txt"), (2, 3)) (docPath (edDoc openedFile), bufferIndex openedFile))
+    , test "space d shows the file's directory, on the file" (assertEqual (Just dcanon, 3, (1, 3)) (docPath (edDoc ofFile), cursorLine ofFile, bufferIndex ofFile))
+    , test "space D opens the working directory" (assertEqual (Just cwd, Directory) (docPath (edDoc backToListing), keymapMode backToListing))
+    , test "insert mode is refused in a listing" (assertEqual (Normal, Just (Status Error "a directory listing is read-only (ret opens an entry, - goes up)")) (edMode refused, edStatus refused))
+    , test "deleting is refused in a listing" (assertEqual (lines' listing) (lines' refusedDelete))
+    , test ":w is refused in a listing" (assertEqual (Just (Status Error "a directory listing cannot be written")) (edStatus refusedWrite))
+    , test "g r lists the directory again" (assertEqual ["sub/", "a.txt", "b.txt", "new.txt"] (drop 2 (lines' refreshed)))
     , test "listFiles lists files sorted, skipping hidden entries" (assertEqual ["a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt"] listed)
     , test "listFiles stops at the limit" (assertEqual ["a.txt", "b.txt"] listedFew)
     , test "listFiles honours .gitignore and .ignore at every level" $
@@ -750,7 +783,15 @@ widthTests =
 
 renderTests :: [Test]
 renderTests =
-  [ test "a closed info box is redrawn, not copied from the row cache" $
+  [ test "a listing colours its header and directories" $
+      let doc = listingDocument "/x" [DirEntry "f" False, DirEntry "d" True]
+          f = render defaultTheme Nothing (newEditor (8, 30) doc)
+          -- Column 5: past the gutter and the cursor cell.
+          styleOn row = fmap cellStyle (Seq.lookup 5 =<< Seq.lookup row (frameCells f))
+       in assertEqual
+            [Just (packStyle (themeDirectoryHeader defaultTheme)), Just (packStyle (themeDirectory defaultTheme)), Just (packStyle (themeText defaultTheme))]
+            [styleOn 0, styleOn 2, styleOn 3]
+  , test "a closed info box is redrawn, not copied from the row cache" $
       let ed = newEditor (12, 40) (newDocument Nothing (buf (T.intercalate "\n" (replicate 20 "some text here"))))
           withBox = ed {edInfo = Just (InfoBox "goto" [("g", "Go to the first line")] BottomRight)}
           f1 = render defaultTheme Nothing withBox

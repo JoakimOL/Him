@@ -50,6 +50,8 @@ data RowKey = RowKey
   , rkLeft :: !Int
   , rkCol :: !Int
   , rkWidth :: !Int
+  , rkClass :: !Int
+  -- ^ How the line is coloured as a whole (e.g. a directory in a listing).
   }
   deriving stock (Eq, Show)
 

@@ -5,7 +5,7 @@ module Him.Render.StatusLine
 
 import Data.Text qualified as T
 import Him.Document (Document (..), displayName)
-import Him.Editor (Editor (..), bufferIndex)
+import Him.Editor (Editor (..), bufferIndex, keymapMode)
 import Him.Key (showKeys)
 import Him.Mode (modeLabel)
 import Him.Position (Pos (..))
@@ -17,13 +17,13 @@ drawStatusLine :: Theme -> Editor -> Rect -> Frame -> Frame
 drawStatusLine theme ed rect =
   putText row (rectCol rect + rectWidth rect - T.length right) style right
     . putText row (rectCol rect + T.length mode) style file
-    . putText row (rectCol rect) (themeMode theme (edMode ed)) mode
+    . putText row (rectCol rect) (themeMode theme (keymapMode ed)) mode
     . fillRect rect style
   where
     row = rectRow rect
     style = themeStatusLine theme
     doc = edDoc ed
-    mode = " " <> modeLabel (edMode ed) <> " "
+    mode = " " <> modeLabel (keymapMode ed) <> " "
     dirty = if docDirty doc then " [+]" else ""
     bufs = case bufferIndex ed of
       (_, 1) -> ""

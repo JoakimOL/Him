@@ -21,6 +21,9 @@ data Theme = Theme
   , themePopup :: Style
   , themePopupKey :: Style
   , themePopupSelected :: Style
+  , themeDirectory :: Style
+  -- ^ Directory entries in a listing.
+  , themeDirectoryHeader :: Style
   , themeError :: Style
   }
 
@@ -39,6 +42,8 @@ defaultTheme =
     , themePopup = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 252}
     , themePopupKey = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 110, styleBold = True}
     , themePopupSelected = defaultStyle {styleBg = Indexed 24, styleFg = Indexed 255}
+    , themeDirectory = defaultStyle {styleFg = Indexed 110, styleBold = True}
+    , themeDirectoryHeader = defaultStyle {styleFg = Indexed 180, styleBold = True}
     , themeError = defaultStyle {styleFg = Ansi 9}
     }
   where
@@ -48,3 +53,4 @@ defaultTheme =
       Select -> Indexed 180
       CmdLine -> Indexed 176
       Picking -> Indexed 176
+      Directory -> Indexed 110

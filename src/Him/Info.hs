@@ -33,7 +33,7 @@ refreshInfo config ed = ed {edInfo = box}
 -- | The keys that can follow the pending ones.
 keyInfo :: Config -> Editor -> Maybe InfoBox
 keyInfo config ed = do
-  keymap <- Map.lookup (edMode ed) (cfgKeymaps config)
+  keymap <- Map.lookup (keymapMode ed) (cfgKeymaps config)
   sub <- lookupPrefix keymap pending
   pure
     InfoBox

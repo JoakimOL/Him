@@ -15,6 +15,10 @@ data Mode
     CmdLine
   | -- | Choosing from a picker (@space f@).
     Picking
+  | -- | Normal mode in a directory listing. Never 'Him.Editor.edMode'
+    -- itself: it names the keymap layer used there (see
+    -- 'Him.Editor.keymapMode').
+    Directory
   deriving stock (Eq, Ord, Show, Enum, Bounded)
 
 -- | Short label for the status line.
@@ -25,3 +29,4 @@ modeLabel = \case
   Select -> "SEL"
   CmdLine -> "CMD"
   Picking -> "PIK"
+  Directory -> "DIR"

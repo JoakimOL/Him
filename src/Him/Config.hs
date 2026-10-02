@@ -47,10 +47,11 @@ overrideBindings :: Bindings -> Bindings -> Bindings
 overrideBindings user defaults = Map.unionWith (flip (<>)) user defaults
 
 -- | A mode that also uses another mode's bindings, under its own: select
--- mode is normal mode with a few overrides.
+-- mode and the directory layer are normal mode with a few overrides.
 inheritsFrom :: Mode -> Maybe Mode
 inheritsFrom = \case
   Select -> Just Normal
+  Directory -> Just Normal
   _ -> Nothing
 
 -- | Validate every binding against the actions and build the keymaps.

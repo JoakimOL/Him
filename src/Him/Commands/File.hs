@@ -13,11 +13,12 @@ import Him.Action
 import Him.Buffer (lineCount)
 import Him.Buffer qualified as Buffer
 import Him.Command
-import Him.Document (Document (..), displayName, newDocument)
+import Him.Document (Document (..), displayName, isReadOnly, newDocument)
 import Him.Editor
 import Him.Ex (ExArgs (..), ExCommand (..))
-import Him.File (loadDocument, saveDocument)
-import System.Directory (canonicalizePath)
+import Him.Directory (listingDir, loadPath)
+import Him.File (saveDocument)
+import System.Directory (canonicalizePath, getCurrentDirectory, setCurrentDirectory)
 
 actions :: [Action]
 actions =
@@ -52,6 +53,15 @@ exCommands =
         else modify' closeBuffer
   , ExCommand ["buffer-close!", "bc!", "bclose!"] "Close the buffer, discarding unsaved changes" NoArgs $ \_ ->
       modify' closeBuffer
+  , ExCommand ["change-current-directory", "cd"] "Change the working directory (default: the listed one)" PathArgs $ \args -> do
+      listed <- listingDir <$> getDoc
+      case (args, listed) of
+        ([dir], _) -> changeDirectory (T.unpack dir)
+        ([], Just dir) -> changeDirectory dir
+        ([], Nothing) -> failWith ":cd needs a directory"
+        _ -> failWith ":cd takes one directory"
+  , ExCommand ["show-directory", "pwd"] "Show the working directory" NoArgs $ \_ ->
+      liftIO getCurrentDirectory >>= info . T.pack
   , ExCommand ["buffer-next", "bn", "bnext"] "Go to the next buffer" NoArgs $ \_ -> modify' (switchBuffer 1)
   , ExCommand ["buffer-previous", "bp", "bprev"] "Go to the previous buffer" NoArgs $ \_ -> modify' (switchBuffer (-1))
   ]
@@ -65,8 +75,15 @@ quitChecked = do
     [d] -> failWith ("unsaved changes in " <> displayName d <> " (use :q! to discard them, or :wq to save)")
     ds -> failWith (T.pack (show (length ds)) <> " buffers have unsaved changes (use :q! to discard them, or :wa to save)")
 
--- | Show a file: switch to its buffer if it is open, otherwise load it (a
--- missing file opens as an empty buffer that :w creates).
+changeDirectory :: FilePath -> EditorM ()
+changeDirectory dir =
+  liftIO (try (setCurrentDirectory dir >> getCurrentDirectory)) >>= \case
+    Left e -> failWith ("could not change directory: " <> T.pack (show (e :: IOException)))
+    Right now -> info ("working directory: " <> T.pack now)
+
+-- | Show a file or directory: switch to its buffer if it is open, otherwise
+-- load it (a missing file opens as an empty buffer that :w creates; a
+-- directory opens as a listing).
 openFile :: FilePath -> EditorM ()
 openFile path = do
   want <- liftIO (canonical path)
@@ -75,7 +92,7 @@ openFile path = do
   case lookup (Just want) (zip open [0 ..]) of
     Just i -> modify' (gotoBuffer i)
     Nothing ->
-      liftIO (loadDocument path) >>= \case
+      liftIO (loadPath path) >>= \case
         Left e -> failWith ("could not open " <> T.pack path <> ": " <> e)
         Right doc -> modify' (openBuffer doc)
   where
@@ -105,6 +122,7 @@ write :: [T.Text] -> EditorM Bool
 write args = do
   doc <- getDoc
   case (args, docPath doc) of
+    _ | isReadOnly doc -> False <$ failWith "a directory listing cannot be written"
     ([path], _) -> saveTo (T.unpack path)
     ([], Just path) -> saveTo path
     ([], Nothing) -> False <$ failWith "no file name (use :w <path>)"

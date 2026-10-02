@@ -18,6 +18,7 @@ import Data.Text (Text)
 import Him.Action (Action)
 import Him.Command (EditorM)
 import Him.Commands.CommandLine qualified as CommandLine
+import Him.Commands.Directory qualified as Directory
 import Him.Commands.Edit qualified as Edit
 import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
@@ -35,6 +36,7 @@ allActions =
     <> Search.actions
     <> File.actions
     <> Picker.actions
+    <> Directory.actions
     <> CommandLine.actions exCommands
 
 exCommands :: [ExCommand]
@@ -85,6 +87,8 @@ normalBindings =
        , ("g l", "goto_line_end")
        , ("space f", "file_picker")
        , ("space b", "buffer_picker")
+       , ("space d", "directory_of_buffer")
+       , ("space D", "directory_of_cwd")
        , ("g n", "buffer_next")
        , ("g p", "buffer_previous")
        , ("i", "insert_mode")
@@ -123,6 +127,15 @@ commandBindings =
   , ("backspace", "cmdline_backspace")
   ]
 
+-- | Normal mode in a directory listing is normal mode with these.
+directoryBindings :: [(Text, Text)]
+directoryBindings =
+  [ ("ret", "directory_open")
+  , ("-", "directory_parent")
+  , ("backspace", "directory_parent")
+  , ("g r", "directory_refresh")
+  ]
+
 pickerBindings :: [(Text, Text)]
 pickerBindings =
   [ ("esc", "picker_close")
@@ -147,6 +160,7 @@ defaultBindings =
     , (Insert, insertBindings)
     , (CmdLine, commandBindings)
     , (Picking, pickerBindings)
+    , (Directory, directoryBindings)
     ]
 
 -- | The default configuration. Every binding is checked against the

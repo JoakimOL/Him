@@ -27,7 +27,7 @@ import Him.Info (refreshInfo)
 import Him.Mode (Mode (..))
 import Him.Editor
 import Him.Event (Event (..))
-import Him.File (loadDocument)
+import Him.Directory (loadPath)
 import Him.Key (Key (..), KeyCode (..))
 import Him.Keymap (Keymap, Resolved (..), emptyKeymap, resolve)
 import Him.Log (logMsg)
@@ -46,7 +46,7 @@ run :: [FilePath] -> IO ()
 run files = do
   config <- either (die . T.unpack) pure defaultConfig
   -- Load before entering raw mode, so errors print normally.
-  docs <- traverse (\path -> loadDocument path >>= either (die . T.unpack) pure) files
+  docs <- traverse (\path -> loadPath path >>= either (die . T.unpack) pure) files
   logMsg ("starting, files = " <> show files)
   withRawTerminal $ do
     events <- newTChanIO
@@ -105,7 +105,7 @@ handleEvent config (EvKey key) = do
   ed <- get
   let pending = edPending ed
       keys = pending <> [key]
-      keymap = Map.findWithDefault emptyKeymap (edMode ed) (cfgKeymaps config)
+      keymap = Map.findWithDefault emptyKeymap (keymapMode ed) (cfgKeymaps config)
       setPending ks = modify' (\e -> e {edPending = ks})
       clearCount = modify' (\e -> e {edCount = Nothing})
   when (null pending) $ modify' (\e -> e {edStatus = Nothing})
@@ -136,7 +136,7 @@ countDigit ed keymap key = case key of
     | Set.null mods
     , isDigit c
     , null (edPending ed)
-    , edMode ed `elem` [Normal, Select]
+    , keymapMode ed `elem` [Normal, Select, Directory]
     , c /= '0' || isJust (edCount ed)
     , NoMatch <- resolve keymap [key] ->
         Just (min maxCount (maybe 0 (* 10) (edCount ed) + digitToInt c))

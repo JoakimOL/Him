@@ -9,7 +9,7 @@ import Data.IntMap.Strict qualified as IntMap
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Him.Buffer (lineAt, lineCount)
-import Him.Document (Document (..))
+import Him.Document (DirEntry (..), DocKind (..), Document (..))
 import Him.Editor (Editor (..))
 import Him.Mode (Mode (..))
 import Him.Position (Pos (..))
@@ -48,6 +48,16 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
     secondaryHeads = [rangeHead r | r <- onScreen, r /= prim]
     -- Packed once per frame, not per cell.
     textStyle = packStyle (themeText theme)
+    dirStyle = packStyle (themeDirectory theme)
+    headerStyle = packStyle (themeDirectoryHeader theme)
+    -- Lines of a directory listing are coloured by what they are: 0 plain
+    -- text, 1 the header, 2 a directory. (Part of the row key, so a cached
+    -- row is never reused with the wrong colour.)
+    lineClass line = case docKind doc of
+      DirectoryDoc entries
+        | line == 0 -> 1
+        | (e : _) <- drop (line - 1) entries, deIsDir e -> 2
+      _ -> 0 :: Int
     cursorStyle = packStyle (themeCursor theme)
     selectionStyle = packStyle (themeSelection theme)
 
@@ -58,7 +68,12 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
           remember (copyCells (prevRowOf screenRow) screenRow (rectCol rect) (rectWidth rect) p f)
       | otherwise = remember (putCells screenRow (rectCol rect) visible f)
       where
-        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect)
+        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls
+        cls = lineClass line
+        base = case cls of
+          1 -> headerStyle
+          2 -> dirStyle
+          _ -> textStyle
         remember fr = fr {frameRowKeys = IntMap.insert screenRow key (frameRowKeys fr)}
         line = top + r
         screenRow = rectRow rect + r
@@ -79,13 +94,13 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
         -- wide or control characters), so no layout is needed.
         plain = T.all (\ch -> ch >= ' ' && ch < '\DEL') text
         lineCells
-          | plain = zipWith (\i ch -> Cell ch (fromMaybe textStyle (styleAt i))) [0 ..] (T.unpack text) <> lineEndCell
+          | plain = zipWith (\i ch -> Cell ch (fromMaybe base (styleAt i))) [0 ..] (T.unpack text) <> lineEndCell
           | otherwise = concatMap charCells (layoutLine text) <> lineEndCell
         visible
           | plain = take (rectWidth rect) (drop left lineCells)
           | otherwise = fixEdges (take (rectWidth rect) (drop left lineCells))
         charCells (i, _, w, c) =
-          let style = fromMaybe textStyle (styleAt i)
+          let style = fromMaybe base (styleAt i)
            in if isWide c
                 then [Cell c style, Cell continuation style]
                 else map (`Cell` style) (glyphs c w)

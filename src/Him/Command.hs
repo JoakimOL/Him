@@ -19,7 +19,7 @@ module Him.Command
 import Control.Monad.Trans.State.Strict (StateT, gets, modify')
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import Him.Document (Document (..))
+import Him.Document (Document (..), isReadOnly)
 import Him.Edit (Edit, applyEdits)
 import Him.Editor
 import Him.History (Snapshot (..), beginChange)
@@ -38,8 +38,16 @@ getDoc = gets edDoc
 modifyDoc :: (Document -> Document) -> EditorM ()
 modifyDoc f = modify' (\e -> e {edDoc = f (edDoc e)})
 
+-- | Switch modes. Insert mode is refused in a read-only document.
 setMode :: Mode -> EditorM ()
-setMode m = modify' (\e -> e {edMode = m})
+setMode m = do
+  readOnly <- isReadOnly <$> getDoc
+  if m == Insert && readOnly
+    then failWith readOnlyMessage
+    else modify' (\e -> e {edMode = m})
+
+readOnlyMessage :: Text
+readOnlyMessage = "a directory listing is read-only (ret opens an entry, - goes up)"
 
 info :: Text -> EditorM ()
 info t = modify' (\e -> e {edStatus = Just (Status Info t)})
@@ -65,7 +73,12 @@ edit f = editEach (const f)
 
 -- | Like 'edit', but the edit is told the index of the range it works on.
 editEach :: (Int -> Edit) -> EditorM ()
-editEach f = modifyDoc $ \d ->
+editEach f = do
+  readOnly <- isReadOnly <$> getDoc
+  if readOnly then failWith readOnlyMessage else editAll f
+
+editAll :: (Int -> Edit) -> EditorM ()
+editAll f = modifyDoc $ \d ->
   let (buf, sel) = applyEdits f (docBuffer d) (docSelection d)
    in d
         { docBuffer = buf

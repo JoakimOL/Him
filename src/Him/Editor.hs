@@ -7,6 +7,7 @@ module Him.Editor
   , InfoBox (..)
   , InfoPlace (..)
   , newEditor
+  , keymapMode
     -- * Buffers
   , Buffered (..)
   , buffers
@@ -21,14 +22,13 @@ module Him.Editor
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import Him.Document (Document)
 import Him.Key (Key)
 import Him.Mode (Mode (..))
 import Him.Picker (Picker)
 import Him.Search (Direction)
 import Him.Selection (Selection)
 import Him.Buffer qualified as Buffer
-import Him.Document (newDocument)
+import Him.Document (DocKind (..), Document (..), newDocument)
 import Him.View (View, initialView)
 
 data Severity = Info | Error
@@ -123,6 +123,13 @@ newEditor size doc =
     , edRegisters = Map.empty
     , edQuit = False
     }
+
+-- | The mode whose keymap applies: normal mode in a directory listing
+-- uses the 'Directory' layer.
+keymapMode :: Editor -> Mode
+keymapMode ed = case (edMode ed, docKind (edDoc ed)) of
+  (Normal, DirectoryDoc _) -> Directory
+  (m, _) -> m
 
 -- | A document that is open but not shown, with its scroll position.
 data Buffered = Buffered
