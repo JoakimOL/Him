@@ -779,6 +779,31 @@ result with a fresh render. With the line removed, the test fails.
 The fuzzy score is the number of characters skipped between the first and last match,
 and every start position is tried, so `ab` matches `src/ab.hs` before `src/a/long/b.hs`.
 
+### 5.6 Ignore files and a directory viewer (ADR-21, ADR-22)
+
+**Gitignore without a regex engine.** A pattern compiles to a few tokens, and a
+backtracking matcher walks the path:
+
+```haskell
+data Tok = Lit Char | One | Star | AnyAll | Dirs | Class Bool [(Char, Char)]
+-- "*.o"    -> [Dirs, Star, Lit '.', Lit 'o']   (no slash: match at any depth)
+-- "/build" -> [Lit 'b', ...]                   (anchored)
+glob (Star : ts) s = any (glob ts) [drop n s | n <- [0 .. length (takeWhile (/= '/') s)]]
+glob (Dirs : ts) s = glob ts s || or [glob ts rest | ('/' : rest) <- tails s]
+```
+
+Each rule set remembers the directory of its file. The walk adds a directory's rules
+before listing it, and simply never enters an ignored directory. That one choice gives
+git's rule that nothing inside an ignored directory can be re-included.
+
+**A directory is just a document.** Emacs's dired shows a directory as a buffer of
+text, and that is the trick here too. A listing is a read-only `Document` whose lines are
+its entries, so `j`, `5 k`, `/name`, `g g` and the buffer commands work with no new code.
+What it adds is a keymap *layer*: in normal mode on a listing, `keymapMode` returns
+`Directory`, a binding set that inherits normal mode exactly as select mode does. It
+adds `ret` (open), `-` (up) and `g r` (refresh). The only other changes are guards that
+refuse edits and insert mode in a read-only document.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with

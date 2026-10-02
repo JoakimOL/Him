@@ -43,7 +43,7 @@ selections onto it later is harder.
 
 **ADR-2: GHC boot libraries only.**
 Allowed: `base`, `unix`, `bytestring`, `text`, `containers`, `transformers`, `directory`,
-`filepath`, `stm`, `array`. Each one is added to `package.yaml` only when a module first uses
+`filepath`, `stm`, `array`. (`filepath` is used since milestone 19.) Each one is added to `package.yaml` only when a module first uses
 it (`-Wunused-packages` enforces this).
 *Alternatives:* `vty`/`brick` (large and opinionated), `text-rope` (see ADR-3).
 
@@ -255,6 +255,46 @@ cover.**
   the rows it covers. A test renders a frame with a box, then one without, and
   compares it with a fresh render.
 
+**ADR-21: Our own gitignore matcher, applied while walking.**
+`Him.Ignore` parses `.gitignore` / `.ignore` files with git's syntax:
+- comments, `!` to re-include, and a trailing `/` for directories only;
+- a `/` at the start or in the middle anchors the pattern to the file's directory;
+- globs `*`, `?`, `[a-z]` / `[!a-z]`, and `**` (`**/x`, `x/**`, `a/**/b`).
+
+Rule sets are scoped to the directory of their file, and the last match of the most
+specific set wins. `.ignore` is read after `.gitignore` in the same directory, so it wins
+there. `Him.FileTree.listFiles` reads each directory's files as it descends, and never
+enters an ignored directory, so (as in git) nothing inside one can be re-included. It
+also applies the ignore files of the walk root's ancestors, up to the enclosing git
+repository, and `.git/info/exclude`.
+- **Differences from ripgrep/Helix:** `.gitignore` is honoured outside git
+  repositories too, and the global gitignore (`core.excludesFile`) is not read.
+- **Hidden entries** are still skipped, as Helix does by default.
+
+*Alternative:* translate patterns to a regex engine. There is none in the boot
+libraries, and a direct backtracking matcher over path strings is about 40 lines.
+
+**ADR-22: A directory is a read-only document, plus a keymap layer.**
+`:open dir` (or `him dir`, `space d`, `space D`) loads a listing, as in Emacs's dired.
+- **The document:** a `Document` whose `docKind` is `DirectoryDoc entries`. Line 0 is the
+  path, line 1 is `../`, then subdirectories (ending in `/`) and files, sorted. The
+  entries are kept in the kind, so a line maps to its entry even when a name contains
+  odd characters. Since it is an ordinary buffer, motions, counts, search and the
+  buffer commands work unchanged.
+- **The keys:** in normal mode on a listing, `keymapMode` selects the `Directory` layer,
+  which inherits normal mode like select mode does. It adds `ret` (enter a directory in
+  the same buffer, or open a file as a new buffer), `-` / `backspace` (the parent, with
+  the cursor on the directory just left) and `g r` (list again). The status line shows
+  `DIR`.
+- **Read-only:** `edit` / `editEach` and `setMode Insert` refuse in a read-only document,
+  and `:w` refuses to write a listing.
+- **Colours:** the header and directories have their own styles. The row key gained
+  the line's class (`rkClass`), so a cached row is never reused with the wrong colour.
+
+*Alternatives:* a separate directory UI component, which would have to reimplement
+movement and search. Or a real editor mode, which every `setMode Normal` would have to
+know about.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -284,6 +324,8 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Edit` | ✅ | Pure single-range edits, and `applyEdits`, which applies one to every range (ADR-18). |
 | `Him.Editor`, `Him.Mode`, `Him.View` | ✅ | Editor state (the buffer zipper, ADR-19; `InfoBox`; the open picker), modes (`Normal`, `Insert`, `Select`, `CmdLine`, `Picking`), viewport + scrolloff. |
 | `Him.Info` | ✅ | `refreshInfo`: the info box after a prefix key or on the `:` line (ADR-20). |
+| `Him.Ignore`, `Him.FileTree` | ✅ | The gitignore matcher (pure), and the ignore-aware breadth-first file walk for the picker (ADR-21). |
+| `Him.Directory`, `Him.Commands.Directory` | ✅ | Directory listings as read-only documents (`loadPath`, `loadDirectory`, `entryAt`, `selectEntry`), and their actions (ADR-22). |
 | `Him.Picker`, `Him.Commands.Picker` | ✅ | Pure picker (fuzzy matching, selection); `space f` / `space b` and the picker keys; `listFiles`. |
 | `Him.Action` | ✅ | Actions (name, group, doc, typed parameters), the registry, invocation parsing (`name arg "quoted arg"`), and binding to a runnable `Bound` (ADR-17). |
 | `Him.Command`, `Him.Keymap` | ✅ | `EditorM` and helpers for writing actions; per-mode keymap tries, generic in what they bind (`Keymap a`). |
@@ -345,6 +387,9 @@ Each milestone ends with something runnable, and with this file updated.
   `:bn`/`:bp`, `:wa`, `:wqa`, `g n`/`g p`, and `him FILE...` (ADR-19). An info box shows
   the keys after `g`/`space` and the matching `:` commands. `space f` (file picker) and
   `space b` (buffer picker) (ADR-20).
+- [x] **19. Ignore files and a directory viewer.** The file picker honours `.gitignore`
+  and `.ignore` (ADR-21). Directories open as dired-style listings: `ret`, `-`, `g r`,
+  `space d` / `space D`, `:cd`, `:pwd` (ADR-22).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -368,6 +413,7 @@ Implemented (defined in `Him.Config.Default`):
 | Normal (search) | `/` / `?` (search forward / backward, with preview), `n` / `N` (next / previous match), `*` (selection becomes the pattern) |
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
 | `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
+| Directory listings | `:o dir`, `him dir`, `space d` (the current file's directory, cursor on the file), `space D` (the working directory). In a listing: normal motions and search, `ret` (enter a directory / open a file), `-` or `backspace` (parent), `g r` (refresh). `:cd [dir]` (default: the listed directory), `:pwd`. |
 | Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker). In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
 
 Actions that take arguments, and have no default key yet: `move_char_left/right`,
@@ -436,23 +482,28 @@ numbers are provisional.*
   has to produce `Bindings` (`Map Mode [(keys, invocation)]`) and call
   `Him.Config.Default.configWith`, which reports every bad binding.
 - **Done this session:** count prefixes (`5 j`), multiple selections (milestone 17,
-  ADR-18), buffers, info menus and pickers (milestone 18, ADR-19/20).
+  ADR-18), buffers, info menus and pickers (milestone 18, ADR-19/20), ignore files and the
+  directory viewer (milestone 19, ADR-21/22).
 - **Next suggestions:**
   1. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
      matcher. `s` would get regexes for free.
   2. `S` (split the selection on a pattern) and `A-;` (flip the selections).
   3. A config file for keymaps (the parser only). The prefix titles (`cfgPrefixNames`)
      could be configurable too.
-  4. Pickers: global search (`space /`), a `:help` picker of all actions (`registryActions`
-     already lists them by group), and `.gitignore` support in the file picker.
+  4. Pickers: global search (`space /`, which can reuse `listFiles` and the block
+     search), and a `:help` picker of all actions (`registryActions` already lists them
+     by group).
+  5. Directory listings: file operations (create, rename, delete) as dired has them, and
+     an option to show or hide dotfiles.
 - **Known issues:**
   - Zero-width combining characters are treated as width 1.
   - Case-insensitive search folds ASCII letters only.
   - `s` searches from each range's start, and a range without a match can scan on to
     the next match beyond it. With many ranges and few matches, that is slow.
   - Search (`/`, `n`) moves only the primary range.
-  - The file picker does not read `.gitignore`. It skips hidden entries and
-    `dist-newstyle`, `node_modules` and `target`, and lists at most 50,000 files.
+  - The file picker skips hidden entries and lists at most 50,000 files. It does not
+    read the global gitignore (ADR-21).
+  - A directory listing does not refresh by itself; `g r` lists it again.
   - The info box and picker measure text by characters, so wide characters in file
     names can misalign the right border.
 - **Working rule:** revert temporary instrumentation by editing it out (or with
@@ -461,7 +512,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (273 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (298 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.
