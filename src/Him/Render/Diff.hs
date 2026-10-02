@@ -24,8 +24,12 @@ import Him.Terminal.Ansi
 -- with the shifted old one: only the lines that came into view (and cells
 -- that really changed) are written.
 diffFrames :: Maybe Frame -> Frame -> Builder
-diffFrames prev new = hideCursor <> body <> sgr defaultStyle <> cursor
+diffFrames prev new = hideCursor <> colors <> body <> sgr defaultStyle <> cursor
   where
+    -- The theme's default colours, first, so a cleared screen has them.
+    colors
+      | fmap frameColors prev == Just (frameColors new) = mempty
+      | otherwise = uncurry setDefaultColors (frameColors new)
     sameSize p = frameRows p == frameRows new && frameCols p == frameCols new
     rows = zip [0 ..] (toList (frameCells new))
     body = case prev of

@@ -59,7 +59,7 @@ ensureCursorVisible ed = ed {edView = scrollToCursor (rectHeight r, rectWidth r)
 -- reused (see "Him.Render.TextArea").
 render :: Theme -> Maybe Frame -> Editor -> Frame
 render theme prev ed =
-  frame {frameCursor = cursor, frameCursorShape = shape, frameScroll = Just scroll}
+  frame {frameCursor = cursor, frameCursorShape = shape, frameScroll = Just scroll, frameColors = (themeForeground theme, themeBackground theme)}
   where
     (rows, cols) = edSize ed
     Layout gutterR textR statusR cmdR = layout ed

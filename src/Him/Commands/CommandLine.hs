@@ -17,6 +17,7 @@ import Him.Commands.Lsp qualified as Lsp
 import Him.Commands.Search (cancelSearch, executeSearch, executeSelect)
 import Him.Editor (Editor (..), PromptKind (..))
 import Him.Ex (ExArgs (..), ExCommand (..), runExLine)
+import Him.Theme.Load (themeNames)
 import Him.Mode (Mode (..))
 
 actions :: [ExCommand] -> [Action]
@@ -90,6 +91,11 @@ complete exTable = do
           let (before, arg) = T.breakOnEnd " " line
           candidates <- liftIO (completePath (T.unpack arg))
           offer before candidates
+      | Just c <- find ((name `elem`) . exNames) exTable
+      , exArgs c == ThemeArgs -> do
+          let (before, arg) = T.breakOnEnd " " line
+          names <- liftIO themeNames
+          offer before [n | n <- names, arg `T.isPrefixOf` n]
     _ -> pure ()
   where
     offer _ [] = pure ()

@@ -46,15 +46,15 @@ import Him.Editor (Editor (..))
 import Him.Json hiding (path)
 import Him.Lsp.Config (ServerConfig (..), ServerTable, defaultServers)
 import Him.Mode (Mode (..))
+import Him.Paths (configPath)
 import Him.Toml (parseToml, quoteKey, quoteString)
-import System.Directory (doesFileExist, getHomeDirectory)
-import System.Environment (lookupEnv)
-import System.FilePath ((</>))
+import System.Directory (doesFileExist)
 
 data UserConfig = UserConfig
   { ucBindings :: !Bindings
   , ucScrolloff :: !(Maybe Int)
   , ucShowHidden :: !(Maybe Bool)
+  , ucTheme :: !(Maybe Text)
   , ucServers :: !(Map Text ServerOverride)
   }
   deriving stock (Eq, Show)
@@ -71,7 +71,7 @@ data ServerOverride = ServerOverride
   deriving stock (Eq, Show)
 
 emptyUserConfig :: UserConfig
-emptyUserConfig = UserConfig Map.empty Nothing Nothing Map.empty
+emptyUserConfig = UserConfig Map.empty Nothing Nothing Nothing Map.empty
 
 -- | The sections of @[keys]@, by mode.
 modeSections :: [(Text, Mode)]
@@ -84,17 +84,6 @@ modeSections =
   , ("directory", Directory)
   , ("completion", Completing)
   ]
-
--- | Where the config file is: @$HIM_CONFIG@, @$XDG_CONFIG_HOME/him/config.toml@
--- or @~/.config/him/config.toml@.
-configPath :: IO FilePath
-configPath =
-  lookupEnv "HIM_CONFIG" >>= \case
-    Just p | not (null p) -> pure p
-    _ ->
-      lookupEnv "XDG_CONFIG_HOME" >>= \case
-        Just xdg | not (null xdg) -> pure (xdg </> "him" </> "config.toml")
-        _ -> (</> ".config/him/config.toml") <$> getHomeDirectory
 
 -- | Read the config file; a missing file is an empty config.
 loadUserConfig :: FilePath -> IO (Either [Text] UserConfig)
@@ -131,7 +120,9 @@ parseUserConfig src = do
       ("scrolloff", _) -> Left ["editor.scrolloff must be a number of lines"]
       ("show-hidden-files", JBool b) -> Right (\c -> c {ucShowHidden = Just b})
       ("show-hidden-files", _) -> Left ["editor.show-hidden-files must be true or false"]
-      (k, _) -> Left ["unknown setting editor." <> k <> " (known: scrolloff, show-hidden-files)"]
+      ("theme", JString t) | not (T.null t) -> Right (\c -> c {ucTheme = Just t})
+      ("theme", _) -> Left ["editor.theme must be a theme's name in quotes, e.g. \"onedark\""]
+      (k, _) -> Left ["unknown setting editor." <> k <> " (known: scrolloff, show-hidden-files, theme)"]
     keys v = do
       modes <- table "[keys]" v
       bindings <- collect (map modeKeys modes)
@@ -223,6 +214,7 @@ defaultConfigText =
     , "[editor]"
     , "scrolloff = 3               # lines kept visible above and below the cursor"
     , "show-hidden-files = false   # dotfiles in directory listings (g . toggles)"
+    , "theme = \"default\"           # any Helix theme, or your own in themes/ next to this file (:theme)"
     ]
       <> concatMap modeBlock modeSections
       <> concatMap serverBlock (Map.toList defaultServers)

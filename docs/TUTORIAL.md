@@ -660,6 +660,47 @@ by the screen edge is drawn as a blank, so the terminal never draws half of one.
 and has four tests. The gutter width follows the line count, so `layout` depends on the
 editor.
 
+### 4.4 Themes: borrow a format, get 219 themes (ADR-33)
+
+Highlighting (5.9) produces *scopes* with Helix's names (`keyword.control.import`). So
+reading Helix's theme files, rather than inventing a format, makes every Helix theme
+work in him:
+
+```toml
+inherits = "onedark"
+"comment" = { fg = "gray", modifiers = ["italic"] }
+"ui.selection" = { bg = "#3e4452" }
+"diagnostic.error" = { underline = { color = "red", style = "curl" } }
+[palette]
+gray = "#5c6370"
+```
+
+The work splits three ways:
+- **`Him.Theme` (pure):**
+  - turns the file into a map from scope to `Style`: palette names, hex colours,
+    modifiers, underlines;
+  - merges a child theme over its parent;
+  - holds the built-in theme, written in the same format.
+- **`Him.Theme.Load` (IO):** finds the files and follows `inherits`.
+- **`Him.Render.Theme.fromScopes`:** looks up the UI styles once (`ui.statusline.insert`,
+  `ui.menu.selected`, …), falling back by prefix as Helix does. Drawing then never
+  searches the map for them.
+
+Two ideas carry most of it:
+- **Layering instead of replacing.** `patchStyle under over` takes `over`'s colours
+  where it has them and the modifiers of both. A cell's style is built up in layers:
+  text, then syntax, then the diagnostic underline, then the selection, then the
+  cursor. A selection that only sets a background keeps the syntax colour.
+- **Let the terminal paint the background.** A theme's `ui.background` is not written
+  into every cell. It becomes the terminal's default background through OSC 11:
+  `\ESC]11;rgb:28/2c/34\ESC\\`. Blank cells, cleared lines and rows scrolled in by
+  the terminal all show it for free, so none of the diff's shortcuts (7.6) change.
+
+**▶ Task 6b.** Write `parseColor :: Map Text Text -> Text -> Maybe Color`, handling
+palette names, `#rrggbb`, `#rgb` and the 16 named colours. Then map an RGB colour to
+the nearest xterm-256 colour: try the 6×6×6 cube level of each channel, and the grey
+ramp, and keep the closer one.
+
 ---
 
 ## Part 5: Undo, registers, and search
@@ -1295,8 +1336,8 @@ Each has a concrete next step.
 
 The editor is deliberately unfinished. Good next exercises, in increasing difficulty:
 
-- **A config file:** bindings are already `Map Mode [(keys, invocation)]` (3.6), so
-  parse `keys = action args` lines per mode and call `configWith`.
+- **Splits:** give each window its own view over a shared document, and turn
+  `layout` into a tree of rectangles.
 - **Highlight all matches:** a render pass over the visible rows. Remember to add the
   highlight to `RowKey`.
 - **Regex search:** write a small backtracking or Thompson-NFA engine. `Him.Search` only

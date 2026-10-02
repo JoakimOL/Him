@@ -1,22 +1,36 @@
--- | Colours and styles used by the render components.
+-- | Colours and styles used by the render components: a theme's scope
+-- styles ("Him.Theme"), with the ones the UI uses looked up once
+-- ('fromScopes') so drawing does not search the map per cell.
 module Him.Render.Theme
   ( Theme (..)
+  , fromScopes
   , defaultTheme
   , scopeStyle
   ) where
 
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.GitState (SignKind (..))
 import Him.Lsp.Protocol (Severity (..))
 import Him.Mode (Mode (..))
 import Him.Terminal.Ansi
+import Him.Theme (defaultThemeText, parseThemeFile, resolveTheme)
 
 data Theme = Theme
-  { themeText :: Style
+  { themeName :: Text
+  , themeScopes :: Map Text Style
+  -- ^ Every scope's style (Helix's names); see 'scopeStyle'.
+  , themeForeground :: Color
+  , themeBackground :: Color
+  -- ^ The terminal's default colours while him runs (@ui.text@'s
+  -- foreground, @ui.background@'s background); 'DefaultColor' keeps the
+  -- terminal's own.
+  , themeText :: Style
   , themeSelection :: Style
+  , themeSelectionPrimary :: Style
   , themeCursor :: Style
   -- ^ Secondary cursors (the primary one is the terminal cursor).
   , themeTilde :: Style
@@ -33,113 +47,101 @@ data Theme = Theme
   , themeGitSign :: SignKind -> Bool -> Style
   -- ^ Gutter signs by kind; the flag is "staged" (drawn dimmer).
   , themeDiagnostic :: Severity -> Style
-  -- ^ Gutter signs and underlines of diagnostics.
-  , themeScopes :: Map Text Style
-  -- ^ Styles of syntax scopes (Helix's names); see 'scopeStyle'.
+  -- ^ Gutter signs of diagnostics.
+  , themeDiagnosticText :: Severity -> Style
+  -- ^ Laid over the text a diagnostic covers (an underline).
   , themeDirectory :: Style
   -- ^ Directory entries in a listing.
   , themeDirectoryHeader :: Style
   , themeError :: Style
   }
 
-defaultTheme :: Theme
-defaultTheme =
-  Theme
-    { themeText = defaultStyle
-    , themeSelection = defaultStyle {styleBg = Indexed 24}
-    , themeCursor = defaultStyle {styleReverse = True}
-    , themeTilde = defaultStyle {styleFg = Indexed 240}
-    , themeGutter = defaultStyle {styleFg = Indexed 240}
-    , themeGutterCurrent = defaultStyle {styleFg = Indexed 250}
-    , themeStatusLine = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 252}
-    , themeMode = \m -> defaultStyle {styleBold = True, styleFg = Indexed 235, styleBg = modeColor m}
-    , themeInfo = defaultStyle
-    , themePopup = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 252}
-    , themePopupKey = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 110, styleBold = True}
-    , themePopupSelected = defaultStyle {styleBg = Indexed 24, styleFg = Indexed 255}
-    , themePopupDetail = defaultStyle {styleFg = Indexed 245}
-    , themeGitSign = \kind staged -> defaultStyle {styleFg = gitColor kind staged}
-    , themeDiagnostic = \sev -> defaultStyle {styleFg = Indexed (diagColor sev)}
-    , themeScopes = defaultScopes
-    , themeDirectory = defaultStyle {styleFg = Indexed 110, styleBold = True}
-    , themeDirectoryHeader = defaultStyle {styleFg = Indexed 180, styleBold = True}
-    , themeError = defaultStyle {styleFg = Ansi 9}
-    }
-  where
-    diagColor = \case
-      SevError -> 203
-      SevWarning -> 179
-      SevInfo -> 110
-      SevHint -> 245
-    gitColor kind staged = Indexed $ case (kind, staged) of
-      (SignAdded, False) -> 114
-      (SignChanged, False) -> 179
-      (SignRemoved, False) -> 167
-      (SignAdded, True) -> 65
-      (SignChanged, True) -> 101
-      (SignRemoved, True) -> 95
-    modeColor = \case
-      Normal -> Indexed 110
-      Insert -> Indexed 150
-      Select -> Indexed 180
-      CmdLine -> Indexed 176
-      Picking -> Indexed 176
-      Directory -> Indexed 110
-      Completing -> Indexed 150
-
 -- | The style for a scope, by its longest known prefix:
 -- @keyword.control.import@, then @keyword.control@, then @keyword@.
 scopeStyle :: Theme -> Text -> Maybe Style
-scopeStyle theme = go
+scopeStyle theme = lookupScope (themeScopes theme)
+
+lookupScope :: Map Text Style -> Text -> Maybe Style
+lookupScope scopes = go
   where
-    go scope = case Map.lookup scope (themeScopes theme) of
+    go scope = case Map.lookup scope scopes of
       Just st -> Just st
       Nothing
         | T.any (== '.') scope -> go (T.dropEnd 1 (T.dropWhileEnd (/= '.') scope))
         | otherwise -> Nothing
 
-defaultScopes :: Map Text Style
-defaultScopes =
-  Map.fromList
-    [ ("keyword", fg 176)
-    , ("keyword.control", fg 176)
-    , ("keyword.operator", fg 110)
-    , ("keyword.directive", fg 174)
-    , ("function", fg 110)
-    , ("function.builtin", fg 110)
-    , ("function.macro", fg 174)
-    , ("type", fg 179)
-    , ("type.builtin", fg 179)
-    , ("constructor", fg 179)
-    , ("string", fg 114)
-    , ("string.special", fg 173)
-    , ("string.regexp", fg 173)
-    , ("comment", (fg 244) {styleItalic = True})
-    , ("constant", fg 209)
-    , ("constant.numeric", fg 209)
-    , ("constant.character", fg 114)
-    , ("constant.character.escape", fg 173)
-    , ("variable.builtin", fg 174)
-    , ("variable.parameter", fg 252)
-    , ("variable.other.member", fg 252)
-    , ("operator", fg 110)
-    , ("punctuation", fg 248)
-    , ("attribute", fg 179)
-    , ("namespace", fg 180)
-    , ("module", fg 180)
-    , ("label", fg 176)
-    , ("tag", fg 174)
-    , ("special", fg 173)
-    , ("markup.heading", (fg 110) {styleBold = True})
-    , ("markup.bold", defaultStyle {styleBold = True})
-    , ("markup.italic", defaultStyle {styleItalic = True})
-    , ("markup.link", (fg 110) {styleUnderline = True})
-    , ("markup.raw", fg 114)
-    , ("markup.list", fg 176)
-    , ("markup.quote", fg 244)
-    , ("diff.plus", fg 114)
-    , ("diff.minus", fg 167)
-    , ("diff.delta", fg 179)
-    ]
+-- | A theme from its scope styles. The UI scopes are Helix's (@ui.text@,
+-- @ui.statusline.insert@, @ui.menu.selected@, @diff.plus@, …), plus a few
+-- of him's own that fall back to them (@ui.statusline.command@,
+-- @ui.statusline.picker@, @ui.popup.key@, @diff.plus.staged@).
+fromScopes :: Text -> Map Text Style -> Theme
+fromScopes name scopes =
+  Theme
+    { themeName = name
+    , themeScopes = scopes
+    , themeForeground = styleFg text
+    , themeBackground = styleBg (get "ui.background")
+    , themeText = text
+    , themeSelection = get "ui.selection"
+    , themeSelectionPrimary = get "ui.selection.primary"
+    , themeCursor = fromMaybe defaultStyle {styleReverse = True} (lookupScope scopes "ui.cursor")
+    , themeTilde = fromMaybe (get "ui.linenr") (exact "ui.virtual")
+    , themeGutter = get "ui.gutter" `patchStyle` get "ui.linenr"
+    , themeGutterCurrent = get "ui.gutter.selected" `patchStyle` get "ui.linenr.selected"
+    , themeStatusLine = statusLine
+    , themeMode = modeStyle
+    , themeInfo = text
+    , themePopup = popup
+    , themePopupKey = popup `patchStyle` fromMaybe (foreground (get "ui.text.focus")) {styleBold = True} (exact "ui.popup.key")
+    , themePopupSelected = popup `patchStyle` get "ui.menu.selected"
+    , themePopupDetail = foreground (fromMaybe (get "comment") (exact "ui.text.inactive"))
+    , themeGitSign = gitSign
+    , themeDiagnostic = get . severityName
+    , themeDiagnosticText = diagnosticText
+    , themeDirectory = fromMaybe text {styleBold = True} (exact "ui.text.directory")
+    , themeDirectoryHeader = fromMaybe text {styleBold = True} (exact "ui.text.focus")
+    , themeError = get "error"
+    }
   where
-    fg n = defaultStyle {styleFg = Indexed n}
+    get = fromMaybe defaultStyle . lookupScope scopes
+    exact = (`Map.lookup` scopes)
+    text = get "ui.text"
+    -- Only the colour of the text and its modifiers, not a background.
+    foreground st = st {styleBg = DefaultColor}
+    popup = text `patchStyle` get "ui.popup"
+    statusLine = get "ui.statusline"
+    modeStyle m =
+      let (own, base) = case m of
+            Normal -> ("normal", "normal")
+            Insert -> ("insert", "insert")
+            Select -> ("select", "select")
+            CmdLine -> ("command", "normal")
+            Picking -> ("picker", "normal")
+            Directory -> ("directory", "normal")
+            Completing -> ("completion", "insert")
+       in statusLine `patchStyle` fromMaybe (get ("ui.statusline." <> base)) (exact ("ui.statusline." <> own))
+    gitSign kind staged =
+      let scope = case kind of
+            SignAdded -> "diff.plus"
+            SignChanged -> "diff.delta"
+            SignRemoved -> "diff.minus"
+          sign = fromMaybe (get scope) (exact (scope <> ".gutter"))
+       in if staged then fromMaybe sign {styleDim = True} (exact (scope <> ".staged")) else sign
+    severityName = \case
+      SevError -> "error"
+      SevWarning -> "warning"
+      SevInfo -> "info"
+      SevHint -> "hint"
+    -- A diagnostic without an underline in the theme still gets one, in
+    -- its gutter colour.
+    diagnosticText sev =
+      let st = get ("diagnostic." <> severityName sev)
+       in if styleUnderline st == NoUnderline
+            then st {styleUnderline = UnderlineLine, styleUnderlineColor = styleFg (get (severityName sev))}
+            else st
+
+-- | The built-in theme ('defaultThemeText').
+defaultTheme :: Theme
+defaultTheme = case parseThemeFile defaultThemeText of
+  Right tf -> fromScopes "default" (fst (resolveTheme tf))
+  Left e -> error ("the built-in theme does not parse: " <> T.unpack e)

@@ -48,6 +48,8 @@ data Effect
     ReloadConfig
   | -- | Open the config file (with the defaults in it if it does not exist).
     OpenConfig
+  | -- | Use the theme of this name; 'Nothing' shows which one is used.
+    ChangeTheme !(Maybe Text)
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were

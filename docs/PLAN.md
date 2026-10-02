@@ -548,7 +548,7 @@ keys (`ISIG`), so Ctrl-Z arrives as a key. It is bound to `suspend`, which queue
 **ADR-32: The config file is TOML, layered on the defaults.**
 `~/.config/him/config.toml` (or `$XDG_CONFIG_HOME/him/config.toml`, or `$HIM_CONFIG`)
 has three sections:
-- `[editor]`: `scrolloff` and `show-hidden-files`.
+- `[editor]`: `scrolloff`, `show-hidden-files` and `theme` (ADR-33).
 - `[keys.<mode>]`: `"keys" = "action invocation"`. The modes are normal, select,
   insert, command, picker, directory and completion.
 - `[language-server.<language>]`: `command`, `args`, `roots`, `language-id` and
@@ -575,6 +575,62 @@ How it is read:
 
 *Alternative:* a custom `keys = action` line format. It is simpler to parse, but it
 leaves no room to grow and is unfamiliar.
+
+**ADR-33: Themes are Helix theme files.**
+`[editor] theme = "onedark"` in the config, or `:theme <name>` while running (`tab`
+completes the name; `:theme` alone names the current one). Why Helix's format:
+- **The scope names were already Helix's** (ADR-26), so its themes colour him's
+  highlighting as they are. All 219 installed themes load without a warning (checked
+  with a throwaway script).
+- **Users can switch editors** without redoing their colours, and write their own the
+  same way.
+
+How it works:
+- **Lookup:** a theme is `<name>.toml` in `themes/` next to the config file, then in each
+  runtime directory's `themes/` (`Him.Paths.themeDirs`), and the first match wins.
+  `default` is built in (`Him.Theme.defaultThemeText`, written in the same format), but
+  a file of that name replaces it. A theme that inherits its own name (a user's tweak
+  of a Helix theme) gets the next file of that name.
+- **Format (`Him.Theme`, pure):**
+  - `inherits`: the child's entries replace the parent's whole, palettes merge by name,
+    and the merged palette colours both, as Helix does.
+  - Colours: palette names (they may chain), `#rrggbb`, `#rgb`, `"110"` (a palette
+    index), the 16 terminal colour names, `default`.
+  - Modifiers: bold, dim, italic, underlined, reversed, crossed_out.
+  - Underlines: `{ color, style = line|curl|double_line|dotted|dashed }`.
+  - Anything not understood is skipped and logged, not fatal (rainbow brackets, blink).
+- **Reader:** `Him.Toml` gained inline tables (`{ fg = "red" }`, also spanning lines, as
+  some themes write them). It now skips `#` inside literal strings when joining lines.
+- **Styles are layered (`patchStyle`, Helix's patch):** text, then syntax, then a
+  diagnostic underline, then the selection, then a cursor. A selection that only sets
+  a background keeps the text's colour. The primary selection uses
+  `ui.selection.primary`.
+- **What `Style` holds:** dim, strikethrough, an underline kind and an underline colour
+  (SGR `4:3` and `58;2;…`). `PackedStyle` is now a `Word64` plus a `Word32` (the
+  underline colour), still unpacked into each cell.
+- **UI from scopes (`Him.Render.Theme.fromScopes`):** the render components keep
+  their record fields, filled once per theme from Helix's UI scopes:
+  - `ui.text`, `ui.selection(.primary)`, `ui.cursor`, `ui.linenr(.selected)`,
+    `ui.gutter`, `ui.virtual`;
+  - `ui.statusline` and `ui.statusline.normal|insert|select`;
+  - `ui.popup`, `ui.menu.selected`, `ui.text.inactive|focus|directory`;
+  - `error|warning|info|hint`, `diagnostic.*`, `diff.plus|minus|delta`.
+  him's own scopes fall back to those: `ui.statusline.command` and `.picker` (to
+  `.normal`), `ui.popup.key`, and `diff.*.staged` (to the same colour, dimmed). Lookups
+  fall back by prefix, as Helix's do.
+- **Background:** `ui.background` (with `ui.text`'s foreground) becomes the
+  terminal's *default* colours through OSC 11/10, carried in `frameColors` and sent
+  when they change. Cleared areas, scrolled-in rows and blank cells then show the theme
+  without the diff ever writing a background. Leaving or suspending resets them (OSC
+  111/110). The alternative, painting every cell, would defeat the blank-tail and
+  scroll-region optimizations of ADR-15.
+- **Older terminals:** without `COLORTERM=truecolor|24bit`, 24-bit colours are mapped
+  to the nearest of the 256-colour palette (the cube or the grey ramp) when the theme
+  is loaded.
+- **Switching:** the theme lives in the main loop beside the config (an `IORef`).
+  `ChangeTheme` is an effect the loop carries out, like `ReloadConfig`. The loop's
+  effects now run in order with one `foldM`. A switch repaints everything, because
+  cached rows hold the old colours. `:config-reload` loads the theme again too.
 
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
@@ -630,7 +686,9 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Config` | ✅ | `Config { cfgActions, cfgKeymaps, cfgFallback }`, held by the main loop rather than the `Editor`, which avoids a module cycle. `Bindings`, `overrideBindings` and `buildConfig`, which validates every binding. |
 | `Him.Commands.*` | ✅ | Action lists: `Motion`, `Edit` (modes and text), `Search`, `CommandLine`; `File` holds the ex commands. |
 | `Him.TextWidth` | ✅ | Tab expansion (width 4), `charWidth` (a compact East-Asian-wide/emoji table; control chars are 2 wide and shown as `^X`), char↔display-column mapping. |
-| `Him.Toml`, `Him.UserConfig` | ✅ | The TOML subset reader; the user's config file: checking, applying, the dumped defaults, the path (ADR-32). |
+| `Him.Toml`, `Him.UserConfig` | ✅ | The TOML subset reader; the user's config file: checking, applying, the dumped defaults (ADR-32). |
+| `Him.Paths` | ✅ | Where things are: the config file, the runtime directories, the theme directories. |
+| `Him.Theme`, `Him.Theme.Load`, `Him.Render.Theme` | ✅ | Helix theme files: parsing, colours, `inherits`, the built-in theme, 256-colour fallback (pure); finding and loading them; the render-side `Theme` built from scopes (ADR-33). |
 | `Him.Config.Default` | ✅ | `allActions`, `defaultBindings`, `defaultConfig`, and `configWith` (the defaults with user bindings on top). **This is where bindings are added.** |
 
 ## 5. Development goals / milestones
@@ -709,6 +767,9 @@ Each milestone ends with something runnable, and with this file updated.
   undoable change, keeping the cursor; modified buffers are refused unless forced.
 - [x] **29. Config file.** `config.toml` with keys, editor settings and language servers;
   `him --dump-default-config`, `:config-open`, `:config-reload` (ADR-32).
+- [x] **30. Themes.** Helix theme files (`[editor] theme`, `:theme`), styles layered
+  as in Helix, underline kinds and colours, the theme's background through OSC 11, and
+  a 256-colour fallback (ADR-33).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -731,7 +792,7 @@ Implemented (defined in `Him.Config.Default`):
 | Normal (selections) | `%` (select all), `s` (select matches in the selection, with preview), `C` (copy the selection onto the next line), `,` (keep the primary), `A-,` (remove the primary), `(` / `)` (rotate the primary), `A-s` (split into lines). The status line shows `i/n sels`. |
 | Normal (search) | `/` / `?` (search forward / backward, with preview), `n` / `N` (next / previous match), `*` (selection becomes the pattern) |
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
-| `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:reload` / `:rl` (refuses unsaved changes; `:reload!` discards them; undoable), `:reload-all` / `:rla` (skips modified buffers), `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
+| `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:reload` / `:rl` (refuses unsaved changes; `:reload!` discards them; undoable), `:reload-all` / `:rla` (skips modified buffers), `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`, `:theme [name]`, `:config-open`, `:config-reload`. `tab` completes names, paths and theme names. |
 | Directory listings | `:o dir`, `him dir`, `space d` (the current file's directory, cursor on the file), `space D` (the working directory). In a listing: normal motions and search, `ret` (enter a directory / open a file), `-` or `backspace` (parent), `g r` (refresh), `a` (new file, or directory with a trailing `/`), `+` (new directory), `r` (rename/move), `d` (delete the selected entries, asks `y`), `g .` (show/hide dotfiles). `:cd [dir]` (default: the listed directory), `:pwd`. |
 | Language server | Diagnostics in the gutter, underlined, and the cursor line's message at the bottom; `] d` / `[ d` next/previous, `space x` list. `space k` hover, `g d` definition, `g y` type definition, `g i` implementation, `g r` references, `space s` symbols, `space S` workspace symbols, `space r` rename, `space a` code actions, `:format`. Insert mode: completion opens by itself (or `C-x`); `tab`/`C-n`/`down` and `S-tab`/`C-p`/`up` select, `ret` accepts, `esc` closes; signature help appears after `(` and `,`. `:lsp-start`, `:lsp-stop`, `:lsp-restart`, `:lsp-info`. Servers: hls, rust-analyzer, clangd, typescript-language-server, pylsp, gopls (`Him.Lsp.Config`). |
 | Git | Gutter signs (green added, yellow changed, red removed; dimmer when staged). `] g` / `[ g` next/previous change; `space g s` / `space g u` stage/unstage the selected lines, `space g S` / `space g U` the whole file, `space g r` reset the selected lines to the index. |
@@ -774,9 +835,43 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-02. The action layer (ADR-17, milestone 16) is done. Benchmarking
+*Last updated 2026-10-02. Themes (milestone 30, ADR-33) are done. Benchmarking
 is **on hold**: the user was using the machine during the runs, so this session's
 numbers are provisional.*
+
+- **Queue agreed with the user (2026-10-02), in this order:**
+  1. [x] Theming (ADR-33).
+  2. [ ] **Expose user-facing settings** in `[editor]` (from the survey of hard-coded
+     values): tab width and spaces-vs-tabs (`Him.TextWidth.tabWidth`, `tab` in insert
+     mode, the `tabSize` sent with `:format`); line numbers absolute/relative/off
+     (`Render.Gutter`); cursor shape per mode (`Render.render`); auto-completion
+     on/off and minimum word length (`Commands.Lsp`, now `>= 2`); signature help
+     on/off; hover lines (30); file picker hidden files, symlinks, ignore files and file
+     limit (`FileTree`, `Runtime.maxFiles`); preview on/off, minimum width (60) and size
+     limit (20 MB); smart case and wrap-around for search; the escape timeout (30 ms);
+     undo levels (1000); gutter glyphs; a `[language.<name>]` table (extensions,
+     comment token, grammar); the LSP start timeout (60 s). Internal tuning constants
+     (`maxBatch`, `chunkSize`, `mergeGap`, `syncLimit`, `matchLimit`, `maxEdits`,
+     scan batching, `highlightMargin`) stay constants, possibly gathered in one module
+     with their reasons.
+  3. [ ] **Modularize for readability:**
+     - split `Commands.Lsp` (796 lines) into attach/sync, navigation, edits,
+       completion and `:lsp-*` commands;
+     - split `App` into a frontend-free session (`handleEvent`, effects, housekeeping,
+       counts) and the terminal loop (also the first step towards a GUI);
+     - move the buffer zipper out of `Editor`, and `previewFor` next to the picker;
+     - add one `replaceBuffer` helper for the four hand-made undoable replacements
+       (`Command.editAll`, Git `replaceLines`, Lsp `applyToDocument`, File `reloaded`);
+     - give each subsystem its own job runners and result handlers instead of one big
+       `Runtime.runJob`;
+     - rename `Him.Command` → `Him.EditorM` and `Him.Commands.*` → `Him.Actions.*`;
+     - split `test/Spec.hs` into `test/Test/*`.
+  4. [ ] **Splits (windows)**, with Helix's keys: `C-w` / `space w` then `v`/`s` (split
+     vertically/horizontally), `h j k l` / `C-h …` (focus), `w` (next), `q` (close), `o`
+     (only), `H J K L` (swap); `:vsplit`/`:hsplit` (`:vs`, `:hs`) with an optional file.
+     No Vim tabs: the buffer list stays as it is. Splits will need a view per window
+     (`edView` becomes per window, sharing documents), the layout to become a tree of
+     rects, and rendering per window (gutter, text area, a status line each).
 
 - **Benchmarking on hold. Resume here when the machine is idle:**
   1. Run the full suite again: `python3 bench/bench.py --runs 5`. Then add a dated results
@@ -868,7 +963,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (470 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (481 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

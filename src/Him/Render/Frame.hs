@@ -23,7 +23,7 @@ import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Syntax.Span (LineSpan)
-import Him.Terminal.Ansi (CursorShape (..), PackedStyle, Style, packStyle, packedDefault)
+import Him.Terminal.Ansi (Color (..), CursorShape (..), PackedStyle, Style, packStyle, packedDefault)
 
 data Cell = Cell
   { cellChar :: {-# UNPACK #-} !Char
@@ -46,7 +46,8 @@ continuation = '\0'
 data RowKey = RowKey
   { rkLine :: !Int
   , rkText :: !Text
-  , rkSpans :: ![(Int, Int)]
+  , rkSpans :: ![(Int, Int, Bool)]
+  -- ^ Selected columns, and whether the range is the primary one.
   , rkCursors :: ![Int]
   , rkLeft :: !Int
   , rkCol :: !Int
@@ -80,6 +81,9 @@ data Frame = Frame
   , frameRowKeys :: !(IntMap RowKey)
   -- ^ Keys of the text-area rows, by screen row.
   , frameScroll :: !(Maybe ScrollInfo)
+  , frameColors :: !(Color, Color)
+  -- ^ The terminal's default foreground and background meanwhile (the
+  -- theme's); cells in the default style show them.
   }
   deriving stock (Eq, Show)
 
@@ -94,7 +98,7 @@ data Rect = Rect
 
 blankFrame :: Int -> Int -> Frame
 blankFrame rows cols =
-  Frame rows cols (Seq.replicate rows (Seq.replicate cols blankCell)) Nothing CursorBlock IntMap.empty Nothing
+  Frame rows cols (Seq.replicate rows (Seq.replicate cols blankCell)) Nothing CursorBlock IntMap.empty Nothing (DefaultColor, DefaultColor)
 
 -- | Copy @width@ cells at column @col@ from row @srcRow@ of another frame
 -- (of the same size) to row @row@: one slice and one splice.

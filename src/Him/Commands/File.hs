@@ -76,6 +76,10 @@ exCommands =
   , ExCommand ["reload-all", "rla"] "Load every unmodified buffer again from disk" NoArgs $ \_ -> reloadAll
   , ExCommand ["config-open"] "Open the config file (with the defaults if it does not exist yet)" NoArgs $ \_ -> request OpenConfig
   , ExCommand ["config-reload"] "Read the config file again and apply it" NoArgs $ \_ -> request ReloadConfig
+  , ExCommand ["theme"] "Use a theme (Helix's, or one in themes/ next to the config file); without a name, show the current one" ThemeArgs $ \case
+      [] -> request (ChangeTheme Nothing)
+      [name] -> request (ChangeTheme (Just name))
+      _ -> failWith "usage: :theme [name]"
   , ExCommand ["buffer-next", "bn", "bnext"] "Go to the next buffer" NoArgs $ \_ -> modify' (switchBuffer 1)
   , ExCommand ["buffer-previous", "bp", "bprev"] "Go to the previous buffer" NoArgs $ \_ -> modify' (switchBuffer (-1))
   ]

@@ -7,7 +7,7 @@ module Him.App
 
 import Control.Concurrent.STM (TChan, atomically, newTChanIO, readTChan, tryReadTChan, writeTChan)
 import Control.Exception (SomeException, try)
-import Control.Monad (unless, when)
+import Control.Monad (foldM, unless, when)
 import Control.Monad.Trans.State.Strict (execStateT, get, gets, modify')
 import Data.Map.Strict qualified as Map
 import Data.Char (digitToInt, isDigit)
@@ -32,7 +32,7 @@ import Him.Commands.Picker qualified as Picker
 import Him.Commands.Lsp qualified as Lsp
 import Him.Commands.Syntax qualified as Syntax
 import Him.Info (refreshInfo)
-import Him.UserConfig (UserConfig, applyEditorOptions, applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
+import Him.UserConfig (UserConfig (..), applyEditorOptions, applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Control.Monad.IO.Class (liftIO)
 import System.Directory (doesFileExist)
@@ -50,7 +50,9 @@ import Him.Log (logMsg)
 import Him.Render (ensureCursorVisible, render)
 import Him.Render.Diff (diffFrames)
 import Him.Render.Frame (Frame)
-import Him.Render.Theme (defaultTheme)
+import Him.Render.Theme (Theme (..), defaultTheme)
+import Him.Theme.Load (hasTrueColor, loadTheme)
+import Control.Applicative ((<|>))
 import Him.Terminal.Input (startInputReader)
 import Him.Terminal.Output (writeOutput)
 import Him.Terminal.Raw (withRawTerminal)
@@ -62,6 +64,8 @@ run :: [FilePath] -> IO ()
 run files = do
   -- The user's config; a broken one starts the defaults and says why.
   (userConfig, config, problem) <- loadConfig
+  trueColor <- hasTrueColor
+  (theme, themeProblem) <- either (\e -> (defaultTheme, Just e)) (\t -> (t, Nothing)) <$> themeOf trueColor userConfig
   -- Load before entering raw mode, so errors print normally.
   docs <- traverse (\path -> loadPath False path >>= either (die . T.unpack) pure) files
   logMsg ("starting, files = " <> show files)
@@ -73,10 +77,11 @@ run files = do
     runtime <- newRuntime (cfgSyntaxProviders config) (cfgServers config) (atomically . writeTChan events)
     -- Start what the first document needs (its git state) before any key.
     let opened = applyEditorOptions userConfig (openAll size docs)
-    start <- execStateT housekeeping opened {edStatus = Status Error <$> problem}
+    start <- execStateT housekeeping opened {edStatus = Status Error <$> (problem <|> themeProblem)}
     mapM_ (Runtime.perform runtime) (edEffects start)
     configRef <- newIORef config
-    eventLoop configRef runtime suspend events start {edEffects = []}
+    themeRef <- newIORef theme
+    eventLoop (Session configRef themeRef trueColor) runtime suspend events start {edEffects = []}
     Runtime.shutdown runtime
 
 -- | The config: the user's file on top of the defaults. On a problem, the
@@ -99,6 +104,24 @@ loadConfig = do
           more = if length errs > 1 then " (and " <> T.pack (show (length errs - 1)) <> " more)" else ""
       pure (emptyUserConfig, defaults, Just ("config: " <> first <> more <> "; using the defaults (:config-open)"))
 
+-- | The theme a config names (@[editor] theme@), or the built-in one.
+-- Warnings about parts of the theme that were skipped are logged.
+themeOf :: Bool -> UserConfig -> IO (Either T.Text Theme)
+themeOf trueColor uc = loadNamedTheme trueColor (fromMaybe "default" (ucTheme uc))
+
+loadNamedTheme :: Bool -> T.Text -> IO (Either T.Text Theme)
+loadNamedTheme trueColor name =
+  loadTheme trueColor name >>= \case
+    Left e -> pure (Left ("theme: " <> e))
+    Right (theme, warnings) -> do
+      mapM_ (\w -> logMsg ("theme " <> T.unpack name <> ": " <> T.unpack w)) warnings
+      pure (Right theme)
+
+-- | What the loop keeps besides the editor: the config and the theme
+-- (both replaced by :config-reload and :theme), and whether the terminal
+-- shows 24-bit colour.
+data Session = Session (IORef Config) (IORef Theme) Bool
+
 -- | An editor showing the first document, with the others open behind it.
 openAll :: (Int, Int) -> [Document] -> Editor
 openAll size docs = case docs of
@@ -111,18 +134,19 @@ openAll size docs = case docs of
 maxBatch :: Int
 maxBatch = 512
 
-eventLoop :: IORef Config -> Runtime -> IO () -> TChan Event -> Editor -> IO ()
-eventLoop configRef runtime suspend events = go Nothing
+eventLoop :: Session -> Runtime -> IO () -> TChan Event -> Editor -> IO ()
+eventLoop (Session configRef themeRef trueColor) runtime suspend events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
       -- Once per batch: hand the language server the text as it is now.
       flushed <- execStateT Lsp.lspFlush ed0
       mapM_ (Runtime.perform runtime) (edEffects flushed)
+      theme <- readIORef themeRef
       -- After a suspend the terminal was cleared: draw everything.
       let ed = ensureCursorVisible (refreshSearchPreview flushed {edEffects = [], edRepaint = False})
           previous = if edRepaint flushed then Nothing else prev
-          frame = render defaultTheme previous ed
+          frame = render theme previous ed
       writeOutput (diffFrames previous frame)
       next <- atomically (readTChan events) >>= batch maxBatch ed
       unless (edQuit next) (go (Just frame) next)
@@ -137,7 +161,35 @@ eventLoop configRef runtime suspend events = go Nothing
         Nothing -> do
           writeIORef configRef config
           Runtime.setServerTable runtime (cfgServers config)
-          pure (applyEditorOptions uc ed) {edStatus = Just (Status Info "config reloaded")}
+          -- The theme too (its file may have changed); everything is
+          -- drawn again in its colours.
+          themed <-
+            themeOf trueColor uc >>= \case
+              Left e -> pure (Just (Status Error e))
+              Right theme -> Nothing <$ writeIORef themeRef theme
+          pure (applyEditorOptions uc ed) {edStatus = Just (fromMaybe (Status Info "config reloaded") themed), edRepaint = True}
+
+    loopEffect ed = \case
+      ReloadConfig -> reloadConfig ed
+      ChangeTheme t -> changeTheme ed t
+      Suspend -> do
+        suspend
+        -- The window may have changed meanwhile.
+        size <- fromMaybe (edSize ed) <$> getWindowSize
+        pure ed {edRepaint = True, edSize = size}
+      _ -> pure ed
+
+    -- :theme: switch, or say which theme is used.
+    changeTheme ed = \case
+      Nothing -> do
+        theme <- readIORef themeRef
+        pure ed {edStatus = Just (Status Info ("theme: " <> themeName theme))}
+      Just name ->
+        loadNamedTheme trueColor name >>= \case
+          Left e -> pure ed {edStatus = Just (Status Error e)}
+          Right theme -> do
+            writeIORef themeRef theme
+            pure ed {edStatus = Just (Status Info ("theme: " <> name)), edRepaint = True}
 
     batch :: Int -> Editor -> Event -> IO Editor
     batch n ed ev = do
@@ -157,15 +209,8 @@ eventLoop configRef runtime suspend events = go Nothing
         Right ed' -> do
           -- Start or cancel the background jobs the event asked for.
           mapM_ (Runtime.perform runtime) (edEffects ed')
-          if ReloadConfig `elem` edEffects ed'
-            then reloadConfig ed' {edEffects = filter (/= ReloadConfig) (edEffects ed')}
-            else if Suspend `elem` edEffects ed'
-            then do
-              suspend
-              -- The window may have changed meanwhile.
-              size <- fromMaybe (edSize ed') <$> getWindowSize
-              pure ed' {edEffects = [], edRepaint = True, edSize = size}
-            else pure ed' {edEffects = []}
+          -- Then the effects only the loop can carry out, in order.
+          foldM loopEffect ed' {edEffects = []} (edEffects ed')
         Left e -> do
           logMsg ("command failed: " <> show (e :: SomeException))
           execStateT (failWith ("internal error: " <> T.pack (show e))) ed
@@ -269,6 +314,7 @@ runEffects config = go (8 :: Int)
       LspStop _ -> pure ()
       Suspend -> pure ()
       ReloadConfig -> pure ()
+      ChangeTheme _ -> pure ()
       OpenConfig -> do
         path <- liftIO configPath
         exists <- liftIO (doesFileExist path)

@@ -6,7 +6,6 @@ module Him.Render.TextArea
   ) where
 
 import Data.IntMap.Strict qualified as IntMap
-import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Him.Buffer (lineAt, lineCount)
 import Him.Document (DirEntry (..), DocKind (..), Document (..))
@@ -19,7 +18,7 @@ import Him.Render.Frame
 import Him.Render.Theme
 import Him.Lsp.Protocol (Severity (..))
 import Him.Lsp.State (ShownDiagnostic (..), shownDiagnostics)
-import Him.Terminal.Ansi (Style (..), packStyle, unpackStyle)
+import Him.Terminal.Ansi (packStyle, patchStyle, unpackStyle)
 import Him.Selection
 import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
 import Him.View (View (..))
@@ -48,7 +47,7 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
     -- may be thousands of ranges after @% s@).
     bottom = top + rectHeight rect
     onScreen = [r | r <- ranges sel, posLine (rangeEnd r) >= top, posLine (rangeStart r) < bottom]
-    shown = [(rangeStart r, rangeEnd r) | r <- onScreen, edMode ed /= Insert || not (isCollapsed r)]
+    shown = [(rangeStart r, rangeEnd r, r == prim) | r <- onScreen, edMode ed /= Insert || not (isCollapsed r)]
     secondaryHeads = [rangeHead r | r <- onScreen, r /= prim]
     -- Packed once per frame, not per cell.
     textStyle = packStyle (themeText theme)
@@ -69,8 +68,9 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
       SevWarning -> 1
       SevInfo -> 2
       SevHint -> 3 :: Int
-    cursorStyle = packStyle (themeCursor theme)
-    selectionStyle = packStyle (themeSelection theme)
+    -- Styles are laid over each other (Helix's patching): syntax over the
+    -- text, then a diagnostic's underline, the selection, a cursor.
+    over st = packStyle . (`patchStyle` st) . unpackStyle
 
     drawRow f r
       | line >= lineCount buf = putText screenRow (rectCol rect) (themeTilde theme) "~" f
@@ -81,19 +81,19 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
       where
         key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls syntax [(a, b, sevRank sev) | (a, b, sev) <- underlines]
         underlines = IntMap.findWithDefault [] line diagnosticsByLine
-        -- Diagnostics are underlined, in their severity's colour.
+        -- Diagnostics are underlined (as the theme says).
         underlineAt i = case [sev | (a, b, sev) <- underlines, a <= i, i < b] of
           sev : _ -> Just sev
           [] -> Nothing
         syntax = IntMap.findWithDefault [] line (siSpans (docSyntax doc))
         -- The syntax style of each highlighted span, under the selection.
-        syntaxStyles = [(lsStart sp, lsEnd sp, packStyle st) | sp <- syntax, Just st <- [scopeStyle theme (lsScope sp)]]
+        syntaxStyles = [(lsStart sp, lsEnd sp, over st base) | sp <- syntax, Just st <- [scopeStyle theme (lsScope sp)]]
         syntaxAt i = case [st | (a, b, st) <- syntaxStyles, a <= i, i < b] of
           st : _ -> st
           [] -> base
         baseAt i = case underlineAt i of
           Nothing -> syntaxAt i
-          Just sev -> packStyle ((unpackStyle (syntaxAt i)) {styleUnderline = True, styleFg = styleFg (themeDiagnostic theme sev)})
+          Just sev -> over (themeDiagnosticText theme sev) (syntaxAt i)
         cls = lineClass line
         base = case cls of
           1 -> headerStyle
@@ -106,31 +106,33 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
         len = T.length text
         -- Selected column intervals and secondary cursors on this line,
         -- computed once per row rather than per character.
-        spans = [(colOn s0 0, colOn e0 len) | (s0, e0) <- shown, posLine s0 <= line, line <= posLine e0]
+        spans = [(colOn s0 0, colOn e0 len, isPrim) | (s0, e0, isPrim) <- shown, posLine s0 <= line, line <= posLine e0]
         colOn (Pos l c) dflt = if l == line then c else dflt
         cursors = [c | Pos l c <- secondaryHeads, l == line]
         styleAt i
-          | i `elem` cursors = Just cursorStyle
-          | any (\(a, b) -> a <= i && i <= b) spans = Just selectionStyle
+          | i `elem` cursors = Just (themeCursor theme)
+          | (_, _, isPrim) : _ <- filter (\(a, b, _) -> a <= i && i <= b) spans =
+              Just (if isPrim then themeSelectionPrimary theme else themeSelection theme)
           | otherwise = Nothing
+        styled i = maybe (baseAt i) (`over` baseAt i) (styleAt i)
         -- The cells of the whole line from display column 0, then the part
         -- inside the horizontal scroll window.
         -- Fast path: printable ASCII is one cell per character (no tabs,
         -- wide or control characters), so no layout is needed.
         plain = T.all (\ch -> ch >= ' ' && ch < '\DEL') text
         lineCells
-          | plain = zipWith (\i ch -> Cell ch (fromMaybe (baseAt i) (styleAt i))) [0 ..] (T.unpack text) <> lineEndCell
+          | plain = zipWith (\i ch -> Cell ch (styled i)) [0 ..] (T.unpack text) <> lineEndCell
           | otherwise = concatMap charCells (layoutLine text) <> lineEndCell
         visible
           | plain = take (rectWidth rect) (drop left lineCells)
           | otherwise = fixEdges (take (rectWidth rect) (drop left lineCells))
         charCells (i, _, w, c) =
-          let style = fromMaybe (baseAt i) (styleAt i)
+          let style = styled i
            in if isWide c
                 then [Cell c style, Cell continuation style]
                 else map (`Cell` style) (glyphs c w)
         -- The line end only shows when it is selected (or a cursor).
-        lineEndCell = maybe [] (\st -> [Cell ' ' st]) (styleAt len)
+        lineEndCell = maybe [] (\st -> [Cell ' ' (over st base)]) (styleAt len)
         -- A wide character cut by the left or right edge becomes a blank, so
         -- the terminal never draws half of it.
         fixEdges cs = case cs of

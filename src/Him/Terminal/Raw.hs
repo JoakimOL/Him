@@ -43,8 +43,10 @@ withRawTerminal action = bracket enter leave (action . suspend)
     emit bytes = BC.hPut stdout bytes >> hFlush stdout
     -- Alternate screen on, clear it, cursor home.
     enterSeq = "\ESC[?1049h\ESC[2J\ESC[H"
-    -- Reset style and cursor shape, show cursor, alternate screen off.
-    leaveSeq = "\ESC[0m\ESC[0 q\ESC[?25h\ESC[?1049l"
+    -- Reset style, cursor shape and the default colours (a theme's, see
+    -- 'Him.Terminal.Ansi.setDefaultColors'), show cursor, alternate screen
+    -- off.
+    leaveSeq = "\ESC[0m\ESC[0 q\ESC]110\ESC\\\ESC]111\ESC\\\ESC[?25h\ESC[?1049l"
 
 -- | The equivalent of @cfmakeraw@: no echo, no line editing, no signals from
 -- Ctrl-C/Ctrl-Z, no flow control, no CR/LF translation. Reads block until at

@@ -21,7 +21,7 @@ data ExCommand = ExCommand
   }
 
 -- | What the arguments are, for completion.
-data ExArgs = NoArgs | PathArgs
+data ExArgs = NoArgs | PathArgs | ThemeArgs
   deriving stock (Eq, Show)
 
 -- | Split a command line into a command name and its arguments.

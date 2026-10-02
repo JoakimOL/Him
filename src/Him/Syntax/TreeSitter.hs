@@ -16,6 +16,7 @@ module Him.Syntax.TreeSitter
   ) where
 
 import Control.Exception (IOException, SomeException, try)
+import Him.Paths (runtimeDirs)
 import Control.Monad (forM, when)
 import Data.Array.Unboxed (UArray, bounds, listArray, (!))
 import Data.ByteString (ByteString)
@@ -110,17 +111,6 @@ start language = case grammarFor "tree-sitter" language of
         loadGrammar runtime name (langName language) >>= \case
           Left e -> Nothing <$ logMsg ("tree-sitter: " <> T.unpack e)
           Right grammar -> Just <$> newSession grammar
-
--- | The runtime directories, in order: @$HIM_RUNTIME@, him's own, then
--- Helix's (for queries only, see 'findRuntime').
-runtimeDirs :: IO [FilePath]
-runtimeDirs = do
-  env <- lookupEnv "HIM_RUNTIME"
-  home <- either (const "") id <$> try @IOException getHomeDirectory
-  pure $
-    filter (not . null) $
-      maybe [] pure env
-        <> [home </> ".config/him/runtime", home </> ".config/helix/runtime", "/usr/lib/helix/runtime", "/usr/share/helix/runtime"]
 
 -- | The directory with the grammar's shared object. Only grammars built
 -- for him are loaded (@$HIM_RUNTIME@ or @~/.config/him/runtime@, filled by

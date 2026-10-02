@@ -4,9 +4,10 @@
 --
 -- Supported: comments, @[table]@ and @[dotted.\"quoted\".table]@ headers,
 -- bare and quoted keys (dotted keys on the left too), basic strings with
--- escapes, literal strings, integers, booleans, and arrays (also over
--- several lines). Not supported: dates, floats, multi-line strings,
--- inline tables, arrays of tables. Errors name the line.
+-- escapes, literal strings, integers, booleans, arrays and inline tables
+-- (both also over several lines, as Helix's themes write them). Not
+-- supported: dates, floats, multi-line strings, arrays of tables. Errors
+-- name the line.
 module Him.Toml
   ( parseToml
   , quoteKey
@@ -47,8 +48,9 @@ parseToml src = do
                     doc' <- either located Right (insertAt (current <> keys) v doc)
                     Right (doc', current)
 
--- | Join lines that continue an array (an open @[@ in a value) into one
--- (comments are dropped first, so one cannot swallow the rest).
+-- | Join lines that continue an array or inline table (an open @[@ or @{@
+-- in a value) into one (comments are dropped first, so one cannot swallow
+-- the rest).
 logicalLines :: [(Int, Text)] -> [(Int, Text)]
 logicalLines = go . map (fmap stripComment)
   where
@@ -63,15 +65,15 @@ logicalLines = go . map (fmap stripComment)
       | d + depth l <= 0 = ([l], rest)
       | otherwise = let (more, rest') = collect (d + depth l) rest in (l : more, rest')
     isHeader l = "[" `T.isPrefixOf` T.stripStart l
-    -- Open minus closed brackets outside strings and comments.
+    -- Open minus closed brackets outside strings (comments are gone).
     depth l = count (0 :: Int) False False (T.unpack l)
     count acc _ _ [] = acc
     count acc inStr esc (c : cs)
       | inStr = if esc then count acc True False cs else if c == '\\' then count acc True True cs else count acc (c /= '"') False cs
       | c == '"' = count acc True False cs
-      | c == '#' = acc
-      | c == '[' = count (acc + 1) False False cs
-      | c == ']' = count (acc - 1) False False cs
+      | c == '\'' = count acc False False (drop 1 (dropWhile (/= '\'') cs))
+      | c == '[' || c == '{' = count (acc + 1) False False cs
+      | c == ']' || c == '}' = count (acc - 1) False False cs
       | otherwise = count acc False False cs
 
 -- | Drop a comment, minding strings.
@@ -123,6 +125,7 @@ value t = case T.uncons t of
   Just ('"', _) -> (\(s, rest) -> (JString s, rest)) <$> basicString t
   Just ('\'', rest) -> let (lit, after) = T.break (== '\'') rest in if T.null after then Left "unterminated string" else Right (JString lit, T.drop 1 after)
   Just ('[', rest) -> array (T.stripStart rest) []
+  Just ('{', rest) -> inline (T.stripStart rest) (JObject [])
   _
     | Just rest <- T.stripPrefix "true" t -> Right (JBool True, rest)
     | Just rest <- T.stripPrefix "false" t -> Right (JBool False, rest)
@@ -131,7 +134,7 @@ value t = case T.uncons t of
             digits = T.filter (/= '_') (T.dropWhile (== '+') num)
          in case reads (T.unpack digits) of
               [(n, "")] -> Right (JInt n, rest)
-              _ -> Left ("expected a value (a string, number, boolean or array), got: " <> T.take 20 t)
+              _ -> Left ("expected a value (a string, number, boolean, array or table), got: " <> T.take 20 t)
   where
     array s acc = case T.uncons s of
       Just (']', rest) -> Right (JArray (reverse acc), rest)
@@ -142,6 +145,18 @@ value t = case T.uncons t of
           Just (',', after) -> array (T.stripStart after) (v : acc)
           Just (']', after) -> Right (JArray (reverse (v : acc)), after)
           _ -> Left "expected , or ] in the array"
+    -- An inline table: @{ key = value, a.b = value }@ (a trailing comma
+    -- is allowed, as TOML 1.1 does).
+    inline s acc = case T.uncons s of
+      Just ('}', rest) -> Right (acc, rest)
+      _ -> do
+        (keys, rest) <- keyThenEquals s
+        (v, after) <- value (T.strip rest)
+        acc' <- insertAt keys v acc
+        case T.uncons (T.stripStart after) of
+          Just (',', more) -> inline (T.stripStart more) acc'
+          Just ('}', more) -> Right (acc', more)
+          _ -> Left "expected , or } in the inline table"
 
 -- | A double-quoted string with escapes.
 basicString :: Text -> Either Text (Text, Text)

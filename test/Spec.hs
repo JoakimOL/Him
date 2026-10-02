@@ -76,13 +76,14 @@ import Him.Position (Pos (..))
 import Him.Render.Diff (diffFrames)
 import Him.Render.Frame (blankFrame, putCells, putText)
 import Him.Selection
-import Him.Terminal.Ansi (Color (..), Style (..), defaultStyle, packStyle, sgr, unpackStyle)
+import Him.Terminal.Ansi (Color (..), Style (..), Underline (..), defaultStyle, packStyle, patchStyle, sgr, unpackStyle)
 import Him.Terminal.Input (decodeKeys)
 import Him.View (View (..), scrollToCursor)
 import Him.TextWidth (charIndexAtCol, charWidth, displayCol, glyphs, isWide)
 import Him.Render (render)
 import Him.Render.Frame (Cell (..), Frame (..), ScrollInfo (..), continuation)
-import Him.Render.Theme (Theme (..), defaultTheme, scopeStyle)
+import Him.Render.Theme (Theme (..), defaultTheme, fromScopes, scopeStyle)
+import Him.Theme (ThemeFile, defaultThemeText, downsample, mergeThemeFiles, parseColor, parseThemeFile, resolveTheme)
 import Data.Foldable (toList)
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
@@ -509,6 +510,7 @@ main = do
     , group "Him.Lsp.Edit" lspEditTests
     , group "Him.Toml" tomlTests
     , group "Him.UserConfig" userConfigTests
+    , group "Him.Theme" themeTests
     , group "a remapping config file, through the keys" remapIO
     , group "LSP client (with clangd)" lspIO
     , group "highlighting through a provider" syntaxIO
@@ -1117,10 +1119,73 @@ tomlTests =
       assertEqual (Right (JObject [("keys", JObject [("normal", JObject [("g g", JString "x")])]), ("a", JObject [("b", JInt 3)])]))
         (parseToml "[keys.normal]\n\"g g\" = \"x\"\n[a]\nb = 3\n")
   , test "a # inside a string is not a comment" (assertEqual (Right (JObject [("k", JString "a # b")])) (parseToml "k = \"a # b\""))
+  , test "inline tables, nested, over several lines, with a trailing comma" $
+      assertEqual
+        (Right (JObject [("a.b", JObject []), ("s", JObject [("fg", JString "red"), ("m", JArray [JString "bold", JString "dim"]), ("u", JObject [("c", JString "#fff")]), ("x", JObject [("y", JInt 1)])])]))
+        (parseToml "\"a.b\" = {}\ns = { fg = \"red\", m = [\n  \"bold\",\n  \"dim\"], u = { c = '#fff' }, x.y = 1, }\n")
+  , test "a # in a literal string does not end the line" $
+      assertEqual (Right (JObject [("a", JObject [("fg", JString "#123456")]), ("b", JInt 2)])) (parseToml "a = { fg = '#123456' }\nb = 2")
   , test "errors name the line" $
       assertEqual [Left "line 2: k is set twice", Left "line 1: expected = after the key", Left "line 1: unterminated string"]
         [parseToml "k = 1\nk = 2", parseToml "k 1", parseToml "k = \"abc"]
   ]
+
+themeTests :: [Test]
+themeTests =
+  [ test "colours: palette (also chained), hex, #rgb, index, names, default" $
+      let palette = Map.fromList [("fg", "accent"), ("accent", "#ff8000")]
+       in assertEqual
+            [Just (Rgb 255 128 0), Just (Rgb 1 2 3), Just (Rgb 0xcc 0x77 0xcc), Just (Indexed 110), Just (Ansi 9), Just (Ansi 7), Just DefaultColor, Nothing, Nothing]
+            (map (parseColor palette) ["fg", "#010203", "#c7c", "110", "light-red", "light-gray", "default", "nope", "#12345"])
+  , test "styles: a string is the foreground; tables have colours, modifiers, underlines" $
+      let tf = themeFile "\"a\" = \"red\"\n\"b\" = { fg = \"c\", bg = \"#000000\", modifiers = [\"bold\", \"crossed_out\"] }\n\"d.e\".underline = { color = \"c\", style = \"curl\" }\n[palette]\nc = \"5\"\n"
+       in assertEqual
+            ( Map.fromList
+                [ ("a", defaultStyle {styleFg = Ansi 1})
+                , ("b", defaultStyle {styleFg = Indexed 5, styleBg = Rgb 0 0 0, styleBold = True, styleStrike = True})
+                , ("d.e", defaultStyle {styleUnderline = UnderlineCurl, styleUnderlineColor = Indexed 5})
+                ]
+            , []
+            )
+            (resolveTheme tf)
+  , test "what is not understood is skipped with a warning" $
+      let tf = themeFile "\"a\" = { fg = \"nope\", modifiers = [\"bold\", \"sparkly\"] }\nrainbow = [\"red\"]\n"
+       in assertEqual (Map.fromList [("a", defaultStyle {styleBold = True})], ["a: unknown colour nope", "a: unknown modifier sparkly"]) (resolveTheme tf)
+  , test "a child replaces its parent's entries whole and merges palettes; its palette colours the parent's" $
+      let parent = themeFile "\"a\" = { fg = \"x\", bg = \"y\" }\n\"b\" = \"y\"\n[palette]\nx = \"1\"\ny = \"2\"\n"
+          child = themeFile "inherits = \"p\"\n\"a\" = { fg = \"x\" }\n[palette]\ny = \"3\"\n"
+       in assertEqual
+            (Map.fromList [("a", defaultStyle {styleFg = Indexed 1}), ("b", defaultStyle {styleFg = Indexed 3})])
+            (fst (resolveTheme (mergeThemeFiles parent child)))
+  , test "the built-in theme parses without warnings" $
+      assertEqual (Right []) (snd . resolveTheme <$> parseThemeFile defaultThemeText)
+  , test "UI styles fall back to Helix's scopes" $
+      let t = fromScopes "t" (Map.fromList [("ui.statusline", defaultStyle {styleBg = Indexed 1}), ("ui.statusline.normal", defaultStyle {styleFg = Indexed 2}), ("diff.plus", defaultStyle {styleFg = Indexed 3}), ("error", defaultStyle {styleFg = Indexed 4})])
+       in assertEqual
+            ( defaultStyle {styleFg = Indexed 2, styleBg = Indexed 1}
+            , defaultStyle {styleFg = Indexed 3, styleDim = True}
+            , defaultStyle {styleUnderline = UnderlineLine, styleUnderlineColor = Indexed 4}
+            )
+            (themeMode t CmdLine, themeGitSign t SignAdded True, themeDiagnosticText t SevError)
+  , test "24-bit colours become the nearest of the 256" $
+      assertEqual [Indexed 196, Indexed 16, Indexed 231, Indexed 244, Indexed 3]
+        (map (styleFg . downsample . (\c -> defaultStyle {styleFg = c})) [Rgb 255 0 0, Rgb 0 0 0, Rgb 255 255 255, Rgb 128 128 128, Indexed 3])
+  , test "laying styles over each other keeps what the top one leaves out" $
+      assertEqual
+        defaultStyle {styleFg = Indexed 1, styleBg = Indexed 2, styleBold = True, styleItalic = True}
+        (patchStyle defaultStyle {styleFg = Indexed 1, styleBold = True} defaultStyle {styleBg = Indexed 2, styleItalic = True})
+  , test "the first frame sets the theme's default colours; an unchanged one does not repeat them" $
+      let t = fromScopes "t" (Map.fromList [("ui.background", defaultStyle {styleBg = Rgb 0x28 0x2c 0x34}), ("ui.text", defaultStyle {styleFg = Indexed 15})])
+          ed = newEditor (5, 30) (newDocument Nothing (buf "x"))
+          f = render t Nothing ed
+          out p = BL.toStrict (toLazyByteString (diffFrames p f))
+       in assertEqual (True, True, False)
+            ("\ESC]11;rgb:28/2c/34\ESC\\" `BS.isInfixOf` out Nothing, "\ESC]10;rgb:ff/ff/ff\ESC\\" `BS.isInfixOf` out Nothing, "\ESC]1" `BS.isInfixOf` out (Just f))
+  ]
+
+-- | A theme file the test knows to be valid.
+themeFile :: Text -> ThemeFile
+themeFile = either (error . T.unpack) id . parseThemeFile
 
 userConfigTests :: [Test]
 userConfigTests =
@@ -1133,7 +1198,7 @@ userConfigTests =
           assertEqual (Right defaultServers) (cfgServers <$> applyUserConfig uc)
   , test "unknown sections, modes and settings are reported, all of them" $
       assertEqual
-        (Left ["unknown section [keyz] (known: editor, keys, language-server)", "unknown setting editor.tabs (known: scrolloff, show-hidden-files)", "unknown mode [keys.nromal] (known: normal, select, insert, command, picker, directory, completion)"])
+        (Left ["unknown section [keyz] (known: editor, keys, language-server)", "unknown setting editor.tabs (known: scrolloff, show-hidden-files, theme)", "unknown mode [keys.nromal] (known: normal, select, insert, command, picker, directory, completion)"])
         (parseUserConfig "[keyz]\n[editor]\ntabs = 2\n[keys.nromal]\n")
   , test "a binding must be an action in quotes" $
       assertEqual (Left ["keys.normal.j: the value must be an action in quotes, e.g. \"move_line_down\""]) (parseUserConfig "[keys.normal]\nj = 5\n")
@@ -1631,7 +1696,7 @@ viewTests =
 diffTests :: [Test]
 diffTests =
   [ test "styles survive packing" $
-      let samples = [defaultStyle, defaultStyle {styleFg = Rgb 1 2 3, styleBg = Indexed 240, styleBold = True, styleReverse = True}, defaultStyle {styleFg = Ansi 9, styleItalic = True, styleUnderline = True}]
+      let samples = [defaultStyle, defaultStyle {styleFg = Rgb 1 2 3, styleBg = Indexed 240, styleBold = True, styleReverse = True}, defaultStyle {styleFg = Ansi 9, styleItalic = True, styleUnderline = UnderlineLine}, defaultStyle {styleUnderline = UnderlineCurl, styleUnderlineColor = Rgb 255 0 7, styleDim = True, styleStrike = True}]
        in assertEqual samples (map (unpackStyle . packStyle) samples)
   , test "300 random frame sequences replay exactly in a terminal model" (randomDiffs 300)
   , test "identical frames redraw no rows" (assertEqual False ("top" `isInfix` emit (Just f1) f1))
