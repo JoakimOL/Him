@@ -16,18 +16,22 @@ module Him.EditorM
   , setRegister
   , request
   , replaceText
+  , transcriptKept
+  , transcriptMessage
   ) where
 
 import Control.Monad.Trans.State.Strict (StateT, gets, modify')
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import Him.Document (Document (..), changeDocument, isReadOnly)
+import Him.Document (Document (..), changeDocument, inputPos, isReadOnly)
+import Him.Buffer qualified as Buffer
+import Control.Monad (when)
 import Him.Edit (Edit, applyEdits)
 import Him.Effect (Effect)
 import Him.Editor
 import Him.Mode (Mode (..))
 import Him.Motion (Motion, Movement (..), applyMotion)
-import Him.Selection (mapRanges, normalize)
+import Him.Selection (Range (..), mapRanges, normalize, point)
 
 -- | Actions run with access to the editor state and IO (for files etc.).
 -- Keep the actual logic in pure modules ("Him.Motion", "Him.Edit") where
@@ -46,7 +50,15 @@ setMode m = do
   readOnly <- isReadOnly <$> getDoc
   if m == Insert && readOnly
     then failWith readOnlyMessage
-    else modify' (\e -> e {edMode = m})
+    else do
+      modify' (\e -> e {edMode = m})
+      -- In a REPL or chat buffer, typing goes to the input: a cursor up in
+      -- the transcript moves to its end (ADR-44).
+      when (m == Insert) $ modifyDoc $ \d -> case inputPos d of
+        Just p ->
+          let end = Buffer.endPos (docBuffer d)
+           in d {docSelection = mapRanges (\r -> if rangeHead r < p then point end else r) (docSelection d)}
+        Nothing -> d
 
 readOnlyMessage :: Text
 readOnlyMessage = "a directory listing is read-only (ret opens an entry, - goes up)"
@@ -90,9 +102,26 @@ editEach f = do
   if readOnly then failWith readOnlyMessage else editAll f
 
 editAll :: (Int -> Edit) -> EditorM ()
-editAll f = modifyDoc $ \d ->
+editAll f = do
+  d <- getDoc
   let (buf, sel) = applyEdits f (docBuffer d) (docSelection d)
-   in (changeDocument buf sel d) {docDirty = True}
+  if transcriptKept d buf
+    then modifyDoc (const (changeDocument buf sel d) {docDirty = True})
+    else failWith transcriptMessage
+
+-- | In a REPL or chat buffer only the input after the prompt may change;
+-- the transcript before it is read-only (ADR-44). The first difference
+-- between the texts ('Buffer.changeBetween', cheap) must not be before
+-- the input.
+transcriptKept :: Document -> Buffer.Buffer -> Bool
+transcriptKept d buf = case inputPos d of
+  Nothing -> True
+  Just p -> case Buffer.changeBetween (docBuffer d) buf of
+    Nothing -> True
+    Just (start, _, _) -> start >= p
+
+transcriptMessage :: Text
+transcriptMessage = "only the input after the prompt can be changed (select and y copy from anywhere)"
 
 -- | Apply a motion to every range. In select mode the ranges are extended.
 motion :: Motion -> EditorM ()

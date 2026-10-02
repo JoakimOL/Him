@@ -45,8 +45,23 @@ replTests = do
   let replDoc = (newDocument Nothing (buf "> ")) {docKind = ReplDoc (newReplState "x") {rsInput = Pos 0 2}}
       typing = replDoc {docBuffer = buf "> 1+", docSelection = single (point (Pos 0 4))}
       withOutput = insertOutput "out\n" typing
+  -- A REPL buffer: a line of output, then the prompt, the input after it.
+  let transcriptDoc = (newDocument Nothing (buf "out\n> ")) {docKind = ReplDoc (newReplState "x") {rsInput = Pos 1 2}}
+      inRepl = newEditor (20, 80) transcriptDoc
+      text ed = B.toText (docBuffer (edDoc ed))
+  deleteOutput <- typeKeys "x d" inRepl
+  typedFromTop <- typeKeys "i a b esc" inRepl
+  backIntoPrompt <- typeKeys "i a backspace backspace esc" inRepl
+  yanked <- typeKeys "x y" inRepl
+  undone <- typeKeys "i a b esc u" inRepl
   pure
-    [ test "output goes before the input, and the cursor moves with the input" $
+    [ test "the transcript cannot be deleted (only the input after the prompt)" $
+        assertEqual ("out\n> ", True) (text deleteOutput, maybe False (\(Status _ m) -> "only the input" `T.isInfixOf` m) (edStatus deleteOutput))
+    , test "insert mode from up in the transcript types into the input" (assertEqual "out\n> ab" (text typedFromTop))
+    , test "backspace stops at the prompt" (assertEqual "out\n> " (text backIntoPrompt))
+    , test "the transcript can be selected and yanked" (assertEqual (Just ["out\n"]) (Map.lookup '"' (edRegisters yanked)))
+    , test "undo takes back typing in the input" (assertEqual "out\n> " (text undone))
+    , test "output goes before the input, and the cursor moves with the input" $
         assertEqual ("> out\n1+", Pos 1 2) (B.toText (docBuffer withOutput), rangeHead (primary (docSelection withOutput)))
     , test "ret takes what was typed after the output" $
         assertEqual (Just ("1+", "> 1+\n")) (fmap (\(i, d) -> (i, B.toText (docBuffer d))) (takeInput typing))
