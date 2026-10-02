@@ -1,12 +1,8 @@
--- | Commands: named editor actions. Everything a key can do is a command,
--- so keys are bound to command /names/ (see "Him.Keymap") and new
--- functionality is added by adding commands to the registry.
+-- | The monad actions run in, and helpers for writing actions. Keys are
+-- bound to actions (see "Him.Action" and "Him.Keymap").
 module Him.Command
   ( EditorM
-  , Command (..)
-  , Registry
-  , mkRegistry
-    -- * Helpers for writing commands
+    -- * Helpers for writing actions
   , getDoc
   , modifyDoc
   , setMode
@@ -18,8 +14,6 @@ module Him.Command
   ) where
 
 import Control.Monad.Trans.State.Strict (StateT, gets, modify')
-import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Him.Document (Document (..))
 import Him.Edit (Edit)
@@ -29,22 +23,10 @@ import Him.Mode (Mode (..))
 import Him.Motion (Motion, Movement (..), applyMotion)
 import Him.Selection (mapRanges, modifyPrimary, primary)
 
--- | Commands run with access to the editor state and IO (for files etc.).
+-- | Actions run with access to the editor state and IO (for files etc.).
 -- Keep the actual logic in pure modules ("Him.Motion", "Him.Edit") where
--- possible, and use these commands as thin wrappers.
+-- possible, and use these actions as thin wrappers.
 type EditorM = StateT Editor IO
-
-data Command = Command
-  { cmdName :: !Text
-  -- ^ snake_case, used in keymaps.
-  , cmdDoc :: !Text
-  , cmdRun :: EditorM ()
-  }
-
-type Registry = Map Text Command
-
-mkRegistry :: [Command] -> Registry
-mkRegistry cs = Map.fromList [(cmdName c, c) | c <- cs]
 
 getDoc :: EditorM Document
 getDoc = gets edDoc

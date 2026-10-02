@@ -1,7 +1,7 @@
--- | Search commands: @/@ and @?@ prompts with an incremental preview, @n@ and
+-- | Search actions: @/@ and @?@ prompts with an incremental preview, @n@ and
 -- @N@ to repeat, @*@ to search for the selection.
 module Him.Commands.Search
-  ( commands
+  ( actions
   , startSearch
   , executeSearch
   , cancelSearch
@@ -13,6 +13,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Him.Action
 import Him.Command
 import Him.Document (Document (..))
 import Him.Edit (selectionText)
@@ -21,13 +22,13 @@ import Him.Mode (Mode (..))
 import Him.Search
 import Him.Selection
 
-commands :: [Command]
-commands =
-  [ Command "search_forward" "Search forward (/)" (startSearch Forward)
-  , Command "search_backward" "Search backward (?)" (startSearch Backward)
-  , Command "search_next" "Select the next match of the last search" (repeatSearch Forward)
-  , Command "search_prev" "Select the previous match of the last search" (repeatSearch Backward)
-  , Command "search_selection" "Use the selection as the search pattern" $ do
+actions :: [Action]
+actions =
+  [ simple "search_forward" GSearch "Search forward (/)" (startSearch Forward)
+  , simple "search_backward" GSearch "Search backward (?)" (startSearch Backward)
+  , simple "search_next" GSearch "Select the next match of the last search" (repeatSearch Forward)
+  , simple "search_prev" GSearch "Select the previous match of the last search" (repeatSearch Backward)
+  , simple "search_selection" GSearch "Use the selection as the search pattern" $ do
       d <- getDoc
       let t = selectionText (docBuffer d) (primary (docSelection d))
       if T.any (== '\n') t
@@ -35,6 +36,9 @@ commands =
         else do
           setSearchRegister t
           info ("search: " <> t)
+  , action "search_text" GSearch "Search forward for the given text" (text "pattern") $ \pattern -> do
+      setSearchRegister pattern
+      repeatSearch Forward
   ]
 
 searchRegister :: Char

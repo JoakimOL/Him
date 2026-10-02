@@ -58,6 +58,7 @@ Buffers, motions, edits, selections, keymap resolution, and rendering to a `Fram
 pure. Only `Him.Terminal.*`, `Him.File`, and `Him.App` perform IO.
 
 **ADR-5: Commands are named values in a registry. Keymaps are tries of command names.**
+*(Commands became actions with arguments; see ADR-17.)*
 `Command { cmdName, cmdDoc, cmdRun :: EditorM () }` with `EditorM = StateT Editor IO`.
 Keys are bound to command *names*, so bindings can later be loaded from a config file.
 The trie supports multi-key chords (`g g`, `space f`). Resolving a key sequence gives
@@ -159,6 +160,40 @@ array becomes the buffer's `Text` directly, so nothing is decoded or copied.
   an SSE2 newline count, is needed up front.
 - **Testing:** the chunked path is checked through `loadDocumentChunked`.
 
+**ADR-17: Keys bind to actions: named, grouped, with typed arguments (supersedes the
+`Command` registry of ADR-5).**
+An `Action` (`Him.Action`) has a stable snake_case name, a group, a doc string, and typed
+positional parameters. A binding is text: the action's name plus arguments, such as
+`move_line_down 5`, `goto_line 12`, `insert_text "// "` or `ex "w"`.
+- **Names are the stable interface.** Bindings, and later config files, refer to the flat
+  name. Helix uses the same flat names, so they stay familiar. The group (movement,
+  selection, modes, editing, clipboard, history, search, prompt, misc) is metadata for
+  help and docs only, so moving an action between groups breaks nothing. Renaming an
+  action is a breaking change: keep the old name as a second action if it ever happens.
+- **Arguments are typed, and are checked when the keymap is built.** Parameters are
+  described with a small applicative (`int`, `text`, `choice`, `optional`). The same
+  value lists the parameters (`actParams`, for help or a config UI) and converts the text
+  arguments. Binding produces a `Bound` (the invocation plus the `EditorM ()` to run). So
+  a key press neither looks anything up nor parses anything, and a bad binding is an
+  error at startup that names the mode, the keys and the problem. Every error is
+  reported, not only the first.
+- **Keymaps are generic.** `Keymap a` is a trie of any binding type: `Keymap Text` while
+  parsing and `Keymap Bound` at run time.
+- **Prepared for a config file.** `Bindings = Map Mode [(keys, invocation)]`.
+  `overrideBindings user defaults` puts user bindings on top, and `no_op` disables a key.
+  `buildConfig actions bindings fallback` validates and builds everything. Select mode
+  inherits normal mode's bindings, the user's included (`inheritsFrom`). A config parser
+  only has to produce `Bindings` and call `Him.Config.Default.configWith`.
+- **Invocation syntax.** Words are separated by spaces. A double-quoted argument may
+  contain spaces and the escapes `\"`, `\\`, `\n` and `\t`. `renderInvocation` is the
+  inverse.
+*Alternatives:* separate names per argument value (`move_line_down_5`), which does not
+scale. A `Value` sum type checked inside each action at run time, which reports errors
+only when the key is pressed. Arguments stored per key in the keymap and passed on each
+press, which is the same thing with an extra lookup.
+*Later:* a count prefix (`5 j`) can fill an action's `count` parameter, and `:` could
+gain a command that runs any action by its invocation text.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -187,16 +222,17 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Motion` | ✅ | Pure motions: char, line (desired column), word, line/file start/end. |
 | `Him.Edit` | ✅ | Pure edits over all selections. |
 | `Him.Editor`, `Him.Mode`, `Him.View` | ✅ | Editor state, modes, viewport + scrolloff. |
-| `Him.Command`, `Him.Keymap` | ✅ | Command registry and per-mode keymap tries. |
+| `Him.Action` | ✅ | Actions (name, group, doc, typed parameters), the registry, invocation parsing (`name arg "quoted arg"`), and binding to a runnable `Bound` (ADR-17). |
+| `Him.Command`, `Him.Keymap` | ✅ | `EditorM` and helpers for writing actions; per-mode keymap tries, generic in what they bind (`Keymap a`). |
 | `Him.Ex` | ✅ | `:`-command parser. |
 | `Him.Render`, `Him.Render.*` | ✅ | Frame, layout, components, diffing. Components: `Gutter` (line numbers), `TextArea`, `StatusLine`, `CommandLine`. `layout` depends on the editor, because the gutter width follows the line count. |
 | `Him.File` | ✅ | Load/save (UTF-8, line endings, trailing newline). |
 | `Him.History` | ✅ | Undo/redo snapshots: `beginChange` (called by `edit`), `commit` (called by the main loop outside insert mode), `undo`, `redo`. |
 | `Him.Document` | ✅ | Buffer + selection + path + dirty flag + line ending/trailing newline. (Split out of `Buffer` so the buffer stays pure text.) |
-| `Him.Config` | ✅ | `Config { cfgRegistry, cfgKeymaps, cfgFallback }`, held by the main loop rather than the `Editor`, which avoids a module cycle. |
-| `Him.Commands.*` | ✅ | Command lists: `Motion`, `Edit` (modes and text), `CommandLine`, `File` (ex commands). |
+| `Him.Config` | ✅ | `Config { cfgActions, cfgKeymaps, cfgFallback }`, held by the main loop rather than the `Editor`, which avoids a module cycle. `Bindings`, `overrideBindings` and `buildConfig`, which validates every binding. |
+| `Him.Commands.*` | ✅ | Action lists: `Motion`, `Edit` (modes and text), `Search`, `CommandLine`; `File` holds the ex commands. |
 | `Him.TextWidth` | ✅ | Tab expansion (width 4), `charWidth` (a compact East-Asian-wide/emoji table; control chars are 2 wide and shown as `^X`), char↔display-column mapping. |
-| `Him.Config.Default` | ✅ | The default keymaps and registry. **This is where bindings are added.** |
+| `Him.Config.Default` | ✅ | `allActions`, `defaultBindings`, `defaultConfig`, and `configWith` (the defaults with user bindings on top). **This is where bindings are added.** |
 
 ## 5. Development goals / milestones
 
@@ -237,6 +273,8 @@ Each milestone ends with something runnable, and with this file updated.
   rare-byte SIMD scanning; benchmark scenarios with result checks.
 - [x] **15. Rendering pass.** Row reuse, terminal scroll regions, cell-level diff, and an
   ASCII fast path.
+- [x] **16. Action layer.** Keys bind to actions with typed arguments, validated at
+  startup; user bindings override the defaults (ADR-17).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -245,7 +283,7 @@ Later (the architecture already has room for these):
 - [ ] Named registers and the system clipboard
 - [ ] Multiple selections (`C`, `s` split)
 - [ ] Multiple buffers, `:e`
-- [ ] User config file for keymaps
+- [ ] User config file for keymaps (only the file parser is left: it produces `Bindings`)
 - [ ] Syntax highlighting (a styling pass at render time)
 - [ ] Popups and pickers (render components)
 
@@ -262,14 +300,23 @@ Implemented (defined in `Him.Config.Default`):
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
 | `:` commands | `:w [path]`, `:q` (refuses when dirty), `:q!`, `:wq` / `:x` |
 
+Actions that take arguments, and have no default key yet: `move_char_left/right`,
+`move_line_up/down [count]`, `goto_line <line>`, `insert_text <text>`,
+`set_mode normal|insert|select`, `search_text <pattern>`, `ex <command>`, and `no_op`
+(it disables a key).
+
 ## 7. How to extend
 
-- **Add a command:** write an `EditorM ()` action (keep the logic pure in `Him.Motion` or
-  `Him.Edit` where you can), wrap it in a `Command` with a snake_case name and a doc string,
-  and add it to the registry in `Him.Config.Default`.
-- **Add a keybinding:** add `("g h", "goto_line_start")`-style entries to that mode's list
-  in `Him.Config.Default`. Chords are parsed by `Him.Key`. At startup, `defaultConfig`
-  rejects bindings to unknown commands, and a test checks it.
+- **Add an action:** write the `EditorM ()` code (keep the logic pure in `Him.Motion` or
+  `Him.Edit` where you can). Wrap it with `simple name group doc run`, or with
+  `action name group doc spec run` when it takes arguments. The spec is built from
+  `int`, `text`, `choice` and `optional`, e.g. `optional "1" 1 (int "count")`. Add it to
+  an action list in `Him.Commands.*` (each list is part of `allActions`). The name is
+  public, because bindings and config files use it, so choose it carefully.
+- **Add a keybinding:** add `("g h", "goto_line_start")` or `("C-d", "move_line_down 20")`
+  entries to that mode's list in `Him.Config.Default`. Chords are parsed by `Him.Key`. At
+  startup, `buildConfig` rejects unknown actions and bad arguments, and a test checks the
+  defaults.
 - **Add a `:` command:** add an `ExCommand` (names, doc, `[Text] -> EditorM ()`) to
   `Him.Commands.File` or a new list, and include it in `exCommands` in `Him.Config.Default`.
 - **Add a render component:** write `Theme -> Editor -> Rect -> Frame -> Frame` in

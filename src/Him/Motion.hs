@@ -9,10 +9,12 @@ module Him.Motion
   , charRight
   , lineUp
   , lineDown
+  , lineBy
   , lineStart
   , lineEnd
   , fileStart
   , lastLine
+  , gotoLine
   , nextWordStart
   , nextWordEnd
   , prevWordStart
@@ -63,6 +65,11 @@ lineStart _ r = point (Pos (posLine (rangeHead r)) 0)
 lineEnd b r = let l = posLine (rangeHead r) in point (Pos l (max 0 (lineLength l b - 1)))
 fileStart _ _ = point (Pos 0 0)
 lastLine b _ = point (Pos (lineCount b - 1) 0)
+
+-- | Go to a line, counting from 1 like the gutter. Out-of-range numbers go
+-- to the first or last line.
+gotoLine :: Int -> Motion
+gotoLine n b _ = point (Pos (max 0 (min (lineCount b - 1) (n - 1))) 0)
 
 data CharClass = Blank | LineEnd | WordChar | Punct
   deriving stock (Eq)

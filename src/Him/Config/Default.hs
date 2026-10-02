@@ -1,36 +1,38 @@
--- | The default commands and keybindings.
+-- | The default actions and keybindings.
 --
--- To add a keybinding, add a @(keys, command name)@ pair to the right mode
--- below. To add a command, add it to one of the @Him.Commands.*@ modules
--- (or a new one, listed in 'allCommands').
+-- To add a keybinding, add a @(keys, action)@ pair to the right mode below;
+-- the action may take arguments (@"move_line_down 5"@). To add an action,
+-- add it to one of the @Him.Commands.*@ modules (or a new one, listed in
+-- 'allActions').
 module Him.Config.Default
   ( defaultConfig
-  , allCommands
+  , defaultBindings
+  , configWith
+  , allActions
+  , fallback
   ) where
 
-import Control.Monad (unless)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
-import Data.Text qualified as T
-import Him.Command (Command, EditorM, mkRegistry)
+import Him.Action (Action)
+import Him.Command (EditorM)
 import Him.Commands.CommandLine qualified as CommandLine
 import Him.Commands.Edit qualified as Edit
 import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
 import Him.Commands.Search qualified as Search
-import Him.Config (Config (..))
+import Him.Config (Bindings, Config, buildConfig, overrideBindings)
 import Him.Ex (ExCommand)
 import Him.Key (Key (..), KeyCode (..), Modifier (..))
-import Him.Keymap
 import Him.Mode (Mode (..))
 
-allCommands :: [Command]
-allCommands =
-  Motion.commands
-    <> Edit.commands
-    <> Search.commands
-    <> CommandLine.commands exCommands
+allActions :: [Action]
+allActions =
+  Motion.actions
+    <> Edit.actions
+    <> Search.actions
+    <> CommandLine.actions exCommands
 
 exCommands :: [ExCommand]
 exCommands = File.exCommands
@@ -105,26 +107,25 @@ commandBindings =
   , ("backspace", "cmdline_backspace")
   ]
 
--- | Build and validate the configuration: every bound name must be a
--- registered command.
+-- | The default bindings. Select mode also gets normal mode's bindings
+-- (see 'Him.Config.inheritsFrom').
+defaultBindings :: Bindings
+defaultBindings =
+  Map.fromList
+    [ (Normal, normalBindings)
+    , (Select, selectBindings)
+    , (Insert, insertBindings)
+    , (CmdLine, commandBindings)
+    ]
+
+-- | The default configuration. Every binding is checked against the
+-- actions; an error lists each bad binding.
 defaultConfig :: Either Text Config
-defaultConfig = do
-  normal <- fromBindings normalBindings
-  select <- fromBindings selectBindings
-  insert <- fromBindings insertBindings
-  command <- fromBindings commandBindings
-  let keymaps =
-        Map.fromList
-          [ (Normal, normal)
-          , (Select, unionKeymap select normal)
-          , (Insert, insert)
-          , (CmdLine, command)
-          ]
-      registry = mkRegistry allCommands
-      missing = [n | km <- Map.elems keymaps, n <- boundCommands km, Map.notMember n registry]
-  unless (null missing) $
-    Left ("keymap refers to unknown commands: " <> T.intercalate ", " missing)
-  pure Config {cfgRegistry = registry, cfgKeymaps = keymaps, cfgFallback = fallback}
+defaultConfig = configWith Map.empty
+
+-- | The defaults with some bindings replaced, e.g. from a config file.
+configWith :: Bindings -> Either Text Config
+configWith user = buildConfig allActions (overrideBindings user defaultBindings) fallback
 
 -- | Unbound printable characters are typed in insert and command mode.
 fallback :: Mode -> Key -> Maybe (EditorM ())

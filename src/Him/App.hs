@@ -1,5 +1,5 @@
 -- | The main loop: read an event, resolve it through the keymap of the
--- current mode, run the command, render, repeat.
+-- current mode, run the bound action, render, repeat.
 module Him.App
   ( run
   , handleEvent
@@ -13,7 +13,8 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
-import Him.Command (cmdRun, failWith)
+import Him.Action (Bound (..))
+import Him.Command (failWith)
 import Him.Command qualified as Command
 import Him.Config (Config (..))
 import Him.Commands.Search (refreshSearchPreview)
@@ -101,9 +102,9 @@ handleEvent config (EvKey key) = do
   when (null pending) $ modify' (\e -> e {edStatus = Nothing})
   case resolve keymap keys of
     NeedMore -> setPending keys
-    Found name -> do
+    Found bound -> do
       setPending []
-      maybe (failWith ("unknown command: " <> name)) cmdRun (Map.lookup name (cfgRegistry config))
+      boundRun bound
     NoMatch -> do
       setPending []
       -- Only a key typed on its own falls back (a failed chord is dropped).

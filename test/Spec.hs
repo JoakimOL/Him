@@ -8,9 +8,12 @@ import Data.ByteString.Lazy qualified as BL
 import Data.Foldable (foldlM)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import Him.Action
 import Him.App (handleEvent)
 import Him.Buffer qualified as B
-import Him.Config.Default (defaultConfig)
+import Data.Map.Strict qualified as Map
+import Him.Config (Config (..))
+import Him.Config.Default (allActions, configWith, defaultConfig)
 import Him.Document
 import Him.Edit
 import Him.Editor
@@ -42,9 +45,66 @@ import Data.Sequence qualified as Seq
 import Data.Text qualified as T
 import Test.Harness
 
+-- | Keys through a configuration with user bindings on top of the defaults.
+rebindTests :: IO [Test]
+rebindTests = do
+  config <-
+    either (fail . T.unpack) pure $
+      configWith
+        ( Map.fromList
+            [ (Normal, [("C-d", "move_line_down 2"), ("j", "no_op"), ("space i", "insert_text \"// \""), ("Q", "ex q!"), ("g 3", "goto_line 3"), ("F", "search_text two")])
+            , (Insert, [("C-a", "set_mode normal")])
+            ]
+        )
+  let start t = newEditor (24, 80) (newDocument Nothing (buf t))
+      typeKeys ks ed = foldlM (\e k -> execStateT (handleEvent config (EvKey k)) e) ed (fromMaybe (error ("bad keys: " <> show ks)) (parseKeys ks))
+      headAfter t ks = rangeHead . primary . docSelection . edDoc <$> typeKeys ks (start t)
+      textAfter t ks = B.toText . docBuffer . edDoc <$> typeKeys ks (start t)
+  ctrlD <- headAfter "a\nb\nc\nd" "C-d"
+  disabled <- headAfter "a\nb" "j"
+  inherited <- headAfter "a\nb\nc\nd" "v C-d"
+  inserted <- textAfter "x" "space i"
+  quitByKey <- typeKeys "i y esc Q" (start "")
+  gotoThree <- headAfter "a\nb\nc\nd" "g 3"
+  gotoStill <- headAfter "a\nb\nc\nd" "g e g g"
+  searchKey <- headAfter "one two" "F"
+  insertExit <- typeKeys "i C-a" (start "")
+  let badConfig =
+        configWith
+          ( Map.fromList
+              [ (Normal, [("a", "fly"), ("b", "goto_line")])
+              , (Insert, [("C-x", "set_mode command")])
+              ]
+          )
+  pure
+    [ test "a key bound to an action with an argument" (assertEqual (Pos 2 0) ctrlD)
+    , test "no_op disables a default key" (assertEqual (Pos 0 0) disabled)
+    , test "select mode inherits user normal bindings" (assertEqual (Pos 2 0) inherited)
+    , test "insert_text with a quoted argument" (assertEqual "// x" inserted)
+    , test "ex runs a : command" (assertEqual True (edQuit quitByKey))
+    , test "a new chord next to default ones" (assertEqual (Pos 2 0) gotoThree)
+    , test "default chords on the same prefix still work" (assertEqual (Pos 0 0) gotoStill)
+    , test "search_text selects the match" (assertEqual (Pos 0 6) searchKey)
+    , test "set_mode" (assertEqual Normal (edMode insertExit))
+    , test "every bad binding is reported" $
+        assertEqual
+          ( Left
+              ( T.intercalate
+                  "\n"
+                  [ "Normal mode, a: unknown action: fly"
+                  , "Normal mode, b: goto_line: missing argument <line>"
+                  , "Insert mode, C-x: set_mode: <mode> must be one of normal, insert, select, got command"
+                  ]
+              )
+          )
+          (() <$ badConfig)
+    , test "the default keymaps cover every mode" (assertEqual [minBound .. maxBound] (Map.keys (cfgKeymaps (either (error . T.unpack) id defaultConfig))))
+    ]
+
 main :: IO ()
 main = do
   integration <- integrationTests
+  rebinding <- rebindTests
   loading <- loadingTests
   runTests
     [ group "Him.Key" keyTests
@@ -56,6 +116,7 @@ main = do
     , group "Him.Edit" editTests
     , group "Him.History" historyTests
     , group "Him.Keymap" keymapTests
+    , group "Him.Action" actionTests
     , group "Him.File" fileTests
     , group "Him.Ex" exTests
     , group "Him.View" viewTests
@@ -63,6 +124,7 @@ main = do
     , group "Him.Render" renderTests
     , group "Him.Render.Diff" diffTests
     , group "keys through the default config" integration
+    , group "rebinding keys to actions" rebinding
     , group "Him.File (from disk)" loading
     ]
 
@@ -314,12 +376,50 @@ keymapTests =
       let over = either (error . show) id (fromBindings [("g e", "end"), ("a", "other")])
           u = unionKeymap over km
        in assertEqual [Found "other", Found "top", Found "end"] (map (resolve u . keys) ["a", "g g", "g e"])
-  , test "invalid key sequence is an error" (assertEqual (Left "invalid key sequence: nope") (() <$ fromBindings [("nope", "x")]))
+  , test "invalid key sequence is an error" (assertEqual (Left "invalid key sequence: nope") (() <$ fromBindings [("nope", "x" :: Text)]))
   , test "default config is valid" (assertEqual (Right ()) (() <$ defaultConfig))
   ]
   where
-    km = either (error . show) id (fromBindings [("a", "one"), ("g g", "top")])
+    km = either (error . show) id (fromBindings [("a", "one" :: Text), ("g g", "top")])
     keys = fromMaybe [] . parseKeys
+
+actionTests :: [Test]
+actionTests =
+  [ test "a bare name" (assertEqual (Right (Invocation "undo" [])) (parseInvocation "undo"))
+  , test "arguments" (assertEqual (Right (Invocation "goto_line" ["12"])) (parseInvocation "  goto_line   12 "))
+  , test "quoted argument with escapes" $
+      assertEqual (Right (Invocation "insert_text" ["a \"b\"\n\\"])) (parseInvocation "insert_text \"a \\\"b\\\"\\n\\\\\"")
+  , test "empty quoted argument" (assertEqual (Right (Invocation "insert_text" [""])) (parseInvocation "insert_text \"\""))
+  , test "unterminated string" (assertEqual (Left "unterminated string") (parseInvocation "insert_text \"abc"))
+  , test "unknown escape" (assertEqual (Left "unknown escape \\q") (parseInvocation "insert_text \"\\q\""))
+  , test "empty binding" (assertEqual (Left "empty action") (parseInvocation "  "))
+  , test "invalid name" (assertEqual (Left "invalid action name: Undo") (parseInvocation "Undo"))
+  , test "render round-trips" $
+      let invs = [Invocation "insert_text" ["a b", "", "q\"\\\n\t"], Invocation "goto_line" ["3"], Invocation "undo" []]
+       in assertEqual (map Right invs) (map (parseInvocation . renderInvocation) invs)
+  , test "unknown action" (assertEqual (Left "unknown action: fly") (bindErr "fly"))
+  , test "missing argument" (assertEqual (Left "goto_line: missing argument <line>") (bindErr "goto_line"))
+  , test "not a number" (assertEqual (Left "goto_line: <line> must be a number, got x") (bindErr "goto_line x"))
+  , test "too many arguments" (assertEqual (Left "undo: unexpected argument 1 \"a b\"") (bindErr "undo 1 \"a b\""))
+  , test "optional argument may be left out" (assertEqual (Right ()) (bindErr "move_line_down"))
+  , test "optional argument may be given" (assertEqual (Right ()) (bindErr "move_line_down -3"))
+  , test "bad choice" $
+      assertEqual (Left "set_mode: <mode> must be one of normal, insert, select, got command") (bindErr "set_mode command")
+  , test "duplicate action names are rejected" $
+      assertEqual (Left "duplicate action names: a") (() <$ mkActionRegistry [simple "a" GMisc "" (pure ()), simple "a" GMisc "" (pure ())])
+  , test "parameters describe themselves" $
+      assertEqual
+        (Just [Param "count" PInt (Just "1")])
+        (actParams <$> lookupAction "move_line_down" registry)
+  , test "every action name is a valid binding target" $
+      assertEqual [] [actName a | a <- allActions, (invAction <$> parseInvocation (actName a)) /= Right (actName a)]
+  , test "registry lists actions by group" $
+      let groups = map actGroup (registryActions registry)
+       in assertEqual True (and (zipWith (<=) groups (drop 1 groups)))
+  ]
+  where
+    registry = either (error . T.unpack) id (mkActionRegistry allActions)
+    bindErr t = () <$ bindText registry t
 
 fileTests :: [Test]
 fileTests =

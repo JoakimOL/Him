@@ -1,29 +1,30 @@
 -- | The @:@ command line: entering it, editing it, and running it.
 module Him.Commands.CommandLine
-  ( commands
+  ( actions
   , cmdlineInsert
   ) where
 
 import Control.Monad.Trans.State.Strict (gets, modify')
 import Data.Text qualified as T
+import Him.Action
 import Him.Command
 import Him.Commands.Search (cancelSearch, executeSearch)
 import Him.Editor (Editor (..), PromptKind (..))
 import Him.Ex (ExCommand, runExLine)
 import Him.Mode (Mode (..))
 
-commands :: [ExCommand] -> [Command]
-commands exTable =
-  [ Command "command_mode" "Enter a : command" $ do
+actions :: [ExCommand] -> [Action]
+actions exTable =
+  [ simple "command_mode" GPrompt "Enter a : command" $ do
       modify' (\e -> e {edPrompt = ExPrompt})
       setCmdLine ""
       setMode CmdLine
-  , Command "cmdline_cancel" "Leave the command line" cancel
-  , Command "cmdline_backspace" "Delete the last character (leave if empty)" $
+  , simple "cmdline_cancel" GPrompt "Leave the command line" cancel
+  , simple "cmdline_backspace" GPrompt "Delete the last character (leave if empty)" $
       gets edCmdLine >>= \case
         t | T.null t -> cancel
         t -> setCmdLine (T.dropEnd 1 t)
-  , Command "cmdline_execute" "Run the typed command" $ do
+  , simple "cmdline_execute" GPrompt "Run the typed command" $ do
       line <- gets edCmdLine
       prompt <- gets edPrompt
       setCmdLine ""
@@ -31,6 +32,7 @@ commands exTable =
       case prompt of
         ExPrompt -> runExLine exTable line
         SearchPrompt dir origin -> executeSearch dir origin line
+  , action "ex" GPrompt "Run a : command, e.g. ex \"w\"" (text "command") (runExLine exTable)
   ]
 
 cancel :: EditorM ()
