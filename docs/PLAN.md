@@ -499,6 +499,12 @@ numbers are provisional.*
 - **Done this session:** count prefixes (`5 j`), multiple selections (milestone 17,
   ADR-18), buffers, info menus and pickers (milestone 18, ADR-19/20), ignore files and the
   directory viewer (milestone 19, ADR-21/22), file operations in listings (milestone 20).
+- **Roadmap (approved 2026-10-02): `docs/ROADMAP.md`.** It lists the phases in order:
+  0 foundation (effects as data, a job runtime, document ids/versions, `Him.Process`,
+  `Him.Json`), 1 the command palette (`space ?`) and an async file picker, 2 git signs
+  and staging, 3 syntax highlighting (one common provider API; tree-sitter first,
+  TextMate later behind the same interface), 4 the LSP client. Work through it in that
+  order and tick phases off here.
 - **Next suggestions:**
   1. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
      matcher. `s` would get regexes for free.
