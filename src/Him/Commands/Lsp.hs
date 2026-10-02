@@ -8,11 +8,13 @@ module Him.Commands.Lsp
   , lspHousekeeping
   , lspFlush
   , applyLspResult
+  , completionHousekeeping
   ) where
 
 import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.IntMap.Strict qualified as IntMap
-import Data.List (find)
+import Data.Char (isAlphaNum)
+import Data.List (find, sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -30,7 +32,7 @@ import Him.Lsp.Protocol hiding (request)
 import Him.Lsp.Protocol qualified as P
 import Him.Lsp.State
 import Him.Mode (Mode (..))
-import Him.Picker (PickTarget (..), newPicker, pickerItem)
+import Him.Picker (PickTarget (..), fuzzyScore, newPicker, pickerItem)
 import Him.Position (Pos (..))
 import Him.Selection (point, primary, rangeHead, single)
 
@@ -56,6 +58,13 @@ actions =
       if null items
         then info "no diagnostics"
         else modify' (\e -> e {edPicker = Just (newPicker "diagnostics" items), edMode = Picking})
+  , simple "completion" GLsp "Ask the language server to complete the word at the cursor" requestCompletion
+  , simple "completion_next" GLsp "Select the next completion" (moveCompletion 1)
+  , simple "completion_previous" GLsp "Select the previous completion" (moveCompletion (-1))
+  , simple "completion_accept" GLsp "Insert the selected completion" acceptCompletion
+  , simple "completion_cancel" GLsp "Close the completion menu and leave insert mode" $ do
+      modify' (\e -> e {edCompletion = Nothing})
+      setMode Normal
   , simple "goto_next_diagnostic" GLsp "Go to the next diagnostic" (jumpDiagnostic True)
   , simple "goto_prev_diagnostic" GLsp "Go to the previous diagnostic" (jumpDiagnostic False)
   ]
@@ -178,7 +187,14 @@ answered pending value = case pending of
     ls -> modify' (\e -> e {edPopup = Just (InfoBox "hover" [(l, "") | l <- take 30 ls] AtCursor)})
   PendingDefinition -> goToLocations "definitions" (parseLocations value)
   PendingReferences -> goToLocations "references" (parseLocations value)
-  PendingCompletion {} -> pure ()
+  PendingCompletion doc _ start -> do
+    ed <- get
+    let Pos l c = rangeHead (primary (docSelection (edDoc ed)))
+        items = parseCompletion value
+    -- Still typing that word in that document?
+    if docId (edDoc ed) == doc && edMode ed == Insert && l == fst start && c >= snd start && not (null items)
+      then showCompletion (Completion doc start items [] 0)
+      else pure ()
 
 -- | One location: go there. Several: pick one.
 goToLocations :: Text -> [Location] -> EditorM ()
@@ -227,3 +243,102 @@ jumpDiagnostic forward = do
       x : _ -> Just x
       [] -> Nothing
     a <|> b = maybe b Just a
+
+-- * Completion
+
+-- | Characters that make up a word to complete.
+isWordChar :: Char -> Bool
+isWordChar c = isAlphaNum c || c == '_'
+
+-- | Where the word before the cursor starts, and the word.
+wordBeforeCursor :: Editor -> ((Int, Int), Text)
+wordBeforeCursor ed =
+  let d = edDoc ed
+      Pos l c = rangeHead (primary (docSelection d))
+      before = T.take c (Buffer.lineAt l (docBuffer d))
+      word = T.takeWhileEnd isWordChar before
+   in ((l, c - T.length word), word)
+
+requestCompletion :: EditorM ()
+requestCompletion = do
+  ed <- get
+  let (start, _) = wordBeforeCursor ed
+      d = edDoc ed
+  ask (PendingCompletion (docId d) (docVersion d) start) "textDocument/completion" []
+
+-- | Show the menu filtered by what is typed now; closed when nothing
+-- matches.
+showCompletion :: Completion -> EditorM ()
+showCompletion c = do
+  ed <- get
+  let d = edDoc ed
+      Pos l col = rangeHead (primary (docSelection d))
+      (sl, sc) = cmStart c
+      typed = T.take (col - sc) (T.drop sc (Buffer.lineAt l (docBuffer d)))
+      shown = take 100 (filterCompletion typed (cmItems c))
+  modify' $ \e ->
+    e
+      { edCompletion =
+          if l /= sl || col < sc || null shown
+            then Nothing
+            else Just c {cmShown = shown, cmSelected = min (cmSelected c) (length shown - 1)}
+      }
+
+-- | Items matching the typed text (fuzzy, on the filter text), best
+-- first; the server's order breaks ties.
+filterCompletion :: Text -> [CompletionItem] -> [CompletionItem]
+filterCompletion typed items
+  | T.null typed = sortOn ciSort items
+  | otherwise =
+      map snd . sortOn fst $
+        [((score, ciSort i), i) | i <- items, Just score <- [fuzzyScore typed (ciFilter i)]]
+
+moveCompletion :: Int -> EditorM ()
+moveCompletion n = modify' $ \e ->
+  e {edCompletion = (\c -> c {cmSelected = (cmSelected c + n) `mod` max 1 (length (cmShown c))}) <$> edCompletion e}
+
+-- | Replace the typed word (at every cursor) with the selected item.
+acceptCompletion :: EditorM ()
+acceptCompletion =
+  gets edCompletion >>= \case
+    Nothing -> pure ()
+    Just c -> case drop (cmSelected c) (cmShown c) of
+      [] -> modify' (\e -> e {edCompletion = Nothing})
+      item : _ -> do
+        ed <- get
+        let Pos _ col = rangeHead (primary (docSelection (edDoc ed)))
+            typedLength = col - snd (cmStart c)
+        modify' (\e -> e {edCompletion = Nothing})
+        edit $ \b r ->
+          let Pos hl hc = rangeHead r
+              from = Pos hl (max 0 (hc - typedLength))
+              (b', end) = Buffer.insertText from (ciInsert item) (Buffer.deleteRange from (Pos hl hc) b)
+           in (b', point end)
+
+-- | After every event in insert mode: keep the menu in step with the
+-- typing, or open it on its own after a trigger character or the second
+-- character of a word.
+completionHousekeeping :: EditorM ()
+completionHousekeeping = do
+  ed <- get
+  let d = edDoc ed
+  case (edCompletion ed, edMode ed) of
+    (Just c, Insert) | cmDoc c == docId d -> showCompletion c
+    (Just _, _) -> modify' (\e -> e {edCompletion = Nothing})
+    (Nothing, Insert)
+      | LspAttached at <- docLsp d
+      , docVersion d /= lsAutoVersion (edLsp ed)
+      , not (any isCompletion (IntMap.elems (lsPending (edLsp ed)))) -> do
+          modify' (\e -> e {edLsp = (edLsp e) {lsAutoVersion = docVersion d}})
+          let (_, word) = wordBeforeCursor ed
+              Pos l c = rangeHead (primary (docSelection d))
+              previous = T.takeEnd 1 (T.take c (Buffer.lineAt l (docBuffer d)))
+              triggers = maybe [] siTriggers (Map.lookup (atServer at) (lsServers (edLsp ed)))
+          if (not (T.null previous) && previous `elem` triggers) || T.length word >= 2
+            then requestCompletion
+            else pure ()
+    _ -> pure ()
+  where
+    isCompletion = \case
+      PendingCompletion {} -> True
+      _ -> False

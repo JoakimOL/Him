@@ -137,6 +137,7 @@ insertBindings =
        , ("tab", "insert_tab")
        , ("backspace", "delete_char_backward")
        , ("del", "delete_char_forward")
+       , ("C-x", "completion")
        ]
 
 commandBindings :: [(Text, Text)]
@@ -145,6 +146,19 @@ commandBindings =
   , ("ret", "cmdline_execute")
   , ("tab", "cmdline_complete")
   , ("backspace", "cmdline_backspace")
+  ]
+
+-- | Insert mode with the completion menu open is insert mode with these.
+completionBindings :: [(Text, Text)]
+completionBindings =
+  [ ("tab", "completion_next")
+  , ("C-n", "completion_next")
+  , ("down", "completion_next")
+  , ("S-tab", "completion_previous")
+  , ("C-p", "completion_previous")
+  , ("up", "completion_previous")
+  , ("ret", "completion_accept")
+  , ("esc", "completion_cancel")
   ]
 
 -- | Normal mode in a directory listing is normal mode with these.
@@ -186,6 +200,7 @@ defaultBindings =
     , (CmdLine, commandBindings)
     , (Picking, pickerBindings)
     , (Directory, directoryBindings)
+    , (Completing, completionBindings)
     ]
 
 -- | The default configuration. Every binding is checked against the

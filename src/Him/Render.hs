@@ -17,6 +17,7 @@ import Him.Position (Pos (..))
 import Him.Render.CommandLine
 import Him.Render.Frame
 import Him.Render.Gutter
+import Him.Render.Completion
 import Him.Render.Info
 import Him.Render.Picker
 import Him.Render.StatusLine
@@ -72,6 +73,7 @@ render theme prev ed =
         . drawStatusLine theme ed statusR
         . drawPicker theme ed overlay
         . drawInfo theme ed overlay (cursorPosition ed textR)
+        . drawCompletion theme ed overlay (cursorPosition ed textR)
         . drawTextArea theme prev ed textR
         . drawGutter theme ed gutterR
         $ blankFrame rows cols

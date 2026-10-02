@@ -15,6 +15,9 @@ data Mode
     CmdLine
   | -- | Choosing from a picker (@space f@).
     Picking
+  | -- | Insert mode with the completion menu open: a keymap layer, like
+    -- 'Directory' (see 'Him.Editor.keymapMode').
+    Completing
   | -- | Normal mode in a directory listing. Never 'Him.Editor.edMode'
     -- itself: it names the keymap layer used there (see
     -- 'Him.Editor.keymapMode').
@@ -30,3 +33,4 @@ modeLabel = \case
   CmdLine -> "CMD"
   Picking -> "PIK"
   Directory -> "DIR"
+  Completing -> "INS"

@@ -85,6 +85,7 @@ defaultTheme =
       CmdLine -> Indexed 176
       Picking -> Indexed 176
       Directory -> Indexed 110
+      Completing -> Indexed 150
 
 -- | The style for a scope, by its longest known prefix:
 -- @keyword.control.import@, then @keyword.control@, then @keyword@.

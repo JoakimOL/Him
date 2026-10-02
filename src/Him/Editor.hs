@@ -28,7 +28,7 @@ import Data.Text (Text)
 import Him.Key (Key)
 import Him.Mode (Mode (..))
 import Him.Effect (Effect)
-import Him.Lsp.State (LspState, emptyLsp)
+import Him.Lsp.State (Completion, LspState, emptyLsp)
 import Him.Picker (Picker)
 import Him.Search (Direction)
 import Him.Selection (Selection)
@@ -116,6 +116,8 @@ data Editor = Editor
   -- ^ The id the next opened document gets ('docId').
   , edLsp :: !LspState
   -- ^ Language servers, pending requests, diagnostics ("Him.Lsp.State").
+  , edCompletion :: !(Maybe Completion)
+  -- ^ The completion menu, in insert mode.
   , edPopup :: !(Maybe InfoBox)
   -- ^ A box shown until the next key (e.g. hover documentation).
   , edShowHidden :: !Bool
@@ -150,6 +152,7 @@ newEditor size doc =
     , edEffects = []
     , edNextId = 2
     , edLsp = emptyLsp
+    , edCompletion = Nothing
     , edPopup = Nothing
     , edShowHidden = False
     , edInfo = Nothing
@@ -158,11 +161,13 @@ newEditor size doc =
     , edQuit = False
     }
 
--- | The mode whose keymap applies: normal mode in a directory listing
--- uses the 'Directory' layer.
+-- | The mode whose keymap applies: normal mode in a directory listing uses
+-- the 'Directory' layer, insert mode with the completion menu open the
+-- 'Completing' one.
 keymapMode :: Editor -> Mode
 keymapMode ed = case (edMode ed, docKind (edDoc ed)) of
   (Normal, DirectoryDoc _) -> Directory
+  (Insert, _) | Just _ <- edCompletion ed -> Completing
   (m, _) -> m
 
 -- | A document that is open but not shown, with its scroll position.

@@ -56,6 +56,7 @@ inheritsFrom :: Mode -> Maybe Mode
 inheritsFrom = \case
   Select -> Just Normal
   Directory -> Just Normal
+  Completing -> Just Insert
   _ -> Nothing
 
 -- | Validate every binding against the actions and build the keymaps.

@@ -39,7 +39,7 @@ import Him.Diff
 import Him.Syntax
 import Him.Regex
 import Him.Lsp.Protocol
-import Him.Lsp.State (DocLsp (..), ShownDiagnostic (..), shownDiagnostics)
+import Him.Lsp.State (Completion (..), DocLsp (..), ShownDiagnostic (..), shownDiagnostics)
 import Him.Commands.Lsp (lspFlush)
 import GHC.Clock (getMonotonicTime)
 import Him.Syntax.TreeSitter (findRuntime, readQuery, treeSitter)
@@ -1145,12 +1145,19 @@ lspTests = do
       hovered <- settleUntil config rt 10000 (isJust . edPopup) =<< keys "space k" (selecting 2 12 12 attached)
       defined <- settleUntil config rt 10000 ((/= Pos 2 12) . rangeHead . primary . docSelection . edDoc) =<< keys "g d" (selecting 2 12 12 attached)
       fixed <- settleUntil config rt 20000 (null . errorsOn) =<< keys "c 2 esc" (selecting 2 19 23 attached)
+      -- Completion: type "ad" on a new line; the menu opens by itself.
+      menu <- settleUntil config rt 10000 (isJust . edCompletion) =<< keys "g g j o a d" fixed
+      accepted <- keys "ret" menu
       pure
         [ test "the document attaches to clangd" (assertEqual True (case docLsp (edDoc attached) of LspAttached _ -> True; _ -> False))
         , test "an error is reported on its line" (assertEqual [(2, SevError)] (take 1 (errorsOn attached)))
         , test "hover shows a popup" (assertEqual True (isJust (edPopup hovered)))
         , test "g d goes to the definition of add" (assertEqual (Pos 0 4) (rangeHead (primary (docSelection (edDoc defined)))))
         , test "fixing the error clears it" (assertEqual [] (errorsOn fixed))
+        , test "typing a word opens the completion menu" $
+            assertEqual (True, Completing) (any ((== "add") . ciInsert) (maybe [] cmShown (edCompletion menu)), keymapMode menu)
+        , test "ret inserts the selected completion" $
+            assertEqual (True, Nothing) ("add" `T.isPrefixOf` T.strip (B.lineAt 2 (docBuffer (edDoc accepted))), edCompletion accepted)
         ]
 
 -- | Highlighting through an injected provider.

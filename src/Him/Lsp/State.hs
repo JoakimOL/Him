@@ -9,6 +9,7 @@ module Him.Lsp.State
   , Attachment (..)
   , Pending (..)
   , ShownDiagnostic (..)
+  , Completion (..)
   , shownDiagnostics
   ) where
 
@@ -20,7 +21,7 @@ import Data.List (sortOn)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer (Buffer, lineAt, lineCount)
-import Him.Lsp.Protocol (Diagnostic (..), Encoding (..), Severity, fromLspColumn)
+import Him.Lsp.Protocol (CompletionItem, Diagnostic (..), Encoding (..), Severity, fromLspColumn)
 
 -- | What the editor needs to know about a running server.
 data ServerInfo = ServerInfo
@@ -65,11 +66,26 @@ data LspState = LspState
   -- ^ By request id.
   , lsDiagnostics :: !(Map FilePath [Diagnostic])
   -- ^ By absolute path, as the servers last published them.
+  , lsAutoVersion :: !Int
+  -- ^ The document version last looked at for automatic completion.
   }
   deriving stock (Eq, Show)
 
 emptyLsp :: LspState
-emptyLsp = LspState Map.empty IntMap.empty Map.empty
+emptyLsp = LspState Map.empty IntMap.empty Map.empty (-1)
+
+-- | The completion menu in insert mode.
+data Completion = Completion
+  { cmDoc :: !Int
+  , cmStart :: !(Int, Int)
+  -- ^ Where the completed word starts (line, character column).
+  , cmItems :: ![CompletionItem]
+  -- ^ All the server offered.
+  , cmShown :: ![CompletionItem]
+  -- ^ Those matching what is typed now, best first.
+  , cmSelected :: !Int
+  }
+  deriving stock (Eq, Show)
 
 -- | A diagnostic placed in the buffer: line, character columns, severity,
 -- message.
