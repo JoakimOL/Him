@@ -448,6 +448,7 @@ main = do
     , group "Him.Buffer" bufferTests
     , group "Him.Buffer (randomized against a list model)" ropeModelTests
     , group "Him.Buffer.changeBetween" changeTests
+    , group "Him.Motion.findChar" findCharTests
     , group "Him.Search (randomized against a naive search)" searchTests
     , group "Him.Motion" motionTests
     , group "Him.Edit" editTests
@@ -550,6 +551,21 @@ bufferTests =
 -- libraries only).
 randoms :: Int -> [Int]
 randoms = drop 1 . iterate (\x -> (x * 6364136223846793005 + 1442695040888963407) `mod` (2 ^ (62 :: Int)))
+
+findCharTests :: [Test]
+findCharTests =
+  [ test "f selects to the character" (assertEqual (r 0 0 0 3) (find' True False 'd' 1 "abcdef" 0 0))
+  , test "a count finds a later one" (assertEqual (r 0 0 0 3) (find' True False 'a' 2 "xaxaxa" 0 0))
+  , test "t stops before it" (assertEqual (r 0 0 0 2) (find' True True 'd' 1 "abcdef" 0 0))
+  , test "a repeated t skips a target right next to the cursor" (assertEqual (r 0 0 0 0, r 0 0 0 2) (find' True True 'b' 1 "abcbx" 0 0, findChar True True True 'b' 1 (buf "abcbx") (r 0 0 0 0)))
+  , test "F and T go back" (assertEqual (r 0 5 0 1, r 0 5 0 2) (find' False False 'b' 1 "abcdef" 0 5, find' False True 'b' 1 "abcdef" 0 5))
+  , test "the search crosses lines" (assertEqual (r 0 1 1 1) (find' True False 'y' 1 "ab\nxy" 0 1))
+  , test "a line break can be found" (assertEqual (r 0 0 0 2) (find' True False '\n' 1 "ab\nxy" 0 0))
+  , test "not found leaves the selection" (assertEqual (r 0 1 0 1) (find' True False 'z' 1 "abc" 0 1))
+  ]
+  where
+    r a b c d = Range (Pos a b) (Pos c d) Nothing
+    find' fwd till ch n t l c = findChar False fwd till ch n (buf t) (r l c l c)
 
 changeTests :: [Test]
 changeTests =
@@ -1774,6 +1790,19 @@ integrationTests = do
   adjacentInsert <- textAfter "aab" "% s a ret i backspace esc"
   adjacentType <- textAfter "aab" "% s a ret a X esc"
   multiUndo <- textAfter "ab\nab" "C i X Y esc u"
+  findF <- selectionAfter "hello world" "f o"
+  findT2 <- selectionAfter "a.b.c.d" "2 t ."
+  findBack <- selectionAfter "hello world" "g l F o"
+  findRepeat <- selectionAfter "a.b.c.d" "f . A-."
+  findCancelled <- typeKeys "f esc l" (start "abc")
+  findNewline <- selectionAfter "ab\ncd" "f ret"
+  let lines40 = T.intercalate "\n" [T.pack (show i) | i <- [1 .. 100 :: Int]]
+  halfDown <- typeKeys "C-d" (start lines40)
+  pageDown <- typeKeys "C-f" (start lines40)
+  pageBack <- typeKeys "C-f C-b" (start lines40)
+  gotoFive <- selectionAfter lines40 "5 g g"
+  gotoFirst <- selectionAfter lines40 "j j g g"
+  suspended <- typeKeys "C-z" (start "abc")
   countDown <- selectionAfter "a\nb\nc\nd\ne" "3 j"
   countTwelve <- selectionAfter (T.intercalate "\n" (replicate 20 "x")) "1 2 j"
   countWords <- textAfter "one two three four" "2 w d"
@@ -1841,6 +1870,19 @@ integrationTests = do
     , test "backspace at adjacent cursors, one at the start" (assertEqual "ab" adjacentInsert)
     , test "typing at adjacent cursors" (assertEqual "aXaXb" adjacentType)
     , test "u undoes a multi-cursor insert at once" (assertEqual "ab\nab" multiUndo)
+    , test "f selects to a character" (assertEqual (Pos 0 0, Pos 0 4) findF)
+    , test "2 t . stops before the second dot" (assertEqual (Pos 0 0, Pos 0 2) findT2)
+    , test "F searches back" (assertEqual (Pos 0 10, Pos 0 7) findBack)
+    , test "A-. repeats the last find" (assertEqual (Pos 0 1, Pos 0 3) findRepeat)
+    , test "esc cancels f; the next key works as usual" (assertEqual (Nothing, Pos 0 1) (edAwait findCancelled, rangeHead (primary (docSelection (edDoc findCancelled)))))
+    , test "f ret finds the line break" (assertEqual (Pos 0 0, Pos 0 2) findNewline)
+    , test "C-d moves half a page, view and cursor" $
+        -- (The view then keeps 3 lines of margin above the cursor.)
+        assertEqual (Pos 11 0, 8) (rangeHead (primary (docSelection (edDoc halfDown))), viewTop (edView halfDown))
+    , test "C-f moves a page; C-b back" $
+        assertEqual (Pos 22 0, Pos 0 0) (rangeHead (primary (docSelection (edDoc pageDown))), rangeHead (primary (docSelection (edDoc pageBack))))
+    , test "5 g g goes to line 5; g g to the first" (assertEqual ((Pos 4 0, Pos 4 0), (Pos 0 0, Pos 0 0)) (gotoFive, gotoFirst))
+    , test "C-z asks to suspend" (assertEqual True (Suspend `elem` edEffects suspended))
     , test "a count repeats a motion" (assertEqual (Pos 3 0, Pos 3 0) countDown)
     , test "counts have several digits" (assertEqual (Pos 12 0, Pos 12 0) countTwelve)
     , test "2 w d deletes the second word's selection" (assertEqual "one three four" countWords)
@@ -1852,7 +1894,7 @@ integrationTests = do
     , test "digits type in insert mode" (assertEqual "3" countInsert)
     , test "g shows the goto keys" $
         assertEqual
-          (Just ("goto", Just "Go to the first line"))
+          (Just ("goto", Just "Go to the first line, or to line <count> (5 g g)"))
           ((\b -> (infoTitle b, lookup "g" (infoRows b))) <$> edInfo infoG)
     , test "the info box goes away after the chord" (assertEqual Nothing (edInfo infoAfterG))
     , test ": lists the matching commands" $

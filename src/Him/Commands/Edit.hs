@@ -9,6 +9,7 @@ import Data.Text qualified as T
 import Him.Action
 import Him.Buffer (nextPos)
 import Him.Command
+import Him.Effect (Effect (..))
 import Him.Document (Document (..))
 import Him.Edit
 import Him.History (History, Snapshot (..), redo, undo)
@@ -55,6 +56,7 @@ actions =
   , action "insert_text" GEditing "Insert text before the selection" (text "text") (edit . insertAtHead)
   , action "set_mode" GModes "Switch to a mode" (choice "mode" [("normal", Normal), ("insert", Insert), ("select", Select)]) setMode
   , simple "no_op" GMisc "Do nothing (bind a key to this to disable it)" (pure ())
+  , simple "suspend" GMisc "Suspend the editor (fg in the shell brings it back)" (request Suspend)
   ]
 
 defaultRegister :: Char

@@ -19,6 +19,7 @@ module Him.Motion
   , nextWordEnd
   , prevWordStart
   , selectLine
+  , findChar
     -- * Whole selections
   , selectAll
   , copySelectionBelow
@@ -27,6 +28,7 @@ module Him.Motion
 
 import Data.Char (isAlphaNum, isSpace)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
+import Data.Text qualified as T
 import Him.Buffer
 import Him.Position (Pos (..))
 import Him.Selection
@@ -198,3 +200,36 @@ splitOnNewlines b sel = fromMaybe sel (fromRanges (concat pieces) prim)
           ]
     -- The first piece of the old primary range becomes primary.
     prim = sum (map length (take (primaryIndex sel) pieces))
+
+-- | Helix @f t F T@: select from the cursor to the @n@th next (or
+-- previous) occurrence of a character, or up to just before it ("till").
+-- The search crosses lines; a line's end counts as a @\\n@. Not found: no
+-- change. When repeating (@skipAdjacent@), a "till" target right next to
+-- the cursor is skipped, so the repeat moves on (Vim's @;@).
+findChar :: Bool -> Bool -> Bool -> Char -> Int -> Motion
+findChar skipAdjacent forward till ch n b r = case (if forward then forwardHits else backwardHits) of
+  hits | (target : _) <- drop (max 1 n - 1) (filter useful hits) -> Range h (adjust target) Nothing
+  _ -> r
+  where
+    h = rangeHead r
+    -- Positions of the character after (before) the cursor, nearest first.
+    forwardHits =
+      [ Pos l c
+      | l <- [posLine h .. lineCount b - 1]
+      , let text = lineAt l b <> "\n"
+            from = if l == posLine h then posCol h + 1 else 0
+      , c <- [i + from | i <- indicesOf (T.drop from text)]
+      ]
+    backwardHits =
+      [ Pos l c
+      | l <- [posLine h, posLine h - 1 .. 0]
+      , let text = lineAt l b <> "\n"
+            upto = if l == posLine h then posCol h else T.length text
+      , c <- reverse (indicesOf (T.take upto text))
+      ]
+    indicesOf t = [i | (i, c) <- zip [0 ..] (T.unpack t), c == ch]
+    adjust p
+      | till && forward = prevPos b p
+      | till = nextPos b p
+      | otherwise = p
+    useful p = not (skipAdjacent && till) || adjust p /= h

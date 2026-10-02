@@ -7,6 +7,7 @@ module Him.Editor
   , FileAction (..)
   , InfoBox (..)
   , Preview (..)
+  , Await (..)
   , InfoPlace (..)
   , newEditor
   , keymapMode
@@ -87,6 +88,12 @@ data InfoBox = InfoBox
   }
   deriving stock (Eq, Show)
 
+-- | What a command waiting for a key will do with it.
+data Await
+  = -- | Find a character: forward?, till?, count.
+    AwaitFind !Bool !Bool !Int
+  deriving stock (Eq, Show)
+
 -- | A file's text for the picker's preview.
 data Preview
   = PreviewLoading
@@ -123,6 +130,12 @@ data Editor = Editor
   , edPreviewPending :: !Bool
   -- ^ The search text changed; the incremental search preview is computed
   -- once before the next render, not for every key of a burst.
+  , edAwait :: !(Maybe Await)
+  -- ^ A command waiting for the next key (the character of @f@).
+  , edLastFind :: !(Maybe (Bool, Bool, Char))
+  -- ^ The last @f t F T@: forward, till, character (repeated by @A-.@).
+  , edRepaint :: !Bool
+  -- ^ The terminal lost its contents (after a suspend): draw everything.
   , edPreviews :: !(Map FilePath Preview)
   -- ^ Files read for the picker's preview (while a picker is open).
   , edPicker :: !(Maybe Picker)
@@ -165,6 +178,9 @@ newEditor size doc =
     , edCmdLine = ""
     , edPrompt = ExPrompt
     , edPreviewPending = False
+    , edAwait = Nothing
+    , edLastFind = Nothing
+    , edRepaint = False
     , edPreviews = Map.empty
     , edPicker = Nothing
     , edEffects = []

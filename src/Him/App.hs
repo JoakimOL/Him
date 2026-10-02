@@ -26,6 +26,7 @@ import Him.Config.Default (defaultConfig)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
 import Him.Commands.Git qualified as Git
+import Him.Commands.Motion qualified as Motion
 import Him.Commands.Picker qualified as Picker
 import Him.Commands.Lsp qualified as Lsp
 import Him.Commands.Syntax qualified as Syntax
@@ -58,7 +59,7 @@ run files = do
   -- Load before entering raw mode, so errors print normally.
   docs <- traverse (\path -> loadPath False path >>= either (die . T.unpack) pure) files
   logMsg ("starting, files = " <> show files)
-  withRawTerminal $ do
+  withRawTerminal $ \suspend -> do
     events <- newTChanIO
     size <- fromMaybe (24, 80) <$> getWindowSize
     onResize (atomically . writeTChan events . uncurry EvResize)
@@ -67,7 +68,7 @@ run files = do
     -- Start what the first document needs (its git state) before any key.
     start <- execStateT housekeeping (openAll size docs)
     mapM_ (Runtime.perform runtime) (edEffects start)
-    eventLoop config runtime events start {edEffects = []}
+    eventLoop config runtime suspend events start {edEffects = []}
     Runtime.shutdown runtime
 
 -- | An editor showing the first document, with the others open behind it.
@@ -82,17 +83,19 @@ openAll size docs = case docs of
 maxBatch :: Int
 maxBatch = 512
 
-eventLoop :: Config -> Runtime -> TChan Event -> Editor -> IO ()
-eventLoop config runtime events = go Nothing
+eventLoop :: Config -> Runtime -> IO () -> TChan Event -> Editor -> IO ()
+eventLoop config runtime suspend events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
       -- Once per batch: hand the language server the text as it is now.
       flushed <- execStateT Lsp.lspFlush ed0
       mapM_ (Runtime.perform runtime) (edEffects flushed)
-      let ed = ensureCursorVisible (refreshSearchPreview flushed {edEffects = []})
-          frame = render defaultTheme prev ed
-      writeOutput (diffFrames prev frame)
+      -- After a suspend the terminal was cleared: draw everything.
+      let ed = ensureCursorVisible (refreshSearchPreview flushed {edEffects = [], edRepaint = False})
+          previous = if edRepaint flushed then Nothing else prev
+          frame = render defaultTheme previous ed
+      writeOutput (diffFrames previous frame)
       next <- atomically (readTChan events) >>= batch maxBatch ed
       unless (edQuit next) (go (Just frame) next)
 
@@ -115,7 +118,13 @@ eventLoop config runtime events = go Nothing
         Right ed' -> do
           -- Start or cancel the background jobs the event asked for.
           mapM_ (Runtime.perform runtime) (edEffects ed')
-          pure ed' {edEffects = []}
+          if Suspend `elem` edEffects ed'
+            then do
+              suspend
+              -- The window may have changed meanwhile.
+              size <- fromMaybe (edSize ed') <$> getWindowSize
+              pure ed' {edEffects = [], edRepaint = True, edSize = size}
+            else pure ed' {edEffects = []}
         Left e -> do
           logMsg ("command failed: " <> show (e :: SomeException))
           execStateT (failWith ("internal error: " <> T.pack (show e))) ed
@@ -133,6 +142,13 @@ handleEvent config (EvJob result) = do
   runEffects config
   housekeeping
 handleEvent config (EvKey key) = do
+  -- A key some command waits for (the character after f) is that
+  -- command's, not the keymap's.
+  awaited <- Motion.awaitedKey key
+  if awaited then afterKey config else keyThroughKeymap config key
+
+keyThroughKeymap :: Config -> Key -> Command.EditorM ()
+keyThroughKeymap config key = do
   -- A popup (hover) lasts until the next key; signature help stays while
   -- typing in insert mode (it closes at ')' or when insert mode ends).
   modify' $ \e ->
@@ -160,6 +176,12 @@ handleEvent config (EvKey key) = do
         clearCount
         -- Only a key typed on its own falls back (a failed chord is dropped).
         when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
+  afterKey config
+
+-- | What follows every key: effects, undo grouping, background state, the
+-- info box.
+afterKey :: Config -> Command.EditorM ()
+afterKey config = do
   runEffects config
   commitOutsideInsert
   housekeeping
@@ -203,6 +225,7 @@ runEffects config = go (8 :: Int)
       CancelJob _ -> pure ()
       LspSend _ _ -> pure ()
       LspStop _ -> pure ()
+      Suspend -> pure ()
       RunAction inv -> either failWith boundRun (bindInvocation (cfgActions config) inv)
       OpenPalette -> modify' $ \e ->
         e {edPicker = Just (newPicker "commands" (paletteItems config (keymapMode e))), edMode = Picking}

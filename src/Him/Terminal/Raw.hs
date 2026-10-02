@@ -7,19 +7,29 @@ import Control.Exception (bracket)
 import Data.ByteString.Char8 qualified as BC
 import System.IO (BufferMode (..), hFlush, hSetBinaryMode, hSetBuffering, stdout)
 import System.Posix.IO (stdInput)
+import System.Posix.Signals (raiseSignal, sigTSTP)
 import System.Posix.Terminal
 
 -- | Run an action with the terminal in raw mode on the alternate screen.
 -- The original terminal state is restored afterwards, also when the action
--- throws.
+-- throws. The action gets a way to suspend the program (Ctrl-Z): the
+-- terminal is handed back as it was, the process stops itself with
+-- @SIGTSTP@ (raw mode turns off the terminal's own Ctrl-Z), and when the
+-- shell continues it (@fg@) raw mode and the alternate screen come back.
 --
 -- Never touch the buffering/echo of the @stdin@ 'System.IO.Handle' while in
 -- raw mode: GHC then saves the termios state itself and restores that
 -- (raw!) state when the program exits. Input is read from the file
 -- descriptor directly instead (see "Him.Terminal.Input").
-withRawTerminal :: IO a -> IO a
-withRawTerminal action = bracket enter leave (const action)
+withRawTerminal :: (IO () -> IO a) -> IO a
+withRawTerminal action = bracket enter leave (action . suspend)
   where
+    suspend original = do
+      leave original
+      raiseSignal sigTSTP
+      -- Continued.
+      setTerminalAttributes stdInput (makeRaw original) WhenFlushed
+      emit enterSeq
     enter = do
       original <- getTerminalAttributes stdInput
       setTerminalAttributes stdInput (makeRaw original) WhenFlushed

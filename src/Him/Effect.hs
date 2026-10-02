@@ -41,6 +41,9 @@ data Effect
     LspSend !Text !Value
   | -- | Stop a language server (by its key).
     LspStop !Text
+  | -- | Suspend the editor (Ctrl-Z): give the terminal back to the shell
+    -- until it is continued (@fg@).
+    Suspend
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were
