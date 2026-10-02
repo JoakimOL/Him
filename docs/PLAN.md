@@ -673,6 +673,8 @@ Each milestone ends with something runnable, and with this file updated.
   completion imports, references on `g r` (ADR-29).
 - [x] **27. Movement.** Page and half-page motions, `f t F T` with `A-.`, `<count> g g`,
   and Ctrl-Z to suspend (ADR-31).
+- [x] **28. Reload.** `:reload`, `:reload!`, `:reload-all`: the file is read again as one
+  undoable change, keeping the cursor; modified buffers are refused unless forced.
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -696,7 +698,7 @@ Implemented (defined in `Him.Config.Default`):
 | Normal (selections) | `%` (select all), `s` (select matches in the selection, with preview), `C` (copy the selection onto the next line), `,` (keep the primary), `A-,` (remove the primary), `(` / `)` (rotate the primary), `A-s` (split into lines). The status line shows `i/n sels`. |
 | Normal (search) | `/` / `?` (search forward / backward, with preview), `n` / `N` (next / previous match), `*` (selection becomes the pattern) |
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
-| `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
+| `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:reload` / `:rl` (refuses unsaved changes; `:reload!` discards them; undoable), `:reload-all` / `:rla` (skips modified buffers), `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
 | Directory listings | `:o dir`, `him dir`, `space d` (the current file's directory, cursor on the file), `space D` (the working directory). In a listing: normal motions and search, `ret` (enter a directory / open a file), `-` or `backspace` (parent), `g r` (refresh), `a` (new file, or directory with a trailing `/`), `+` (new directory), `r` (rename/move), `d` (delete the selected entries, asks `y`), `g .` (show/hide dotfiles). `:cd [dir]` (default: the listed directory), `:pwd`. |
 | Language server | Diagnostics in the gutter, underlined, and the cursor line's message at the bottom; `] d` / `[ d` next/previous, `space x` list. `space k` hover, `g d` definition, `g y` type definition, `g i` implementation, `g r` references, `space s` symbols, `space S` workspace symbols, `space r` rename, `space a` code actions, `:format`. Insert mode: completion opens by itself (or `C-x`); `tab`/`C-n`/`down` and `S-tab`/`C-p`/`up` select, `ret` accepts, `esc` closes; signature help appears after `(` and `,`. `:lsp-start`, `:lsp-stop`, `:lsp-restart`, `:lsp-info`. Servers: hls, rust-analyzer, clangd, typescript-language-server, pylsp, gopls (`Him.Lsp.Config`). |
 | Git | Gutter signs (green added, yellow changed, red removed; dimmer when staged). `] g` / `[ g` next/previous change; `space g s` / `space g u` stage/unstage the selected lines, `space g S` / `space g U` the whole file, `space g r` reset the selected lines to the index. |
@@ -808,7 +810,9 @@ numbers are provisional.*
     the next match beyond it. With many ranges and few matches, that is slow.
   - Search (`/`, `n`) moves only the primary range.
   - Git: the signs refresh when a buffer becomes current, on save and after staging, but
-    not when the files change outside the editor while it is shown. A diff of a huge file
+    not when the files change outside the editor while it is shown.
+  - Files changed on disk are not detected automatically; `:reload` / `:rla` read them
+    again. Saving does not warn when the file changed on disk meanwhile. A diff of a huge file
     with an edit in the middle takes about 50 ms (in the background).
   - LSP, deferred by choice: inlay hints, semantic tokens, snippets (inserted as plain
     text), and code actions that create, rename or delete files (only their text edits
@@ -829,7 +833,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (445 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (452 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.
