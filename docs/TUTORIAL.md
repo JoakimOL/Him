@@ -939,6 +939,19 @@ The client runs it, and clangd answers by *asking the client* to apply an edit
 (`workspace/applyEdit`). A client that answers every server request automatically, as
 the first version did, silently drops that edit.
 
+**Seeing before choosing.** A list of references is only useful if you can see them.
+The picker's preview is a pure function of the editor state (`previewFor`). An item
+that is a place resolves to an open buffer's text, or to a file read in the background
+and cached while the picker is open. The renderer draws what that function returns:
+the text, "loading…", or why the file is not shown. Because the preview is derived
+data, moving the selection needs no bookkeeping beyond asking for a file that has not
+been read yet.
+
+**Queries the server answers.** Workspace symbols cannot be filtered locally; there
+are too many. So a picker can have a *source*. A `ServerQuery` picker sends each
+change of its query to the server, keeps showing the last answer, and drops answers to
+older queries, the same staleness rule as everywhere else.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with

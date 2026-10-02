@@ -27,7 +27,8 @@ make ghci               # REPL
 make fmt / make lint    # format / lint
 ```
 
-In the editor, `space ?` lists every command with its keys, `space f` opens a file picker
+In the editor, `space ?` lists every command with its keys (pickers preview the file
+and line an item points at), `space f` opens a file picker
 (it streams in the background and honours `.gitignore` and `.ignore`),
 `space b` a buffer picker, `space d` a directory listing (`ret` opens, `-` goes up, `a` /
 `+` / `r` / `d` create, rename and delete, `g .` shows dotfiles; also `:o dir` or
@@ -38,8 +39,8 @@ menu shows what can follow. The full key list is in docs/PLAN.md §6.
 
 With a language server installed (clangd, rust-analyzer, haskell-language-server,
 typescript-language-server, …), diagnostics show in the gutter. `space k` shows
-documentation, `g d` goes to a definition, `g R` lists references, `space r` renames,
-`space a` shows code actions, `:format` formats, and completion and signature help show
+documentation, `g d` goes to a definition, `g r` lists references, `space r` renames,
+`space a` shows code actions, `space S` searches symbols in the project, `:format` formats, and completion and signature help show
 while you type. `:lsp-restart` restarts the server.
 
 Syntax highlighting uses tree-sitter grammars that him compiles itself. Fetch grammar

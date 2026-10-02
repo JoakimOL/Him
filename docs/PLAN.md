@@ -490,7 +490,7 @@ starting point for regex search.
   - diagnostics: a gutter sign over git signs, an underline in the severity's colour,
     the cursor line's message in the bottom row, `] d` / `[ d`, and `space x`;
   - `space k` hover, in a popup at the cursor;
-  - `g d` definition and `g R` references (one location jumps, several open a picker);
+  - `g d` definition and `g r` references (one location jumps, several open a picker);
   - completion in insert mode, automatic or on `C-x`, in a `Completing` keymap layer
     over insert mode.
   - since milestone 25:
@@ -504,11 +504,35 @@ starting point for regex search.
       `)`);
     - `space s` document symbols, `g y` type definition, `g i` implementation;
     - jumps convert the server's columns exactly.
+  - since milestone 26:
+    - `space S` workspace symbols. The picker's source is `ServerQuery`, so each
+      change of the query asks the server again; stale answers are dropped.
+    - completion imports. Items' `additionalTextEdits` are applied with the insertion,
+      moving the cursor down with lines added above it. Items without them are
+      resolved (`completionItem/resolve`, advertised through `resolveSupport`), and the
+      edits are applied if the text is unchanged.
+    - references are on `g r`.
 - **Tests:** against clangd when it is installed (attach, diagnostics, hover, `g d`,
   fixing an error, completion), plus the pure protocol tests.
 
 *Alternatives:* `ReaderT` handles in actions (rejected in ADR-23), or blocking request
 calls from actions, which would freeze the editor while a server thinks.
+
+**ADR-30: Pickers preview where an item points.**
+- **What has a preview:** an item that is a place (a file, a buffer, a position from a
+  language server). It shows beside the list when the box is at least 60 columns wide:
+  the file around the item's line, with that line highlighted and line numbers.
+- **Where the text comes from** (`previewFor` in `Him.Editor`, pure):
+  - an open buffer gives its own text, unsaved changes included;
+  - any other file is read by a `LoadPreview` job (one per path) and cached in
+    `edPreviews` while the picker is open; the cache is dropped when the picker closes.
+- **What is not shown:** binary files (a NUL in the first 8 KB) and files over 20 MB
+  show a note instead.
+- **Drawing:** the box keeps one border, with a divider between the list and the
+  preview; the preview's rows are dropped from the row cache, like every popup.
+
+*Alternative:* opening the file in a hidden buffer. That loads more than needed and
+mixes previews into the buffer list.
 
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
@@ -634,6 +658,8 @@ Each milestone ends with something runnable, and with this file updated.
   `didClose`; rename, format, code actions, signature help, document symbols, type
   definition and implementation; `:lsp-start`, `:lsp-stop`, `:lsp-restart` and
   `:lsp-info` (ADR-29).
+- [x] **26. Previews, workspace symbols, imports.** Picker previews (ADR-30), `space S`,
+  completion imports, references on `g r` (ADR-29).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -658,8 +684,9 @@ Implemented (defined in `Him.Config.Default`):
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
 | `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
 | Directory listings | `:o dir`, `him dir`, `space d` (the current file's directory, cursor on the file), `space D` (the working directory). In a listing: normal motions and search, `ret` (enter a directory / open a file), `-` or `backspace` (parent), `g r` (refresh), `a` (new file, or directory with a trailing `/`), `+` (new directory), `r` (rename/move), `d` (delete the selected entries, asks `y`), `g .` (show/hide dotfiles). `:cd [dir]` (default: the listed directory), `:pwd`. |
-| Language server | Diagnostics in the gutter, underlined, and the cursor line's message at the bottom; `] d` / `[ d` next/previous, `space x` list. `space k` hover, `g d` definition, `g y` type definition, `g i` implementation, `g R` references, `space s` symbols, `space r` rename, `space a` code actions, `:format`. Insert mode: completion opens by itself (or `C-x`); `tab`/`C-n`/`down` and `S-tab`/`C-p`/`up` select, `ret` accepts, `esc` closes; signature help appears after `(` and `,`. `:lsp-start`, `:lsp-stop`, `:lsp-restart`, `:lsp-info`. Servers: hls, rust-analyzer, clangd, typescript-language-server, pylsp, gopls (`Him.Lsp.Config`). |
+| Language server | Diagnostics in the gutter, underlined, and the cursor line's message at the bottom; `] d` / `[ d` next/previous, `space x` list. `space k` hover, `g d` definition, `g y` type definition, `g i` implementation, `g r` references, `space s` symbols, `space S` workspace symbols, `space r` rename, `space a` code actions, `:format`. Insert mode: completion opens by itself (or `C-x`); `tab`/`C-n`/`down` and `S-tab`/`C-p`/`up` select, `ret` accepts, `esc` closes; signature help appears after `(` and `,`. `:lsp-start`, `:lsp-stop`, `:lsp-restart`, `:lsp-info`. Servers: hls, rust-analyzer, clangd, typescript-language-server, pylsp, gopls (`Him.Lsp.Config`). |
 | Git | Gutter signs (green added, yellow changed, red removed; dimmer when staged). `] g` / `[ g` next/previous change; `space g s` / `space g u` stage/unstage the selected lines, `space g S` / `space g U` the whole file, `space g r` reset the selected lines to the index. |
+| Picker preview | Items that are places (files, buffers, symbols, references, diagnostics) show the file around their line beside the list. |
 | Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker), `space ?` (command palette: every action, its keys and doc; one with arguments opens `:action <name> `). `:action <invocation>` runs any action. In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
 
 Actions that take arguments, and have no default key yet: `move_char_left/right`,
@@ -745,8 +772,8 @@ numbers are provisional.*
   - [x] Phase 4, LSP client (milestone 24, ADR-29). Diagnostics, hover, definition,
     references, completion.
   - **Roadmap complete.** Follow-ups, roughly by value: incremental parsing (3b),
-    which can now reuse `Buffer.changeBetween`; workspace symbols, completion's
-    additional edits; a config file for keys,
+    which can now reuse `Buffer.changeBetween`; highlighting in the preview; a config
+    file for keys,
     languages and servers; syntax injections; regex search on `Him.Regex`; and a full
     benchmark run on an idle machine (see above).
 - **Next suggestions:**
@@ -769,10 +796,10 @@ numbers are provisional.*
   - Git: the signs refresh when a buffer becomes current, on save and after staging, but
     not when the files change outside the editor while it is shown. A diff of a huge file
     with an edit in the middle takes about 50 ms (in the background).
-  - LSP: there are no workspace symbols, inlay hints or semantic tokens. Completion
-    items' additional edits (such as auto-imports) are not applied. Snippets are
-    inserted as plain text. Code actions that create, rename or delete files have only
-    their text edits applied.
+  - LSP, deferred by choice: inlay hints, semantic tokens, snippets (inserted as plain
+    text), and code actions that create, rename or delete files (only their text edits
+    are applied).
+  - The preview is plain text, without highlighting.
   - Highlighting needs `him --build-grammars` once (see ADR-27). Without built grammars,
     files are shown plain, and nothing says why except `$HIM_LOG`.
   - Syntax sessions are not closed when their buffer is closed.
@@ -788,7 +815,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (423 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (427 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.
