@@ -741,6 +741,44 @@ matches inside the selection) reuses the search's block scanner and its incremen
 preview. `C` copies each range onto the next line where it fits, and `A-s` splits ranges
 into lines.
 
+### 5.5 Buffers, menus, and pickers (ADR-19, ADR-20)
+
+**Buffers without touching `edDoc`.** Dozens of functions read `edDoc`. Instead of
+replacing it with a list and an index, the other documents sit on either side of it, as
+a zipper:
+
+```haskell
+data Editor = Editor { edDoc :: Document, edBefore :: [Buffered], edAfter :: [Buffered], ... }
+data Buffered = Buffered { bufDoc :: Document, bufView :: View }
+```
+
+Switching buffers moves documents between the lists. Everything that edits "the
+document" keeps working unchanged.
+
+**Menus as derived data.** Helix shows which keys can follow `g` or `space`. The
+keymap trie already has that answer, so the info box is a function of the state:
+
+```haskell
+refreshInfo :: Config -> Editor -> Editor      -- runs after every key
+keyInfo config ed = do
+  sub <- lookupPrefix keymap (edPending ed)     -- the trie below "g"
+  pure (InfoBox "goto" [(showKey k, docOf b) | (k, b) <- children sub] BottomRight)
+```
+
+The `:` menu works the same way, from the ex-command table. Since the box is
+recomputed rather than updated, there is no "forgot to close the popup" bug.
+
+**A trap from the row cache.** Rows are copied from the previous frame when their
+`RowKey` is unchanged (7.6). A popup draws over those rows, so after it closes, the
+cached rows would bring it back. The fix is one line: a popup deletes the keys of the
+rows it covers. The test for it renders with a box, then without, and compares the
+result with a fresh render. With the line removed, the test fails.
+
+**Pickers** are a mode (`Picking`) with their own keymap, so the arrow keys, `ret` and
+`esc` are ordinary bindings. Typed characters reach the query through the fallback.
+The fuzzy score is the number of characters skipped between the first and last match,
+and every start position is tried, so `ab` matches `src/ab.hs` before `src/a/long/b.hs`.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with
@@ -1076,7 +1114,6 @@ The editor is deliberately unfinished. Good next exercises, in increasing diffic
 
 - **A config file:** bindings are already `Map Mode [(keys, invocation)]` (3.6), so
   parse `keys = action args` lines per mode and call `configWith`.
-- **Multiple buffers** and `:e`: turn `edDoc` into a list plus an index.
 - **Highlight all matches:** a render pass over the visible rows. Remember to add the
   highlight to `RowKey`.
 - **Regex search:** write a small backtracking or Thompson-NFA engine. `Him.Search` only

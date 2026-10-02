@@ -19,13 +19,17 @@ The design, the decisions behind it, and the milestone status are in
 
 ```sh
 make build              # stack build
-make run ARGS=file.txt  # run the editor
+make run ARGS="a.txt b.txt"  # run the editor (each file opens as a buffer)
 make test               # run the test suite
 make bench              # compare performance with vim and helix (docs/BENCHMARK.md)
 make watch              # rebuild on save
 make ghci               # REPL
 make fmt / make lint    # format / lint
 ```
+
+In the editor, `space f` opens a file picker, `space b` a buffer picker, and `:` shows
+the commands as you type (`tab` completes). After a prefix key such as `g` or `space`, a
+menu shows what can follow. The full key list is in docs/PLAN.md §6.
 
 Debug logging: `HIM_LOG=/tmp/him.log make run ARGS=file.txt`.
 

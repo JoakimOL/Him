@@ -223,6 +223,38 @@ unchanged. A single range takes a direct path, so typing costs what it did befor
 *Alternative:* change sets with position mapping (as in Helix). They are more general,
 and needed for an undo tree or collaboration, but they are much more code.
 
+**ADR-19: Buffers are a zipper around the current document.**
+The `Editor` keeps the current document in `edDoc` (with `edView`), as before, plus
+`edBefore` (nearest first) and `edAfter`: the other buffers, each with its own view.
+Code that works on the current document did not change. Switching moves documents
+between the lists (`switchBuffer`, `gotoBuffer`), `:open` inserts after the current
+buffer, and closing the only buffer leaves a scratch buffer. Each document keeps its
+own selection and undo history. `:open` compares canonical paths, so a file that is
+already open is switched to rather than loaded twice. `:q` refuses while any buffer is
+modified.
+*Alternative:* a `Seq Document` plus an index. That would change every `edDoc` access.
+
+**ADR-20: Menus are data computed after every key; popups invalidate the rows they
+cover.**
+- **Info box:** after each event, `Him.Info.refreshInfo` sets `edInfo :: Maybe InfoBox`
+  from the editor and the config. After a prefix (`g`, `space`), the box lists the keys
+  below it in the keymap trie and each action's doc. Prefix titles come from
+  `cfgPrefixNames`. On the `:` line it lists the matching ex commands (`cfgExCommands`).
+  The box is derived from state, never edited, so it cannot go stale. Rendering
+  (`Him.Render.Info`) only draws it.
+- **Completion:** `tab` on the `:` line completes the command name, or a path for
+  commands whose `exArgs` is `PathArgs`. With several candidates it extends the line to
+  their common prefix and lists them (`edCompletions`, cleared when the line changes).
+- **Pickers:** a `Picking` mode with its own keymap, and a fallback that types into the
+  query. `Him.Picker` is pure: items carry a `PickTarget` (a file or a buffer index)
+  rather than an action, so the editor state stays plain data. The fuzzy score counts
+  the characters skipped between the first and last match, from the best start; ties
+  go to the shorter label.
+- **Row cache:** a popup draws over text-area rows, and the next frame could copy those
+  rows (popup included) from the cache (ADR-15). So every popup deletes the row keys of
+  the rows it covers. A test renders a frame with a box, then one without, and
+  compares it with a fresh render.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -250,11 +282,13 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Position`, `Him.Selection` | ✅ | `Pos`, `Range {anchor, head}`, `Selection` (sorted, merged NonEmpty ranges + primary; `fromRanges`, `normalize`, primary operations). |
 | `Him.Motion` | ✅ | Pure motions: char, line (desired column), word, line/file start/end. |
 | `Him.Edit` | ✅ | Pure single-range edits, and `applyEdits`, which applies one to every range (ADR-18). |
-| `Him.Editor`, `Him.Mode`, `Him.View` | ✅ | Editor state, modes, viewport + scrolloff. |
+| `Him.Editor`, `Him.Mode`, `Him.View` | ✅ | Editor state (the buffer zipper, ADR-19; `InfoBox`; the open picker), modes (`Normal`, `Insert`, `Select`, `CmdLine`, `Picking`), viewport + scrolloff. |
+| `Him.Info` | ✅ | `refreshInfo`: the info box after a prefix key or on the `:` line (ADR-20). |
+| `Him.Picker`, `Him.Commands.Picker` | ✅ | Pure picker (fuzzy matching, selection); `space f` / `space b` and the picker keys; `listFiles`. |
 | `Him.Action` | ✅ | Actions (name, group, doc, typed parameters), the registry, invocation parsing (`name arg "quoted arg"`), and binding to a runnable `Bound` (ADR-17). |
 | `Him.Command`, `Him.Keymap` | ✅ | `EditorM` and helpers for writing actions; per-mode keymap tries, generic in what they bind (`Keymap a`). |
 | `Him.Ex` | ✅ | `:`-command parser. |
-| `Him.Render`, `Him.Render.*` | ✅ | Frame, layout, components, diffing. Components: `Gutter` (line numbers), `TextArea`, `StatusLine`, `CommandLine`. `layout` depends on the editor, because the gutter width follows the line count. |
+| `Him.Render`, `Him.Render.*` | ✅ | Frame, layout, components, diffing. Components: `Gutter` (line numbers), `TextArea`, `StatusLine`, `CommandLine`, `Info` and `Picker` (popups over the text area). `layout` depends on the editor, because the gutter width follows the line count. |
 | `Him.File` | ✅ | Load/save (UTF-8, line endings, trailing newline). |
 | `Him.History` | ✅ | Undo/redo snapshots: `beginChange` (called by `edit`), `commit` (called by the main loop outside insert mode), `undo`, `redo`. |
 | `Him.Document` | ✅ | Buffer + selection + path + dirty flag + line ending/trailing newline. (Split out of `Buffer` so the buffer stays pure text.) |
@@ -307,16 +341,19 @@ Each milestone ends with something runnable, and with this file updated.
   action's `count` parameter.
 - [x] **17. Multiple selections.** `C`, `s` (with preview), `%`, `,`, `A-,`, `(`, `)`,
   `A-s`. Edits, yank and paste work on every range (ADR-18).
+- [x] **18. Buffers and menus.** `:open`/`:e` (with `tab` path completion), `:new`, `:bc`,
+  `:bn`/`:bp`, `:wa`, `:wqa`, `g n`/`g p`, and `him FILE...` (ADR-19). An info box shows
+  the keys after `g`/`space` and the matching `:` commands. `space f` (file picker) and
+  `space b` (buffer picker) (ADR-20).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
 - [ ] Highlight all matches
 - [ ] Undo tree / change sets instead of snapshots
 - [ ] Named registers and the system clipboard
-- [ ] Multiple buffers, `:e`
 - [ ] User config file for keymaps (only the file parser is left: it produces `Bindings`)
 - [ ] Syntax highlighting (a styling pass at render time)
-- [ ] Popups and pickers (render components)
+- [ ] More pickers (global search, symbols) and a scrollable `:help` listing of actions
 
 ## 6. Keybindings
 
@@ -330,7 +367,8 @@ Implemented (defined in `Him.Config.Default`):
 | Normal (selections) | `%` (select all), `s` (select matches in the selection, with preview), `C` (copy the selection onto the next line), `,` (keep the primary), `A-,` (remove the primary), `(` / `)` (rotate the primary), `A-s` (split into lines). The status line shows `i/n sels`. |
 | Normal (search) | `/` / `?` (search forward / backward, with preview), `n` / `N` (next / previous match), `*` (selection becomes the pattern) |
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
-| `:` commands | `:w [path]`, `:q` (refuses when dirty), `:q!`, `:wq` / `:x` |
+| `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
+| Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker). In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
 
 Actions that take arguments, and have no default key yet: `move_char_left/right`,
 `move_line_up/down [count]`, `goto_line <line>`, `insert_text <text>`,
@@ -351,6 +389,13 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
   defaults.
 - **Add a `:` command:** add an `ExCommand` (names, doc, `[Text] -> EditorM ()`) to
   `Him.Commands.File` or a new list, and include it in `exCommands` in `Him.Config.Default`.
+- **Add a `:` command:** give it `PathArgs` if its arguments are paths, so `tab`
+  completes them. It shows up in the `:` menu automatically.
+- **Name a key prefix:** add it to `prefixNames` in `Him.Config.Default`, which gives the
+  info box a title such as "goto".
+- **Add a picker:** build `PickerItem`s with a `PickTarget` (add a constructor for a
+  new kind of target), open them with `newPicker`, and handle the target in
+  `picker_accept` (`Him.Commands.Picker`).
 - **Add a render component:** write `Theme -> Editor -> Rect -> Frame -> Frame` in
   `Him.Render.<Name>`, give it a `Rect` in `layout`, and compose it in `render`
   (`Him.Render`).
@@ -390,26 +435,33 @@ numbers are provisional.*
 - **The action layer is done (ADR-17).** The config-file parser is still to do. It only
   has to produce `Bindings` (`Map Mode [(keys, invocation)]`) and call
   `Him.Config.Default.configWith`, which reports every bad binding.
-- **Done this session:** count prefixes (`5 j`) and multiple selections (milestone 17,
-  ADR-18).
+- **Done this session:** count prefixes (`5 j`), multiple selections (milestone 17,
+  ADR-18), buffers, info menus and pickers (milestone 18, ADR-19/20).
 - **Next suggestions:**
   1. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
      matcher. `s` would get regexes for free.
   2. `S` (split the selection on a pattern) and `A-;` (flip the selections).
-  3. Multiple buffers / `:e`, and a config file for keymaps (the parser only).
+  3. A config file for keymaps (the parser only). The prefix titles (`cfgPrefixNames`)
+     could be configurable too.
+  4. Pickers: global search (`space /`), a `:help` picker of all actions (`registryActions`
+     already lists them by group), and `.gitignore` support in the file picker.
 - **Known issues:**
   - Zero-width combining characters are treated as width 1.
   - Case-insensitive search folds ASCII letters only.
   - `s` searches from each range's start, and a range without a match can scan on to
     the next match beyond it. With many ranges and few matches, that is slow.
   - Search (`/`, `n`) moves only the primary range.
+  - The file picker does not read `.gitignore`. It skips hidden entries and
+    `dist-newstyle`, `node_modules` and `target`, and lists at most 50,000 files.
+  - The info box and picker measure text by characters, so wide characters in file
+    names can misalign the right border.
 - **Working rule:** revert temporary instrumentation by editing it out (or with
   `git checkout` on a clean tree only). A `git checkout` once threw away uncommitted
   work (the search preview hook).
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (241 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (273 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.
