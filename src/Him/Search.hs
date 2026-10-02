@@ -34,15 +34,15 @@ data Needle = Needle
   deriving stock (Eq, Show)
 
 -- | 'Nothing' for an empty pattern or one spanning lines (matches never
--- cross lines). Case folding is only switched on when it can matter (the
--- pattern has ASCII letters, none upper-case); otherwise the exact search,
--- glibc's memmem, is used.
-compileNeedle :: Text -> Maybe Needle
-compileNeedle t
+-- cross lines). With smart case, case folding is switched on when it can
+-- matter (the pattern has ASCII letters, none upper-case); otherwise the
+-- exact search, glibc's memmem, is used.
+compileNeedle :: Bool -> Text -> Maybe Needle
+compileNeedle smartCase t
   | T.null t || T.any (\c -> c == '\n' || c == '\r') t = Nothing
   | otherwise = Just (Needle t fold (T.length t))
   where
-    fold = not (T.any isUpper t) && T.any (\c -> isAscii c && isAlpha c) t
+    fold = smartCase && not (T.any isUpper t) && T.any (\c -> isAscii c && isAlpha c) t
 
 data Match = Match
   { matchStart :: !Pos
@@ -54,15 +54,17 @@ data Match = Match
   deriving stock (Eq, Show)
 
 -- | The next match after a position ('Forward'), or the previous one before
--- it ('Backward'), wrapping around the buffer.
-findMatch :: Direction -> Needle -> Buffer -> Pos -> Maybe Match
-findMatch dir n buf (Pos l c) = case dir of
+-- it ('Backward'), wrapping around the buffer when @wrap@ is set.
+findMatch :: Bool -> Direction -> Needle -> Buffer -> Pos -> Maybe Match
+findMatch wrap dir n buf (Pos l c) = case dir of
   Forward -> case findForwardFrom fwd (Pos l (c + 1)) buf of
     Just p -> Just (match False p)
-    Nothing -> match True <$> findForwardFrom fwd (Pos 0 0) buf
+    Nothing | wrap -> match True <$> findForwardFrom fwd (Pos 0 0) buf
+    Nothing -> Nothing
   Backward -> case findBackwardBefore bwd bytes (Pos l c) buf of
     Just p -> Just (match False p)
-    Nothing -> match True <$> findBackwardBefore bwd bytes (endPos buf) buf
+    Nothing | wrap -> match True <$> findBackwardBefore bwd bytes (endPos buf) buf
+    Nothing -> Nothing
   where
     fwd = Native.findForward (needleFold n) (needleText n)
     bwd = Native.findBackward (needleFold n) (needleText n)
@@ -84,7 +86,7 @@ matchesIn n buf r = go (before (rangeStart r))
     end = rangeEnd r
     -- findMatch searches after a position, so start one column earlier.
     before (Pos l c) = Pos l (c - 1)
-    go p = case findMatch Forward n buf p of
+    go p = case findMatch False Forward n buf p of
       Just m
         | not (matchWrapped m)
         , matchEnd m <= end ->

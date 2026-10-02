@@ -5,7 +5,6 @@
 module Him.Terminal.Input
   ( decodeKeys
   , startInputReader
-  , escapeTimeoutMicros
   ) where
 
 import Control.Concurrent (forkIO, threadWaitRead)
@@ -26,23 +25,20 @@ import System.Posix.IO (stdInput)
 import System.Posix.IO.ByteString (fdRead)
 import System.Timeout (timeout)
 
--- | How long to wait after a lone ESC byte before deciding it is the Esc key
--- and not the start of an escape sequence.
-escapeTimeoutMicros :: Int
-escapeTimeoutMicros = 30000
-
 -- | Read stdin forever on a background thread, sending 'EvKey' events. All
 -- keys decoded from one read are queued at once, so the main loop can
--- handle a burst before rendering.
-startInputReader :: TChan Event -> IO ()
-startInputReader chan = void (forkIO (loop B.empty))
+-- handle a burst before rendering. After a lone ESC byte it waits this
+-- many milliseconds for the rest of an escape sequence before deciding it
+-- is the Esc key (@editor.escape-timeout@).
+startInputReader :: Int -> TChan Event -> IO ()
+startInputReader escapeMillis chan = void (forkIO (loop B.empty))
   where
     loop pending = do
       -- With an incomplete sequence pending, only wait a short while.
       ready <-
         if B.null pending
           then threadWaitRead stdInput >> pure True
-          else isJust <$> timeout escapeTimeoutMicros (threadWaitRead stdInput)
+          else isJust <$> timeout (escapeMillis * 1000) (threadWaitRead stdInput)
       if ready
         then do
           bytes <- fdRead stdInput 4096

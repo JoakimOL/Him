@@ -19,6 +19,7 @@ import Him.Command
 import Him.Commands.File (openFile)
 import Him.Directory
 import Him.Document (DirEntry (..), Document (..))
+import Him.Options (Options (..))
 import Him.Editor
 import Him.Mode (Mode (..))
 import Him.Position (Pos (..))
@@ -66,8 +67,8 @@ actions =
   , simple "directory_of_cwd" GBuffers "Open the working directory" $
       liftIO getCurrentDirectory >>= \cwd -> openListing cwd Nothing
   , simple "directory_toggle_hidden" GBuffers "Show or hide dotfiles in listings" $ do
-      modify' (\e -> e {edShowHidden = not (edShowHidden e)})
-      shown <- gets edShowHidden
+      modify' (\e -> e {edOptions = (edOptions e) {optShowHidden = not (optShowHidden (edOptions e))}})
+      shown <- gets (optShowHidden . edOptions)
       d <- getDoc
       mapM_ (\dir -> showListing dir (deName <$> entryAt (cursorLine d) d)) (listingDir d)
       info (if shown then "showing dotfiles" else "hiding dotfiles")
@@ -170,7 +171,7 @@ goUp dir = showListing (takeDirectory dir) (Just (takeFileName dir))
 -- navigation stays in one buffer).
 showListing :: FilePath -> Maybe FilePath -> EditorM ()
 showListing dir focus = do
-  showHidden <- gets edShowHidden
+  showHidden <- gets (optShowHidden . edOptions)
   liftIO (loadDirectory showHidden dir) >>= \case
     Left e -> failWith ("could not list " <> T.pack dir <> ": " <> e)
     Right doc -> do

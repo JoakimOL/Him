@@ -99,13 +99,9 @@ shutdown rt = do
   servers <- readMVar (rtServers rt)
   mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) (Map.elems servers)
 
--- | Most files a picker lists (a memory guard; the scan streams).
-maxFiles :: Int
-maxFiles = 500000
-
 runJob :: Runtime -> Job -> IO ()
 runJob rt = \case
-  ScanFiles gen root -> do
+  ScanFiles gen opts root -> do
     -- Files are sent in batches: every 5000 files or 100 ms, whichever
     -- comes first, so the picker fills quickly without an event per file.
     start <- getMonotonicTime
@@ -118,7 +114,7 @@ runJob rt = \case
                 n' = n + length fs
              in if n' >= 5000 || now - lastSent >= 0.1 then (([], 0, now), acc') else ((acc', n', lastSent), [])
           send due
-    _ <- walkFiles maxFiles root emit
+    _ <- walkFiles opts root emit
     rest <- atomicModifyIORef' pending (\(acc, _, t) -> (([], 0, t), acc))
     send rest
     post (EvJob (ScanFinished gen))
@@ -171,13 +167,13 @@ runJob rt = \case
       readMVar started >>= \case
         Right (_, info) -> post (EvJob (LspReady doc key absolute (scLanguageId config) info))
         Left e -> post (EvJob (LspUnavailable doc e))
-  LoadPreview file -> do
+  LoadPreview maxSize file -> do
     -- Binary and very large files are not shown.
     size <- try @IOException (getFileSize file)
     head' <- try @IOException (withBinaryFile file ReadMode (`BS.hGet` 8192))
     result <- case (size, head') of
       (Left e, _) -> pure (Left (T.pack (show e)))
-      (Right n, _) | n > 20 * 1024 * 1024 -> pure (Left "file too large to preview")
+      (Right n, _) | n > toInteger maxSize -> pure (Left "file too large to preview")
       (_, Right bytes) | BS.elem 0 bytes -> pure (Left "binary file")
       _ -> either Left (Right . docBuffer) <$> loadDocument file
     post (EvJob (PreviewLoaded file result))

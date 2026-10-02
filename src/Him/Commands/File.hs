@@ -15,6 +15,7 @@ import Him.Buffer (lineCount)
 import Him.Buffer qualified as Buffer
 import Him.Command
 import Him.Document (Document (..), displayName, isReadOnly, newDocument)
+import Him.Options (Options (..))
 import Him.Editor
 import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Commands.Git (markGitReload)
@@ -175,7 +176,7 @@ openFile path = do
   case lookup (Just want) (zip open [0 ..]) of
     Just i -> modify' (gotoBuffer i)
     Nothing -> do
-      showHidden <- gets edShowHidden
+      showHidden <- gets (optShowHidden . edOptions)
       liftIO (loadPath showHidden path) >>= \case
         Left e -> failWith ("could not open " <> T.pack path <> ": " <> e)
         Right doc -> modify' (openBuffer doc)

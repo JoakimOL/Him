@@ -1,7 +1,6 @@
 -- | How characters of a line map to terminal columns.
 module Him.TextWidth
-  ( tabWidth
-  , charWidth
+  ( charWidth
   , glyphs
   , layoutLine
   , displayCol
@@ -14,9 +13,6 @@ import Data.IntMap.Strict qualified as IntMap
 import Data.List (mapAccumL)
 import Data.Text (Text)
 import Data.Text qualified as T
-
-tabWidth :: Int
-tabWidth = 4
 
 -- | Terminal columns a character takes, not counting tabs (whose width
 -- depends on the column; see 'layoutLine'). Control characters are shown as
@@ -100,9 +96,10 @@ wideRanges =
   , (0x30000, 0x3FFFD)
   ]
 
--- | @(charIndex, displayCol, width, char)@ for every character of a line.
-layoutLine :: Text -> [(Int, Int, Int, Char)]
-layoutLine = snd . mapAccumL step 0 . zip [0 ..] . T.unpack
+-- | @(charIndex, displayCol, width, char)@ for every character of a line,
+-- with tab stops every @tabWidth@ columns.
+layoutLine :: Int -> Text -> [(Int, Int, Int, Char)]
+layoutLine tabWidth = snd . mapAccumL step 0 . zip [0 ..] . T.unpack
   where
     step col (i, c) =
       let w = if c == '\t' then tabWidth - col `mod` tabWidth else charWidth c
@@ -110,14 +107,14 @@ layoutLine = snd . mapAccumL step 0 . zip [0 ..] . T.unpack
 
 -- | The display column where the character at a given index starts. Indices
 -- at or past the end give the column just after the line.
-displayCol :: Text -> Int -> Int
-displayCol line i = case drop i (layoutLine line) of
+displayCol :: Int -> Text -> Int -> Int
+displayCol tw line i = case drop i (layoutLine tw line) of
   ((_, col, _, _) : _) -> col
-  [] -> sum [w | (_, _, w, _) <- layoutLine line]
+  [] -> sum [w | (_, _, w, _) <- layoutLine tw line]
 
 -- | The index of the character covering a display column (the inverse of
 -- 'displayCol'). Columns past the end give the line length.
-charIndexAtCol :: Text -> Int -> Int
-charIndexAtCol line col = case [i | (i, start, w, _) <- layoutLine line, col < start + w] of
+charIndexAtCol :: Int -> Text -> Int -> Int
+charIndexAtCol tw line col = case [i | (i, start, w, _) <- layoutLine tw line, col < start + w] of
   (i : _) -> i
   [] -> T.length line

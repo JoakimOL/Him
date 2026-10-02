@@ -3,7 +3,9 @@
 -- @
 -- [editor]
 -- scrolloff = 3
--- show-hidden-files = false
+-- theme = "onedark"
+-- [editor.search]
+-- smart-case = false        # every setting: "Him.Options"
 --
 -- [keys.normal]
 -- "C-s" = "ex w"            # keys = an action invocation
@@ -26,6 +28,7 @@ module Him.UserConfig
   , configPath
   , applyUserConfig
   , applyEditorOptions
+  , userOptions
   , defaultConfigText
   , modeSections
   ) where
@@ -46,14 +49,15 @@ import Him.Editor (Editor (..))
 import Him.Json hiding (path)
 import Him.Lsp.Config (ServerConfig (..), ServerTable, defaultServers)
 import Him.Mode (Mode (..))
+import Him.Options
 import Him.Paths (configPath)
 import Him.Toml (parseToml, quoteKey, quoteString)
 import System.Directory (doesFileExist)
 
 data UserConfig = UserConfig
   { ucBindings :: !Bindings
-  , ucScrolloff :: !(Maybe Int)
-  , ucShowHidden :: !(Maybe Bool)
+  , ucEditor :: ![(Text, Value)]
+  -- ^ Settings by key ('Him.Options.optionSpecs'), already checked.
   , ucTheme :: !(Maybe Text)
   , ucServers :: !(Map Text ServerOverride)
   }
@@ -71,7 +75,7 @@ data ServerOverride = ServerOverride
   deriving stock (Eq, Show)
 
 emptyUserConfig :: UserConfig
-emptyUserConfig = UserConfig Map.empty Nothing Nothing Nothing Map.empty
+emptyUserConfig = UserConfig Map.empty [] Nothing Map.empty
 
 -- | The sections of @[keys]@, by mode.
 modeSections :: [(Text, Mode)]
@@ -113,16 +117,17 @@ parseUserConfig src = do
       (other, _) -> Left ["unknown section [" <> other <> "] (known: editor, keys, language-server)"]
     editor v = do
       kvs <- table "[editor]" v
-      fs <- collect (map editorKey kvs)
+      fs <- collect (concatMap editorKey kvs)
       Right (foldr (.) id fs)
+    -- Settings are checked against the option table; sub-tables
+    -- ([editor.search]) give dotted keys.
     editorKey = \case
-      ("scrolloff", JInt n) | n >= 0 -> Right (\c -> c {ucScrolloff = Just (fromInteger n)})
-      ("scrolloff", _) -> Left ["editor.scrolloff must be a number of lines"]
-      ("show-hidden-files", JBool b) -> Right (\c -> c {ucShowHidden = Just b})
-      ("show-hidden-files", _) -> Left ["editor.show-hidden-files must be true or false"]
-      ("theme", JString t) | not (T.null t) -> Right (\c -> c {ucTheme = Just t})
-      ("theme", _) -> Left ["editor.theme must be a theme's name in quotes, e.g. \"onedark\""]
-      (k, _) -> Left ["unknown setting editor." <> k <> " (known: scrolloff, show-hidden-files, theme)"]
+      ("theme", JString t) | not (T.null t) -> [Right (\c -> c {ucTheme = Just t})]
+      ("theme", _) -> [Left ["editor.theme must be a theme's name in quotes, e.g. \"onedark\""]]
+      (k, JObject sub) | k `elem` optionSections -> concatMap (\(k', v) -> editorKey (k <> "." <> k', v)) sub
+      (k, v) -> case setOption k v defaultOptions of
+        Left e -> [Left [e]]
+        Right _ -> [Right (\c -> c {ucEditor = ucEditor c <> [(k, v)]})]
     keys v = do
       modes <- table "[keys]" v
       bindings <- collect (map modeKeys modes)
@@ -191,9 +196,12 @@ applyServers overrides table0 = foldr step (Right table0) (Map.toList overrides)
 applyEditorOptions :: UserConfig -> Editor -> Editor
 applyEditorOptions uc ed =
   ed
-    { edScrolloff = fromMaybe 3 (ucScrolloff uc)
-    , edShowHidden = fromMaybe False (ucShowHidden uc)
+    { edOptions = userOptions uc
     }
+
+-- | The settings a config file makes (the rest are the defaults).
+userOptions :: UserConfig -> Options
+userOptions uc = foldl' (\o (k, v) -> either (const o) id (setOption k v o)) defaultOptions (ucEditor uc)
 
 -- | Every default, as a config file (@him --dump-default-config@): editor
 -- settings, all bindings per mode (with what they do), the language
@@ -210,12 +218,8 @@ defaultConfigText =
     , "# ret esc tab backspace space up down pageup pagedown F1. The value is an"
     , "# action with its arguments: \"move_line_down 5\", \"insert_text \\\"// \\\"\", \"ex w\"."
     , "# \"no_op\" unbinds a key. All actions are listed at the end."
-    , ""
-    , "[editor]"
-    , "scrolloff = 3               # lines kept visible above and below the cursor"
-    , "show-hidden-files = false   # dotfiles in directory listings (g . toggles)"
-    , "theme = \"default\"           # any Helix theme, or your own in themes/ next to this file (:theme)"
     ]
+      <> concatMap optionBlock optionSections
       <> concatMap modeBlock modeSections
       <> concatMap serverBlock (Map.toList defaultServers)
       <> [ ""
@@ -225,6 +229,16 @@ defaultConfigText =
          | a <- sortOn actGroup allActions
          ]
   where
+    optionBlock section =
+      [ ""
+      , if T.null section then "[editor]" else "[editor." <> section <> "]"
+      ]
+        <> ["theme = \"default\"  # any Helix theme, or your own in themes/ next to this file (:theme)" | T.null section]
+        <> [ T.justifyLeft 34 ' ' (name <> " = " <> osShow spec defaultOptions) <> " # " <> osDoc spec
+           | spec <- optionSpecs
+           , let (prefix, name) = T.breakOnEnd "." (osKey spec)
+           , T.dropEnd 1 prefix == section
+           ]
     modeBlock (name, mode) =
       [ ""
       , "[keys." <> name <> "]" <> modeNote mode

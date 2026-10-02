@@ -14,6 +14,7 @@ import Him.Document (Document (..))
 import Him.Edit
 import Him.History (History, Snapshot (..), redo, undo)
 import Him.Editor (Editor (..))
+import Him.Options (Options (..))
 import Him.Mode (Mode (..))
 import Him.Selection
 
@@ -32,7 +33,9 @@ actions =
   , simple "select_mode" GModes "Toggle select (extend) mode" $
       gets edMode >>= \m -> setMode (if m == Select then Normal else Select)
   , simple "insert_newline" GEditing "Insert a line break" (edit insertNewline)
-  , simple "insert_tab" GEditing "Insert a tab character" (insertChar '\t')
+  , simple "insert_tab" GEditing "Insert a tab, or tab-width spaces with expand-tab" $ do
+      o <- gets edOptions
+      if optExpandTab o then edit (insertAtHead (T.replicate (optTabWidth o) " ")) else insertChar '\t'
   , simple "delete_char_backward" GEditing "Delete the character before the cursor" (edit deleteBackward)
   , simple "delete_char_forward" GEditing "Delete the character under the cursor" (edit deleteForward)
   , simple "delete_selection" GEditing "Delete the selection (and yank it)" $ do

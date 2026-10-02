@@ -29,6 +29,7 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Him.Key (Key)
+import Him.Options (Options, defaultOptions)
 import Him.Mode (Mode (..))
 import Him.Effect (Effect)
 import Data.Text qualified as T
@@ -150,10 +151,8 @@ data Editor = Editor
   -- ^ The completion menu, in insert mode.
   , edPopup :: !(Maybe InfoBox)
   -- ^ A box shown until the next key (e.g. hover documentation).
-  , edScrolloff :: !Int
-  -- ^ Lines kept visible above and below the cursor.
-  , edShowHidden :: !Bool
-  -- ^ Directory listings show dotfiles (@g .@ toggles).
+  , edOptions :: !Options
+  -- ^ The settings (@[editor]@ in the config file).
   , edInfo :: !(Maybe InfoBox)
   , edCompletions :: ![Text]
   -- ^ Candidates from the last @tab@ on the command line, shown until the
@@ -190,8 +189,7 @@ newEditor size doc =
     , edLsp = emptyLsp
     , edCompletion = Nothing
     , edPopup = Nothing
-    , edScrolloff = 3
-    , edShowHidden = False
+    , edOptions = defaultOptions
     , edInfo = Nothing
     , edCompletions = []
     , edRegisters = Map.empty

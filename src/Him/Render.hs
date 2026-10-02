@@ -13,6 +13,7 @@ module Him.Render
 import Him.Document (Document (..))
 import Him.Editor (Editor (..))
 import Him.Mode (Mode (..))
+import Him.Options (CursorKind (..), Options (..), cursorKindFor)
 import Him.Position (Pos (..))
 import Him.Render.CommandLine
 import Him.Render.Frame
@@ -50,7 +51,7 @@ layout ed =
 
 -- | Scroll the view so the primary cursor is on screen.
 ensureCursorVisible :: Editor -> Editor
-ensureCursorVisible ed = ed {edView = scrollToCursor (rectHeight r, rectWidth r) (edScrolloff ed) cursor (edView ed)}
+ensureCursorVisible ed = ed {edView = scrollToCursor (rectHeight r, rectWidth r) (optScrolloff (edOptions ed)) cursor (edView ed)}
   where
     r = layoutText (layout ed)
     cursor = (posLine (rangeHead (primary (docSelection (edDoc ed)))), cursorDisplayCol ed)
@@ -80,8 +81,7 @@ render theme prev ed =
       CmdLine -> Just (commandLineCursor ed cmdR)
       Picking -> pickerCursor ed overlay
       _ -> cursorPosition ed textR
-    shape = case edMode ed of
-      Insert -> CursorBar
-      CmdLine -> CursorBar
-      Picking -> CursorBar
-      _ -> CursorBlock
+    shape = case cursorKindFor (edOptions ed) (edMode ed) of
+      CursorKindBlock -> CursorBlock
+      CursorKindBar -> CursorBar
+      CursorKindUnderline -> CursorUnderline

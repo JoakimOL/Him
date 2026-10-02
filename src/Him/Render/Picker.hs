@@ -10,6 +10,7 @@ import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
 import Him.Editor
 import Him.Picker
+import Him.Options (Options (..))
 import Him.Render.Frame
 import Him.Render.Theme
 import Him.Terminal.Ansi (Style (..))
@@ -30,7 +31,8 @@ drawPicker theme ed area f = case edPicker ed of
   where
     draw p =
       let Rect top left h w = box area
-          preview = if w >= 60 then selectedItem p >>= previewFor ed . piTarget else Nothing
+          opts = edOptions ed
+          preview = if optPreview opts && w >= optPreviewMinWidth opts then selectedItem p >>= previewFor ed . piTarget else Nothing
           -- With a preview, the list takes the left part of the box.
           inner = case preview of
             Just _ -> (w - 3) * 2 `div` 5
@@ -89,7 +91,7 @@ drawPicker theme ed area f = case edPicker ed of
                     ]
                   rowText l text =
                     let number = T.justifyRight numberW ' ' (T.pack (show (l + 1)))
-                        body = T.replace "\t" "    " text
+                        body = T.replace "\t" (T.replicate (optTabWidth (edOptions ed)) " ") text
                      in T.take pw (" " <> number <> " " <> body) <> T.replicate (pw - 2 - numberW - T.length body) " "
                   styleOf l = if l == line then themePopupSelected theme else themePopup theme
                in foldl' (\acc (r, l, text) -> putText r col (styleOf l) (T.take pw (rowText l text)) acc) titled shown

@@ -52,19 +52,21 @@ charLeft, charRight :: Motion
 charLeft = headMotion prevPos
 charRight = headMotion nextPos
 
+-- | Up and down with the default tab width (4).
 lineUp, lineDown :: Motion
-lineUp = lineBy (-1)
-lineDown = lineBy 1
+lineUp = lineBy 4 (-1)
+lineDown = lineBy 4 1
 
 -- | Vertical movement that remembers the /display/ column it started from,
--- so it stays visually aligned across tabs and wide characters.
-lineBy :: Int -> Motion
-lineBy delta b r = Range p p (Just want)
+-- so it stays visually aligned across tabs (every @tabWidth@ columns) and
+-- wide characters.
+lineBy :: Int -> Int -> Motion
+lineBy tabWidth delta b r = Range p p (Just want)
   where
     Pos l c = rangeHead r
-    want = fromMaybe (displayCol (lineAt l b) c) (rangeWantCol r)
+    want = fromMaybe (displayCol tabWidth (lineAt l b) c) (rangeWantCol r)
     l' = max 0 (min (lineCount b - 1) (l + delta))
-    p = Pos l' (charIndexAtCol (lineAt l' b) want)
+    p = Pos l' (charIndexAtCol tabWidth (lineAt l' b) want)
 
 lineStart, lineEnd, fileStart, lastLine :: Motion
 lineStart _ r = point (Pos (posLine (rangeHead r)) 0)

@@ -32,7 +32,7 @@ import Him.Commands.Picker qualified as Picker
 import Him.Commands.Lsp qualified as Lsp
 import Him.Commands.Syntax qualified as Syntax
 import Him.Info (refreshInfo)
-import Him.UserConfig (UserConfig (..), applyEditorOptions, applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
+import Him.UserConfig (UserConfig (..), applyEditorOptions, userOptions, applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Control.Monad.IO.Class (liftIO)
 import System.Directory (doesFileExist)
@@ -41,6 +41,7 @@ import Him.Runtime qualified as Runtime
 import Him.Palette (paletteItems)
 import Him.Picker (newPicker)
 import Him.Mode (Mode (..))
+import Him.Options (Options (..))
 import Him.Editor
 import Him.Event (Event (..))
 import Him.Directory (loadPath)
@@ -73,7 +74,8 @@ run files = do
     events <- newTChanIO
     size <- fromMaybe (24, 80) <$> getWindowSize
     onResize (atomically . writeTChan events . uncurry EvResize)
-    startInputReader events
+    -- The escape timeout is read once, here (a reload does not change it).
+    startInputReader (optEscapeTimeout (userOptions userConfig)) events
     runtime <- newRuntime (cfgSyntaxProviders config) (cfgServers config) (atomically . writeTChan events)
     -- Start what the first document needs (its git state) before any key.
     let opened = applyEditorOptions userConfig (openAll size docs)

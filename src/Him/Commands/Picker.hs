@@ -24,6 +24,8 @@ import Him.Selection (point, single)
 import Him.Editor
 import Him.Mode (Mode (..))
 import Him.Picker
+import Him.FileTree (WalkOptions (..))
+import Him.Options (Options (..))
 
 actions :: [Action]
 actions =
@@ -32,7 +34,8 @@ actions =
       gen <- gets edNextId
       modify' (\e -> e {edNextId = gen + 1})
       open (newPicker "files" []) {pkGeneration = gen, pkLoading = True}
-      request (StartJob (ScanFiles gen "."))
+      o <- gets edOptions
+      request (StartJob (ScanFiles gen (WalkOptions (optPickerHidden o) (optPickerGitIgnore o) (optPickerIgnore o) (optPickerFollowSymlinks o) (optPickerMaxFiles o)) "."))
   , simple "buffer_picker" GBuffers "Switch to an open buffer" $ do
       (bs, cur) <- gets buffers
       let label i b = T.pack (show (i + 1)) <> (if i == cur then " * " else "   ") <> displayName (bufDoc b)
@@ -140,11 +143,12 @@ pickerHousekeeping = do
   ed <- get
   case edPicker ed >>= selectedItem of
     Just item
-      | Just file <- fileOf (piTarget item)
+      | optPreview (edOptions ed)
+      , Just file <- fileOf (piTarget item)
       , Just (_, Left _) <- previewFor ed (piTarget item)
       , Map.notMember file (edPreviews ed) -> do
           modify' (\e -> e {edPreviews = Map.insert file PreviewLoading (edPreviews e)})
-          request (StartJob (LoadPreview file))
+          request (StartJob (LoadPreview (optPreviewMaxSize (edOptions ed)) file))
     _ -> pure ()
   where
     fileOf = \case

@@ -29,6 +29,7 @@ import Him.Command
 import Him.Commands.File (openFile)
 import Him.Document (DocKind (..), Document (..))
 import Him.Effect (Effect (..), Job (..), JobResult (..))
+import Him.Options (Options (..))
 import Him.Editor hiding (Severity (..))
 import Him.Json hiding (path)
 import Him.Json qualified as J
@@ -234,7 +235,7 @@ answered :: Pending -> Value -> EditorM ()
 answered pending value = case pending of
   PendingHover -> case parseHover value of
     [] -> info "no documentation here"
-    ls -> modify' (\e -> e {edPopup = Just (InfoBox "hover" [(l, "") | l <- take 30 ls] AtCursor)})
+    ls -> modify' (\e -> e {edPopup = Just (InfoBox "hover" [(l, "") | l <- take (optHoverLines (edOptions e)) ls] AtCursor)})
   PendingLocations title -> goToLocations title (parseLocations value)
   PendingCompletion doc _ start -> do
     ed <- get
@@ -458,10 +459,11 @@ codeActions = do
 formatDocument :: EditorM ()
 formatDocument = do
   d <- getDoc
+  o <- gets edOptions
   case docLsp d of
     LspAttached at ->
       sendRequest (atServer at) (PendingFormat (docId d) (docVersion d)) "textDocument/formatting" $
-        object [("textDocument", docIdentifier at), ("options", object [("tabSize", JInt 4), ("insertSpaces", JBool True)])]
+        object [("textDocument", docIdentifier at), ("options", object [("tabSize", JInt (toInteger (optTabWidth o))), ("insertSpaces", JBool (optExpandTab o))])]
     _ -> failWith "no language server for this file"
 
 -- | Enter on the rename prompt.
@@ -651,7 +653,8 @@ signatureHousekeeping = do
   let d = edDoc ed
   case (edMode ed, docLsp d) of
     (Insert, LspAttached at)
-      | docVersion d /= lsSignatureVersion (edLsp ed) -> do
+      | optAutoSignatureHelp (edOptions ed)
+      , docVersion d /= lsSignatureVersion (edLsp ed) -> do
           modify' (\e -> e {edLsp = (edLsp e) {lsSignatureVersion = docVersion d}})
           let Pos l c = rangeHead (primary (docSelection d))
               previous = T.takeEnd 1 (T.take c (Buffer.lineAt l (docBuffer d)))
@@ -673,6 +676,7 @@ menuHousekeeping = do
     (Just _, _) -> modify' (\e -> e {edCompletion = Nothing})
     (Nothing, Insert)
       | LspAttached at <- docLsp d
+      , optAutoCompletion (edOptions ed)
       , docVersion d /= lsAutoVersion (edLsp ed)
       , not (any isCompletion (IntMap.elems (lsPending (edLsp ed)))) -> do
           modify' (\e -> e {edLsp = (edLsp e) {lsAutoVersion = docVersion d}})
@@ -680,7 +684,7 @@ menuHousekeeping = do
               Pos l c = rangeHead (primary (docSelection d))
               previous = T.takeEnd 1 (T.take c (Buffer.lineAt l (docBuffer d)))
               triggers = maybe [] siTriggers (Map.lookup (atServer at) (lsServers (edLsp ed)))
-          if (not (T.null previous) && previous `elem` triggers) || T.length word >= 2
+          if (not (T.null previous) && previous `elem` triggers) || T.length word >= optCompletionTriggerLen (edOptions ed)
             then requestCompletion
             else pure ()
     _ -> pure ()

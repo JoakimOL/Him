@@ -13,6 +13,7 @@ import Him.Syntax (SyntaxInfo (..))
 import Him.Syntax.Span (LineSpan (..))
 import Him.Editor (Editor (..))
 import Him.Mode (Mode (..))
+import Him.Options (Options (..))
 import Him.Position (Pos (..))
 import Him.Render.Frame
 import Him.Render.Theme
@@ -38,6 +39,7 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
       Nothing -> screenRow
     doc = edDoc ed
     buf = docBuffer doc
+    tabWidth = optTabWidth (edOptions ed)
     View top left = edView ed
     sel = docSelection doc
     prim = primary sel
@@ -122,7 +124,7 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
         plain = T.all (\ch -> ch >= ' ' && ch < '\DEL') text
         lineCells
           | plain = zipWith (\i ch -> Cell ch (styled i)) [0 ..] (T.unpack text) <> lineEndCell
-          | otherwise = concatMap charCells (layoutLine text) <> lineEndCell
+          | otherwise = concatMap charCells (layoutLine tabWidth text) <> lineEndCell
         visible
           | plain = take (rectWidth rect) (drop left lineCells)
           | otherwise = fixEdges (take (rectWidth rect) (drop left lineCells))
@@ -144,7 +146,7 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
 
 -- | Display column of the primary cursor.
 cursorDisplayCol :: Editor -> Int
-cursorDisplayCol ed = displayCol (lineAt l buf) c
+cursorDisplayCol ed = displayCol (optTabWidth (edOptions ed)) (lineAt l buf) c
   where
     buf = docBuffer (edDoc ed)
     Pos l c = rangeHead (primary (docSelection (edDoc ed)))

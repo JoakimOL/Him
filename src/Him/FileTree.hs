@@ -2,6 +2,8 @@
 -- @.gitignore@ and @.ignore@ files ("Him.Ignore").
 module Him.FileTree
   ( listFiles
+  , WalkOptions (..)
+  , defaultWalk
   , walkFiles
   , rootIgnorer
   ) where
@@ -26,27 +28,46 @@ import System.Posix.Directory (closeDirStream, openDirStream)
 import System.Posix.Directory.Internals (DirType, dirEntName, dirEntType, isDirectoryType, isRegularFileType, isSymbolicLinkType, isUnknownType, readDirStreamWith)
 import System.Posix.Files (getFileStatus, getSymbolicLinkStatus, isDirectory, isRegularFile, isSymbolicLink)
 
+-- | What a walk lists (@[editor.file-picker]@ in the config file).
+data WalkOptions = WalkOptions
+  { woHidden :: !Bool
+  -- ^ Dotfiles and dot-directories too (never @.git@).
+  , woGitIgnore :: !Bool
+  -- ^ Honour @.gitignore@ and @.git/info/exclude@.
+  , woIgnore :: !Bool
+  -- ^ Honour @.ignore@.
+  , woFollowLinks :: !Bool
+  -- ^ Enter linked directories.
+  , woLimit :: !Int
+  -- ^ Stop after this many files.
+  }
+  deriving stock (Eq, Show)
+
+-- | Hidden entries skipped, both ignore files honoured, links followed.
+defaultWalk :: Int -> WalkOptions
+defaultWalk = WalkOptions False True True True
+
 -- | Files below a directory, sorted, relative to it (see 'walkFiles').
-listFiles :: Int -> FilePath -> IO [FilePath]
-listFiles limit root = do
+listFiles :: WalkOptions -> FilePath -> IO [FilePath]
+listFiles opts root = do
   found <- newIORef []
-  _ <- walkFiles limit root (\fs -> atomicModifyIORef' found (\acc -> (fs <> acc, ())))
+  _ <- walkFiles opts root (\fs -> atomicModifyIORef' found (\acc -> (fs <> acc, ())))
   sort <$> readIORef found
 
 -- | Walk the files below a directory, relative to it, handing them to
 -- @emit@ a directory at a time (from several threads; @emit@ must be
--- thread safe). Hidden entries (@.git@, dotfiles) and ignored ones are
--- skipped, and an ignored directory is not entered. Links to directories
--- are followed, as Helix does, but each target only once and never one
--- that contains the link (a cycle). It stops after @limit@ files and
--- returns how many it found.
+-- thread safe). Hidden entries (dotfiles; @.git@ always) and ignored ones
+-- are skipped, as the options say, and an ignored directory is not
+-- entered. Links to directories are followed, as Helix does, but each
+-- target only once and never one that contains the link (a cycle). It
+-- stops after the limit and returns how many files it found.
 --
 -- Directories are read by a pool of worker threads (ADR-24), and entry
 -- types come from @readdir@ itself, so most entries cost no @stat@.
 -- Killing the calling thread stops the workers too.
-walkFiles :: Int -> FilePath -> ([FilePath] -> IO ()) -> IO Int
-walkFiles limit root emit = do
-  outer <- rootIgnorer root
+walkFiles :: WalkOptions -> FilePath -> ([FilePath] -> IO ()) -> IO Int
+walkFiles opts root emit = do
+  outer <- if woGitIgnore opts || woIgnore opts then rootIgnorer names root else pure []
   queue <- newTQueueIO
   pending <- newTVarIO (1 :: Int)
   count <- newIORef 0
@@ -63,10 +84,10 @@ walkFiles limit root emit = do
             atomically (modifyTVar' pending (subtract 1))
             worker
       visit (dir, ignorer0) = do
-        own <- readRules (root `join` dir)
+        own <- readRules names (root `join` dir)
         let ignorer = ignorer0 <> [(Below dir, rules) | rules <- own]
         entries <- either (const []) id <$> try @IOException (readEntries (root `join` dir))
-        kinds <- traverse (\(name, kind) -> (dir `join` name,) <$> resolve followed (root `join` (dir `join` name)) kind) [e | e@(name, _) <- entries, not ("." `isPrefixOf` name)]
+        kinds <- traverse (\(name, kind) -> (dir `join` name,) <$> resolve (woFollowLinks opts) followed (root `join` (dir `join` name)) kind) [e | e@(name, _) <- entries, shown name]
         let kept = [(p, k) | (p, Just k) <- kinds, not (isIgnored ignorer p (k == Dir))]
             files = [p | (p, File) <- kept]
             dirs = [(p, ignorer) | (p, Dir) <- kept]
@@ -83,6 +104,9 @@ walkFiles limit root emit = do
   replicateM_ workers (takeMVar finished) `onException` mapM_ killThread tids
   min limit <$> readIORef count
   where
+    limit = woLimit opts
+    names = [".gitignore" | woGitIgnore opts] <> [".ignore" | woIgnore opts]
+    shown name = name /= ".git" && (woHidden opts || not ("." `isPrefixOf` name))
     join d "" = d
     join "" p = p
     join "." p = p
@@ -105,8 +129,8 @@ readEntries dir = bracket (openDirStream dir) closeDirStream (go [])
 
 -- | A file or a directory to enter; 'Nothing' for anything else. Only
 -- links and file systems that do not report types need a @stat@.
-resolve :: TVar (Set FilePath) -> FilePath -> DirType -> IO (Maybe Kind)
-resolve followed path kind
+resolve :: Bool -> TVar (Set FilePath) -> FilePath -> DirType -> IO (Maybe Kind)
+resolve follow followed path kind
   | isDirectoryType kind = pure (Just Dir)
   | isRegularFileType kind = pure (Just File)
   | isSymbolicLinkType kind = link
@@ -121,7 +145,7 @@ resolve followed path kind
     link =
       try @IOException (getFileStatus path) >>= \case
         Right st | isRegularFile st -> pure (Just File)
-        Right st | isDirectory st -> linkedDirectory
+        Right st | isDirectory st, follow -> linkedDirectory
         _ -> pure Nothing
     -- Enter a linked directory unless it contains the link (a cycle) or
     -- another link to it was entered already.
@@ -136,9 +160,10 @@ resolve followed path kind
 
 -- | Rules from outside the walk that still apply to it: the ignore files of
 -- the root's ancestors up to the enclosing git repository's root, and that
--- repository's @.git/info/exclude@. Outside a repository there are none.
-rootIgnorer :: FilePath -> IO Ignorer
-rootIgnorer root = do
+-- repository's @.git/info/exclude@ (with @.gitignore@ among the names).
+-- Outside a repository there are none.
+rootIgnorer :: [FilePath] -> FilePath -> IO Ignorer
+rootIgnorer names root = do
   start <- either (const root) id <$> (try (canonicalizePath root) :: IO (Either IOException FilePath))
   findRepo start >>= \case
     Nothing -> pure []
@@ -148,8 +173,8 @@ rootIgnorer root = do
           below = takeWhile (/= repo) (iterate takeDirectory start)
           ancestors = if start == repo then [] else repo : reverse (drop 1 below)
           scope dir = if dir == start then Below "" else Above (makeRelative dir start)
-      exclude <- readRulesFile (repo </> ".git" </> "info" </> "exclude")
-      fromAncestors <- traverse (\dir -> map (scope dir,) <$> readRules dir) ancestors
+      exclude <- if ".gitignore" `elem` names then readRulesFile (repo </> ".git" </> "info" </> "exclude") else pure Nothing
+      fromAncestors <- traverse (\dir -> map (scope dir,) <$> readRules names dir) ancestors
       pure ([(scope repo, rules) | Just rules <- [exclude]] <> concat fromAncestors)
 
 -- | The nearest directory at or above a path that contains @.git@.
@@ -162,9 +187,9 @@ findRepo dir = do
     else if parent == dir then pure Nothing else findRepo parent
 
 -- | The rule sets of a directory's ignore files, in precedence order.
-readRules :: FilePath -> IO [[Rule]]
-readRules dir = do
-  found <- traverse (readRulesFile . (dir </>)) ignoreFileNames
+readRules :: [FilePath] -> FilePath -> IO [[Rule]]
+readRules names dir = do
+  found <- traverse (readRulesFile . (dir </>)) names
   pure [rules | Just rules <- found]
 
 readRulesFile :: FilePath -> IO (Maybe [Rule])

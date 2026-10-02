@@ -16,6 +16,7 @@ import Him.Action
 import Him.Command
 import Him.Document (Document (..))
 import Him.Motion
+import Him.Options (Options (..))
 import Him.Buffer (Buffer)
 import Him.Selection (Selection, collapse, keepPrimary, mapRanges, removePrimary, rotatePrimary)
 
@@ -23,8 +24,8 @@ actions :: [Action]
 actions =
   [ repeated "move_char_left" GMovement "Move left" charLeft
   , repeated "move_char_right" GMovement "Move right" charRight
-  , action "move_line_up" GMovement "Move up" count (motion . lineBy . negate)
-  , action "move_line_down" GMovement "Move down" count (motion . lineBy)
+  , action "move_line_up" GMovement "Move up" count (vertical . negate)
+  , action "move_line_down" GMovement "Move down" count vertical
   , simple "goto_line_start" GMovement "Go to the start of the line" (motion lineStart)
   , simple "goto_line_end" GMovement "Go to the last character of the line" (motion lineEnd)
   , action "goto_file_start" GMovement "Go to the first line, or to line <count> (5 g g)" (optional "-" 0 (int "count")) $ \n ->
@@ -80,9 +81,15 @@ page direction parts n = do
   let height = max 1 (fst (edSize ed) - 2)
       delta = direction * n * max 1 (height `div` parts)
       lines' = Buffer.lineCount (docBuffer (edDoc ed))
-  motion (lineBy delta)
+  vertical delta
   modify' $ \e ->
     e {edView = (edView e) {viewTop = max 0 (min (lines' - 1) (viewTop (edView e) + delta))}}
+
+-- | Move lines up (negative) or down, keeping the display column.
+vertical :: Int -> EditorM ()
+vertical delta = do
+  tw <- gets (optTabWidth . edOptions)
+  motion (lineBy tw delta)
 
 -- | Wait for the character to find (see 'awaitedKey').
 await :: Bool -> Bool -> Int -> EditorM ()

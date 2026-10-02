@@ -26,6 +26,7 @@ import Him.Invocation (Invocation)
 import Him.Json (Value)
 import Him.Lsp.State (ServerInfo)
 import Him.Picker (PickerItem)
+import Him.FileTree (WalkOptions)
 
 data Effect
   = -- | Run another action, e.g. the one chosen in the command palette.
@@ -57,7 +58,7 @@ data Effect
 -- dropped.
 data Job
   = -- | List the files below a directory for the picker of this generation.
-    ScanFiles !Int !FilePath
+    ScanFiles !Int !WalkOptions !FilePath
   | -- | Rank a large picker's items for a query.
     FilterPicker !Int !Text !(Seq PickerItem)
   | -- | Look up a document's file in git (by document id and path).
@@ -74,8 +75,9 @@ data Job
   | -- | Make sure a language server runs for a document (id, language,
     -- path), starting it if needed.
     LspEnsure !Int !Language !FilePath
-  | -- | Read a file for the picker's preview.
-    LoadPreview !FilePath
+  | -- | Read a file for the picker's preview (unless larger than so many
+    -- bytes).
+    LoadPreview !Int !FilePath
   deriving stock (Eq, Show)
 
 data JobKey = ScanJob | FilterJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int | SyntaxJob !Int | LspStartJob !Int | PreviewJob !FilePath
@@ -91,7 +93,7 @@ jobKey = \case
   SyntaxStart d _ -> SyntaxJob d
   Highlight d _ _ _ _ -> SyntaxJob d
   LspEnsure d _ _ -> LspStartJob d
-  LoadPreview file -> PreviewJob file
+  LoadPreview _ file -> PreviewJob file
 
 data JobResult
   = FilesFound !Int ![FilePath]

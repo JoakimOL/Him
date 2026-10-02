@@ -548,7 +548,7 @@ keys (`ISIG`), so Ctrl-Z arrives as a key. It is bound to `suspend`, which queue
 **ADR-32: The config file is TOML, layered on the defaults.**
 `~/.config/him/config.toml` (or `$XDG_CONFIG_HOME/him/config.toml`, or `$HIM_CONFIG`)
 has three sections:
-- `[editor]`: `scrolloff`, `show-hidden-files` and `theme` (ADR-33).
+- `[editor]` and its sub-tables: every setting (ADR-34) and `theme` (ADR-33).
 - `[keys.<mode>]`: `"keys" = "action invocation"`. The modes are normal, select,
   insert, command, picker, directory and completion.
 - `[language-server.<language>]`: `command`, `args`, `roots`, `language-id` and
@@ -632,6 +632,37 @@ How it works:
   effects now run in order with one `foldM`. A switch repaints everything, because
   cached rows hold the old colours. `:config-reload` loads the theme again too.
 
+**ADR-34: Settings are one table.**
+Every setting is an `OptionSpec` in `Him.Options.optionSpecs`, holding:
+- its key (`tab-width`, or `search.smart-case` for `[editor.search]`);
+- its doc;
+- a setter that checks the value's type and range;
+- a printer for the default.
+
+Three things use that one table: checking the config file (`setOption`; an unknown key
+lists the known keys of its table), applying it (`userOptions`), and the
+`--dump-default-config` section. They cannot drift apart. The values live in
+`edOptions :: Options` on the editor (which replaced `edScrolloff` and `edShowHidden`),
+so actions and render components read them like any state. The settings are:
+- `[editor]`: `scrolloff`, `show-hidden-files`, `tab-width`, `expand-tab`,
+  `line-number` (absolute / relative / off), `escape-timeout` (read at startup only);
+- `[editor.cursor-shape]`: normal, insert, select, command;
+- `[editor.lsp]`: `auto-completion`, `completion-trigger-len`, `auto-signature-help`,
+  `hover-lines`;
+- `[editor.search]`: `smart-case`, `wrap-around`;
+- `[editor.file-picker]`: `hidden`, `git-ignore`, `ignore`, `follow-symlinks`,
+  `max-files`;
+- `[editor.picker]`: `preview`, `preview-min-width`, `preview-max-size`.
+
+Names follow Helix where it has the same setting. Pure code that needed a value now
+takes it as a parameter: `layoutLine`/`displayCol`/`charIndexAtCol` (tab width),
+`lineBy` (tab width), `compileNeedle` (smart case), `findMatch` (wrap), and
+`walkFiles` (a `WalkOptions` carried by the `ScanFiles` job).
+
+Still constants, on purpose: undo levels, gutter glyphs, the language table, the LSP
+start timeout, and the internal tuning values (`maxBatch`, `chunkSize`, `mergeGap`,
+`syncLimit`, `matchLimit`, `maxEdits`, the scan batching, `highlightMargin`).
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -687,6 +718,7 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Commands.*` | ✅ | Action lists: `Motion`, `Edit` (modes and text), `Search`, `CommandLine`; `File` holds the ex commands. |
 | `Him.TextWidth` | ✅ | Tab expansion (width 4), `charWidth` (a compact East-Asian-wide/emoji table; control chars are 2 wide and shown as `^X`), char↔display-column mapping. |
 | `Him.Toml`, `Him.UserConfig` | ✅ | The TOML subset reader; the user's config file: checking, applying, the dumped defaults (ADR-32). |
+| `Him.Options` | ✅ | The settings (`Options`, `edOptions`) and the table that checks, applies and dumps them (ADR-34). |
 | `Him.Paths` | ✅ | Where things are: the config file, the runtime directories, the theme directories. |
 | `Him.Theme`, `Him.Theme.Load`, `Him.Render.Theme` | ✅ | Helix theme files: parsing, colours, `inherits`, the built-in theme, 256-colour fallback (pure); finding and loading them; the render-side `Theme` built from scopes (ADR-33). |
 | `Him.Config.Default` | ✅ | `allActions`, `defaultBindings`, `defaultConfig`, and `configWith` (the defaults with user bindings on top). **This is where bindings are added.** |
@@ -770,6 +802,9 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **30. Themes.** Helix theme files (`[editor] theme`, `:theme`), styles layered
   as in Helix, underline kinds and colours, the theme's background through OSC 11, and
   a 256-colour fallback (ADR-33).
+- [x] **31. Settings.** Tab width, expand-tab, relative line numbers, cursor shapes,
+  completion, search, file-picker and preview settings, and the escape timeout, all
+  from one table (ADR-34).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -835,13 +870,14 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-02. Themes (milestone 30, ADR-33) are done. Benchmarking
+*Last updated 2026-10-02. Themes and settings (milestones 30–31, ADR-33/34) are done. Benchmarking
 is **on hold**: the user was using the machine during the runs, so this session's
 numbers are provisional.*
 
 - **Queue agreed with the user (2026-10-02), in this order:**
   1. [x] Theming (ADR-33).
-  2. [ ] **Expose user-facing settings** in `[editor]` (from the survey of hard-coded
+  2. [x] **Expose user-facing settings** (ADR-34; what stays a constant is listed
+     there). The original list: in `[editor]` (from the survey of hard-coded
      values): tab width and spaces-vs-tabs (`Him.TextWidth.tabWidth`, `tab` in insert
      mode, the `tabSize` sent with `:format`); line numbers absolute/relative/off
      (`Render.Gutter`); cursor shape per mode (`Render.render`); auto-completion
@@ -854,7 +890,12 @@ numbers are provisional.*
      (`maxBatch`, `chunkSize`, `mergeGap`, `syncLimit`, `matchLimit`, `maxEdits`,
      scan batching, `highlightMargin`) stay constants, possibly gathered in one module
      with their reasons.
-  3. [ ] **Modularize for readability:**
+  3. [ ] **Plugins** (the user's request, 2026-10-02): git and LSP (maybe syntax)
+     become plugins that can be switched off in the config (`[plugins]`) and at run
+     time (`:plugin-enable`, `:plugin-disable`, `:plugins`). A disabled plugin has no
+     actions, keys, `:` commands, gutter lane, housekeeping or state. This is the core
+     of the modularization below, so it comes first:
+  4. [ ] **Modularize for readability:**
      - split `Commands.Lsp` (796 lines) into attach/sync, navigation, edits,
        completion and `:lsp-*` commands;
      - split `App` into a frontend-free session (`handleEvent`, effects, housekeeping,
@@ -866,7 +907,7 @@ numbers are provisional.*
        `Runtime.runJob`;
      - rename `Him.Command` → `Him.EditorM` and `Him.Commands.*` → `Him.Actions.*`;
      - split `test/Spec.hs` into `test/Test/*`.
-  4. [ ] **Splits (windows)**, with Helix's keys: `C-w` / `space w` then `v`/`s` (split
+  5. [ ] **Splits (windows)**, with Helix's keys: `C-w` / `space w` then `v`/`s` (split
      vertically/horizontally), `h j k l` / `C-h …` (focus), `w` (next), `q` (close), `o`
      (only), `H J K L` (swap); `:vsplit`/`:hsplit` (`:vs`, `:hs`) with an optional file.
      No Vim tabs: the buffer list stays as it is. Splits will need a view per window
@@ -963,7 +1004,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (481 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (490 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

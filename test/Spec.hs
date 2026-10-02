@@ -27,7 +27,8 @@ import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
 import System.Directory (findExecutable, getHomeDirectory, canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesPathExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
-import Him.FileTree (listFiles)
+import Him.FileTree (WalkOptions (..), defaultWalk, listFiles)
+import Him.Options
 import Him.Picker
 import Him.Commands.Picker (pickerHousekeeping)
 import Him.Commands.Picker qualified as Picker
@@ -287,26 +288,29 @@ openBufferTests = do
   createDirectoryIfMissing True (tree <> "/sub/deeper")
   createDirectoryIfMissing True (tree <> "/.hidden")
   mapM_ (\f -> writeFile (tree <> "/" <> f) "") ["b.txt", "a.txt", "sub/c.txt", "sub/deeper/d.txt", ".hidden/x.txt", ".dotfile"]
-  listed <- listFiles 100 tree
-  listedFew <- listFiles 2 tree
+  listed <- listFiles (defaultWalk 100) tree
+  listedFew <- listFiles (defaultWalk 2) tree
+  listedHidden <- listFiles (defaultWalk 100) {woHidden = True} tree
   createDirectoryIfMissing True (tree <> "/build")
   mapM_ (\f -> writeFile (tree <> "/" <> f) "") ["x.log", "sub/y.log", "sub/keep.log", "build/out.txt", "sub/deeper/gen.txt"]
   writeFile (tree <> "/.gitignore") "*.log\nbuild/\n"
   writeFile (tree <> "/sub/.gitignore") "!keep.log\n"
   writeFile (tree <> "/sub/.ignore") "deeper/gen.txt\n"
-  listedIgnoring <- listFiles 100 tree
+  listedIgnoring <- listFiles (defaultWalk 100) tree
+  listedNoGit <- listFiles (defaultWalk 100) {woGitIgnore = False} tree
   -- Started below a repository root, the root's ignore files still apply.
   createDirectoryIfMissing True (tree <> "/.git/info")
   writeFile (tree <> "/.gitignore") "/sub/c.txt\n"
   writeFile (tree <> "/.git/info/exclude") "d.txt\n"
-  listedInRepo <- listFiles 100 (tree <> "/sub")
+  listedInRepo <- listFiles (defaultWalk 100) (tree <> "/sub")
   -- Links: a link to a directory is followed; a link back up is not.
   let ltree = dir <> "/him-test-links"
   createDirectoryIfMissing True (ltree <> "/real")
   writeFile (ltree <> "/real/r.txt") ""
   createDirectoryLink (ltree <> "/real") (ltree <> "/alias")
   createDirectoryLink ltree (ltree <> "/real/loop")
-  listedLinks <- listFiles 100 ltree
+  listedLinks <- listFiles (defaultWalk 100) ltree
+  listedNoLinks <- listFiles (defaultWalk 100) {woFollowLinks = False} ltree
   removeDirectoryRecursive ltree
   removeDirectoryRecursive tree
   -- Directory listings.
@@ -464,6 +468,11 @@ openBufferTests = do
           )
     , test "listFiles lists files sorted, skipping hidden entries" (assertEqual ["a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt"] listed)
     , test "listFiles stops at the limit" (assertEqual ["a.txt", "b.txt"] listedFew)
+    , test "listFiles lists hidden entries when asked (never .git)" $
+        assertEqual [".dotfile", ".hidden/x.txt", "a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt"] listedHidden
+    , test "listFiles without .gitignore still honours .ignore" $
+        assertEqual ["a.txt", "b.txt", "build/out.txt", "sub/c.txt", "sub/deeper/d.txt", "sub/keep.log", "sub/y.log", "x.log"] listedNoGit
+    , test "listFiles can leave linked directories alone" (assertEqual ["real/r.txt"] listedNoLinks)
     , test "listFiles honours .gitignore and .ignore at every level" $
         assertEqual ["a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt", "sub/keep.log"] listedIgnoring
     , test "listFiles follows a directory link once and never a cycle" $
@@ -687,7 +696,7 @@ ropeModelTests =
 
 searchTests :: [Test]
 searchTests =
-  [ test "empty and multi-line patterns are rejected" (assertEqual (Nothing, Nothing) (compileNeedle "", compileNeedle "a\nb"))
+  [ test "empty and multi-line patterns are rejected" (assertEqual (Nothing, Nothing) (compileNeedle True "", compileNeedle True "a\nb"))
   , test "smart case: lower-case pattern ignores case" (assertEqual (Just (Pos 0 4)) (matchStart <$> findIn "abc ABC" "abc" (Pos 0 0)))
   , test "smart case: upper-case pattern is exact" (assertEqual (Just (Pos 0 4)) (matchStart <$> findIn "abc ABC Abc" "ABC" (Pos 0 0)))
   , test "match end is inclusive" (assertEqual (Just (Pos 0 6)) (matchEnd <$> findIn "abc ABC" "abc" (Pos 0 0)))
@@ -696,7 +705,7 @@ searchTests =
   , test "1500 random searches match the naive search" (randomSearches 1500)
   ]
   where
-    findIn t p pos = compileNeedle p >>= \n -> findMatch Forward n (buf t) pos
+    findIn t p pos = compileNeedle True p >>= \n -> findMatch True Forward n (buf t) pos
     alphabet = "aAbB é漢\t" :: String
     randomSearches :: Int -> Either String ()
     randomSearches count = go count (randoms 99)
@@ -710,7 +719,7 @@ searchTests =
               pos = Pos l (r4 `mod` (T.length (ls !! l) + 1))
               dir = if even r5 then Forward else Backward
               expected = naive dir needle ls pos
-              actual = (\n -> matchStart <$> findMatch dir n b pos) =<< compileNeedle needle
+              actual = (\n -> matchStart <$> findMatch True dir n b pos) =<< compileNeedle True needle
            in if expected == actual
                 then go (k - 1) (drop 6 rs')
                 else Left (show (dir, needle, pos, ls) <> ": expected " <> show expected <> ", got " <> show actual <> show r6)
@@ -879,7 +888,7 @@ multiSelectionTests =
   where
     r l1 c1 l2 c2 = Range (Pos l1 c1) (Pos l2 c2) Nothing
     sel_ rs i = fromMaybe (error "no ranges") (fromRanges rs i)
-    needle_ t = fromMaybe (error "bad needle") (compileNeedle t)
+    needle_ t = fromMaybe (error "bad needle") (compileNeedle True t)
     shape sel = (ranges sel, primaryIndex sel)
     -- Point cursors at random offsets (at least 2 apart), one random edit
     -- applied to all of them, compared with the same edit on a string.
@@ -1194,11 +1203,11 @@ userConfigTests =
         Left e -> Left (show e)
         Right uc -> do
           assertEqual defaultBindings (ucBindings uc)
-          assertEqual (Just 3, Just False) (ucScrolloff uc, ucShowHidden uc)
+          assertEqual defaultOptions (userOptions uc)
           assertEqual (Right defaultServers) (cfgServers <$> applyUserConfig uc)
   , test "unknown sections, modes and settings are reported, all of them" $
       assertEqual
-        (Left ["unknown section [keyz] (known: editor, keys, language-server)", "unknown setting editor.tabs (known: scrolloff, show-hidden-files, theme)", "unknown mode [keys.nromal] (known: normal, select, insert, command, picker, directory, completion)"])
+        (Left ["unknown section [keyz] (known: editor, keys, language-server)", "unknown setting editor.tabs (known in [editor]: scrolloff, show-hidden-files, tab-width, expand-tab, line-number, escape-timeout)", "unknown mode [keys.nromal] (known: normal, select, insert, command, picker, directory, completion)"])
         (parseUserConfig "[keyz]\n[editor]\ntabs = 2\n[keys.nromal]\n")
   , test "a binding must be an action in quotes" $
       assertEqual (Left ["keys.normal.j: the value must be an action in quotes, e.g. \"move_line_down\""]) (parseUserConfig "[keys.normal]\nj = 5\n")
@@ -1211,10 +1220,15 @@ userConfigTests =
             (fmap (\sc -> (scCommand sc, scArgs sc)) (Map.lookup "rust" table), Map.lookup "go" table, scCommand <$> Map.lookup "lua" table)
   , test "a new language needs a command" $
       assertEqual (Left "language-server.zig: no built-in server, so a command is needed") (() <$ (applyUserConfig =<< either (Left . T.unlines) Right (parseUserConfig "[language-server.zig]\nargs = []\n")))
-  , test "editor settings apply to the editor" $
-      let uc = either (error . show) id (parseUserConfig "[editor]\nscrolloff = 7\nshow-hidden-files = true\n")
-          ed = applyEditorOptions uc (newEditor (24, 80) (newDocument Nothing (buf "")))
-       in assertEqual (7, True) (edScrolloff ed, edShowHidden ed)
+  , test "editor settings apply to the editor, also from sub-tables" $
+      let uc = either (error . show) id (parseUserConfig "[editor]\nscrolloff = 7\nshow-hidden-files = true\nline-number = \"relative\"\n[editor.search]\nsmart-case = false\n[editor.cursor-shape]\ninsert = \"underline\"\n")
+          o = edOptions (applyEditorOptions uc (newEditor (24, 80) (newDocument Nothing (buf ""))))
+       in assertEqual (7, True, LineNumbersRelative, False, CursorKindUnderline)
+            (optScrolloff o, optShowHidden o, optLineNumbers o, optSmartCase o, optCursorInsert o)
+  , test "settings are checked: types, ranges, choices, unknown keys in sub-tables" $
+      assertEqual
+        (Left ["editor.tab-width must be a whole number, at least 1", "editor.line-number must be one of \"absolute\", \"relative\", \"off\"", "editor.search.smart-case must be true or false", "unknown setting editor.search.fuzzy (known in [editor.search]: smart-case, wrap-around)"])
+        (parseUserConfig "[editor]\ntab-width = 0\nline-number = \"roman\"\n[editor.search]\nsmart-case = 1\nfuzzy = true\n")
   ]
 
 lspEditTests :: [Test]
@@ -1717,11 +1731,12 @@ widthTests =
   , test "CJK is wide" (assertEqual 2 (charWidth '漢'))
   , test "emoji is wide" (assertEqual 2 (charWidth '😀'))
   , test "control chars show as ^X" (assertEqual ("^A", 2) (glyphs '\SOH' 2, charWidth '\SOH'))
-  , test "tab expands to the next stop" (assertEqual 4 (displayCol "\tx" 1))
-  , test "tab after text" (assertEqual 4 (displayCol "ab\tx" 3))
-  , test "wide chars shift columns" (assertEqual 4 (displayCol "漢字x" 2))
-  , test "column inside a wide char maps to it" (assertEqual 1 (charIndexAtCol "漢字x" 3))
-  , test "column past the end" (assertEqual 3 (charIndexAtCol "abc" 10))
+  , test "tab expands to the next stop" (assertEqual 4 (displayCol 4 "\tx" 1))
+  , test "tab after text" (assertEqual 4 (displayCol 4 "ab\tx" 3))
+  , test "tab width is a parameter" (assertEqual (8, 2) (displayCol 8 "\tx" 1, displayCol 2 "a\tx" 2))
+  , test "wide chars shift columns" (assertEqual 4 (displayCol 4 "漢字x" 2))
+  , test "column inside a wide char maps to it" (assertEqual 1 (charIndexAtCol 4 "漢字x" 3))
+  , test "column past the end" (assertEqual 3 (charIndexAtCol 4 "abc" 10))
   , test "j keeps the visual column across tabs" $
       let b = buf "\tabc\n    xyz"
           r = lineDown b (point (Pos 0 2))
@@ -1742,7 +1757,7 @@ renderTests =
       let ed0 = newEditor (24, 100) (newDocument Nothing (buf ""))
           ed = ed0 {edPicker = Just (newPicker "t" [pickerItem "b.txt" (PickFile "b.txt") ""]), edMode = Picking}
        in assertEqual
-            (Just ("b.txt", Left "loading…"), [StartJob (LoadPreview "b.txt")], Just (PreviewText (buf "hi")))
+            (Just ("b.txt", Left "loading…"), [StartJob (LoadPreview (optPreviewMaxSize defaultOptions) "b.txt")], Just (PreviewText (buf "hi")))
             ( previewFor ed (PickFile "b.txt")
             , edEffects (runNoIO pickerHousekeeping ed)
             , Map.lookup "b.txt" (edPreviews (runNoIO (Picker.applyJobResult (PreviewLoaded "b.txt" (Right (buf "hi")))) ed))
@@ -1779,13 +1794,18 @@ renderTests =
   where
     start t = newEditor (5, 40) (newDocument Nothing (buf t))
     frameOf t = render defaultTheme Nothing (start t)
-    rowText f r = T.pack [c | Cell c _ <- maybe [] toList (lookupRow f r)]
-    lookupRow f r = case drop r (toList (frameCells f)) of
-      (row : _) -> Just row
-      [] -> Nothing
     cellAt f r c = case drop c (maybe [] toList (lookupRow f r)) of
       (Cell ch _ : _) -> Just ch
       [] -> Nothing
+
+-- | The characters of a frame's row.
+rowText :: Frame -> Int -> Text
+rowText f r = T.pack [c | Cell c _ <- maybe [] toList (lookupRow f r)]
+
+lookupRow :: Frame -> Int -> Maybe (Seq.Seq Cell)
+lookupRow f r = case drop r (toList (frameCells f)) of
+  (row : _) -> Just row
+  [] -> Nothing
 
 -- | Files larger than the read chunk, with multi-byte characters straddling
 -- chunk boundaries, load exactly like an in-memory decode.
@@ -2001,8 +2021,21 @@ integrationTests = do
   completeMany <- typeKeys ": w r i tab" (start "abc")
   pendingG <- typeKeys "g" (start "abc")
   badChord <- typeKeys "g z" (start "abc")
+  -- Settings change what keys do.
+  let with f t = (start t) {edOptions = f defaultOptions}
+  expanded <- B.toText . docBuffer . edDoc <$> typeKeys "i tab esc" (with (\o -> o {optExpandTab = True, optTabWidth = 2}) "x")
+  noWrap <- typeKeys "g e / o n e ret" (with (\o -> o {optWrapAround = False}) "one\ntwo")
+  exactCase <- typeKeys "/ o n e ret" (with (\o -> o {optSmartCase = False}) "x ONE one")
+  relativeEd <- typeKeys "j j" (with (\o -> o {optLineNumbers = LineNumbersRelative}) "a\nb\nc\nd")
+  let relative = render defaultTheme Nothing relativeEd
   pure
-    [ test "typing in insert mode" (assertEqual "hi there" typed)
+    [ test "expand-tab inserts tab-width spaces" (assertEqual "  x" expanded)
+    , test "without wrap-around a search stops at the end" (assertEqual (Just (Status Error "pattern not found: one")) (edStatus noWrap))
+    , test "without smart case a lower-case pattern matches exactly" $
+        assertEqual (Pos 0 6) (rangeStart (primary (docSelection (edDoc exactCase))))
+    , test "relative line numbers count from the cursor's line" $
+        assertEqual ["   2 a", "   1 b", "   3 c", "   1 d"] [T.take 6 (rowText relative r) | r <- [0 .. 3]]
+    , test "typing in insert mode" (assertEqual "hi there" typed)
     , test "append then newline" (assertEqual "a\ncb" newline)
     , test "open below" (assertEqual "one\nx\ntwo" opened)
     , test "backspace in insert mode" (assertEqual "bc" backspace)

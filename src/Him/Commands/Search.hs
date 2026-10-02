@@ -18,6 +18,7 @@ import Him.Command
 import Him.Document (Document (..))
 import Him.Edit (selectionText)
 import Him.Editor
+import Him.Options (Options (..))
 import Him.Mode (Mode (..))
 import Him.Search
 import Him.Selection
@@ -69,7 +70,8 @@ executeSearch dir origin typed = do
       else pure typed
   modify' (\e -> e {edPreviewPending = False})
   setSelection origin
-  case compileNeedle pattern of
+  smart <- gets (optSmartCase . edOptions)
+  case compileNeedle smart pattern of
     Nothing -> failWith "no search pattern"
     Just needle -> do
       setSearchRegister pattern
@@ -81,7 +83,8 @@ executeSelect origin typed = do
   modify' (\e -> e {edPreviewPending = False})
   setSelection origin
   d <- getDoc
-  case compileNeedle typed of
+  smart <- gets (optSmartCase . edOptions)
+  case compileNeedle smart typed of
     Nothing -> failWith "no pattern"
     Just needle -> case selectMatches needle (docBuffer d) origin of
       Nothing -> failWith ("no matches: " <> typed)
@@ -96,7 +99,7 @@ repeatSearch :: Direction -> EditorM ()
 repeatSearch dir =
   lastSearch >>= \case
     Nothing -> failWith "no previous search (use / first)"
-    Just pattern -> case compileNeedle pattern of
+    Just pattern -> gets (optSmartCase . edOptions) >>= \smart -> case compileNeedle smart pattern of
       Nothing -> failWith "no previous search (use / first)"
       Just needle -> getDoc >>= jump dir needle . docSelection
 
@@ -105,7 +108,8 @@ jump :: Direction -> Needle -> Selection -> EditorM ()
 jump dir needle sel = do
   d <- getDoc
   mode <- gets edMode
-  case findMatch dir needle (docBuffer d) (rangeStart (primary sel)) of
+  wrap <- gets (optWrapAround . edOptions)
+  case findMatch wrap dir needle (docBuffer d) (rangeStart (primary sel)) of
     Nothing -> failWith ("pattern not found: " <> needleText needle)
     Just m -> do
       setSelection (selectMatch mode m sel)
@@ -125,7 +129,7 @@ setSelection sel = modifyDoc (\d -> d {docSelection = sel})
 refreshSearchPreview :: Editor -> Editor
 refreshSearchPreview ed = case (edPreviewPending ed, edMode ed, edPrompt ed) of
   (True, CmdLine, SearchPrompt dir origin) -> preview origin $ \needle buf -> do
-    m <- findMatch dir needle buf (rangeStart (primary origin))
+    m <- findMatch (optWrapAround (edOptions ed)) dir needle buf (rangeStart (primary origin))
     pure (selectMatch Normal m origin)
   (True, CmdLine, SelectPrompt origin) -> preview origin $ \needle buf ->
     selectMatches needle buf origin
@@ -133,7 +137,7 @@ refreshSearchPreview ed = case (edPreviewPending ed, edMode ed, edPrompt ed) of
   where
     preview origin f =
       let doc = edDoc ed
-          shown = compileNeedle (edCmdLine ed) >>= \needle -> f needle (docBuffer doc)
+          shown = compileNeedle (optSmartCase (edOptions ed)) (edCmdLine ed) >>= \needle -> f needle (docBuffer doc)
        in ed
             { edPreviewPending = False
             , edDoc = doc {docSelection = fromMaybe origin shown}
