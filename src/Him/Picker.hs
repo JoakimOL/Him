@@ -13,6 +13,7 @@ module Him.Picker
   , fuzzyScore
   ) where
 
+import Control.Applicative ((<|>))
 import Data.Char (toLower)
 import Data.List (sortOn, tails)
 import Data.Maybe (mapMaybe)
@@ -24,11 +25,17 @@ data PickTarget
   = PickFile !FilePath
   | -- | A buffer, by its index in buffer order.
     PickBuffer !Int
+  | -- | Run an action (the command palette); 'True' when it needs
+    -- arguments, which are then asked for on the @:@ line.
+    PickAction !Text !Bool
   deriving stock (Eq, Show)
 
 data PickerItem = PickerItem
   { piLabel :: !Text
   , piTarget :: !PickTarget
+  , piDetail :: !Text
+  -- ^ Shown dimmed after the label (e.g. keys and a description); also
+  -- matched, after the label.
   }
   deriving stock (Eq, Show)
 
@@ -58,7 +65,16 @@ matches q items
   | T.null q = items
   | otherwise = map snd (sortOn fst (mapMaybe scored (zip [0 :: Int ..] items)))
   where
-    scored (i, item) = (\s -> ((s, T.length (piLabel item), i), item)) <$> fuzzyScore q (piLabel item)
+    -- A match in the label beats any match found only in the detail.
+    scored (i, item) =
+      (\s -> ((s, not (exact (piLabel item)), T.length (piLabel item), i), item))
+        <$> (fuzzyScore q (piLabel item) <|> ((+ 100000) <$> fuzzyScore q (piDetail item)))
+    -- Among equal scores, a label whose first word or file name is the
+    -- query itself comes first (@goto_line@ before @goto_line_end@).
+    lq = T.toLower q
+    exact label =
+      let l = T.toLower label
+       in lq == T.takeWhile (/= ' ') l || lq == T.takeWhileEnd (/= '/') l
 
 -- | Lower is better; 'Nothing' if the query's characters do not all occur
 -- in order. The score is the number of characters skipped between the

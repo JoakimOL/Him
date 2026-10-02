@@ -11,4 +11,6 @@ data Effect
   = -- | Run another action, e.g. the one chosen in the command palette.
     -- Handled right after the current key, with the config at hand.
     RunAction !Invocation
+  | -- | Open the command palette (it lists the configured actions and keys).
+    OpenPalette
   deriving stock (Eq, Show)

@@ -30,6 +30,7 @@ import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirec
 import Him.FileTree (listFiles)
 import Him.Picker
 import Him.Ignore
+import Him.Palette (paletteItems)
 import Him.Json hiding (path)
 import Him.Json qualified as J
 import Him.Process (ProcessResult (..), runProcess)
@@ -55,6 +56,15 @@ import Data.Sequence qualified as Seq
 import Data.Text qualified as T
 import Test.Harness
 
+-- | Collapse runs of spaces in the details (they are padded into columns).
+squeeze :: [(Text, Text)] -> [(Text, Text)]
+squeeze = map (fmap (T.unwords . T.words))
+
+firstText :: [Text] -> Text
+firstText = \case
+  x : _ -> x
+  [] -> ""
+
 -- | Keys through a configuration with user bindings on top of the defaults.
 rebindTests :: IO [Test]
 rebindTests = do
@@ -79,6 +89,10 @@ rebindTests = do
   gotoStill <- headAfter "a\nb\nc\nd" "g e g g"
   searchKey <- headAfter "one two" "F"
   insertExit <- typeKeys "i C-a" (start "")
+  palette <- typeKeys "space ?" (start "a\nb")
+  paletteDone <- typeKeys "space ? g o t o _ f i l e _ s t a r t ret" =<< typeKeys "j" (start "a\nb")
+  let paletteRan = rangeHead (primary (docSelection (edDoc paletteDone)))
+  paletteArgs <- typeKeys "space ? g o t o _ l i n e ret" (start "a\nb")
   actionByName <- headAfter "a\nb\nc\nd" ": a c t i o n space g o t o _ l i n e space 3 ret"
   actionBad <- typeKeys ": a c t i o n space g o t o _ l i n e ret" (start "x")
   let idsBefore = start "x"
@@ -101,6 +115,23 @@ rebindTests = do
     , test "default chords on the same prefix still work" (assertEqual (Pos 0 0) gotoStill)
     , test "search_text selects the match" (assertEqual (Pos 0 6) searchKey)
     , test "set_mode" (assertEqual Normal (edMode insertExit))
+    , test "space ? opens the palette" (assertEqual (Just "commands", Picking) (pkTitle <$> edPicker palette, edMode palette))
+    , test "the palette runs the chosen action" (assertEqual (Pos 0 0, Normal) (paletteRan, edMode paletteDone))
+    , test "an action with arguments is completed on the : line" (assertEqual (CmdLine, "action goto_line ") (edMode paletteArgs, edCmdLine paletteArgs))
+    , test "palette rows show parameters, keys and docs" $
+        let rows = paletteItems config Normal
+            row n = [(piLabel i, piDetail i) | i <- rows, piTarget i `elem` [PickAction n True, PickAction n False]]
+         in assertEqual
+              [ [("goto_line <line>", "g 3 (3) Go to a line (counting from 1)")]
+              , [("insert_newline", "insert: ret Insert a line break")]
+              ]
+              [squeeze (row "goto_line"), squeeze (row "insert_newline")]
+    , test "palette descriptions line up" $
+        let detailOf n = firstText [piDetail i | i <- paletteItems config Normal, piTarget i == PickAction n False]
+            column n doc = T.length (fst (T.breakOn doc (detailOf n)))
+         in assertEqual (column "goto_file_start" "Go to the first") (column "select_all" "Select the whole")
+    , test "palette keys include rebound ones with their arguments" $
+        assertEqual True (any (\i -> piTarget i == PickAction "move_line_down" False && "C-d (2)" `T.isInfixOf` piDetail i) (paletteItems config Normal))
     , test ":action runs an action by its invocation" (assertEqual (Pos 2 0) actionByName)
     , test ":action reports a bad invocation" (assertEqual (Just (Status Error "goto_line: missing argument <line>")) (edStatus actionBad))
     , test "documents get ids, and edits bump the version" $
@@ -789,11 +820,19 @@ pickerTests =
   , test "moving wraps around" $
       let p = newPicker "t" (items ["a", "b", "c"])
        in assertEqual [1, 0, 2] (map (pkSelected . ($ p)) [moveSelection 1, moveSelection 3, moveSelection (-1)])
+  , test "an exact first word or file name wins a tie" $
+      assertEqual ["goto_line <line>", "x/b.hs"] (map (piLabel . head' . matches' (items ["goto_line_end", "goto_line <line>", "goto_line_start"])) ["goto_line"] <> map (piLabel . head' . matches' (items ["x/ab.hs", "x/b.hs.bak", "x/b.hs"])) ["b.hs"])
+  , test "a label match beats a detail match" $
+      assertEqual ["xy", "other"] (map piLabel (matches "xy" [PickerItem "other" (PickFile "") "xy here", PickerItem "xy" (PickFile "") ""]))
   , test "a new query selects the best match" $
       assertEqual (Just "b") (piLabel <$> selectedItem (setQuery "b" (moveSelection 2 (newPicker "t" (items ["a", "b", "c"])))))
   ]
   where
-    items = map (\l -> PickerItem l (PickFile (T.unpack l)))
+    items = map (\l -> PickerItem l (PickFile (T.unpack l)) "")
+    matches' xs q = matches q xs
+    head' = \case
+      x : _ -> x
+      [] -> PickerItem "" (PickFile "") ""
 
 actionTests :: [Test]
 actionTests =

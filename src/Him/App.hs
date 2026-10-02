@@ -25,6 +25,8 @@ import Him.Config.Default (defaultConfig)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
 import Him.Info (refreshInfo)
+import Him.Palette (paletteItems)
+import Him.Picker (newPicker)
 import Him.Mode (Mode (..))
 import Him.Editor
 import Him.Event (Event (..))
@@ -145,6 +147,8 @@ runEffects config = go (8 :: Int)
           go (n - 1)
     perform = \case
       RunAction inv -> either failWith boundRun (bindInvocation (cfgActions config) inv)
+      OpenPalette -> modify' $ \e ->
+        e {edPicker = Just (newPicker "commands" (paletteItems config (keymapMode e))), edMode = Picking}
 
 -- | A digit typed before a key sequence, in normal or select mode, adds to
 -- the count (@1 2 j@ moves 12 lines). @0@ only continues a count, and a

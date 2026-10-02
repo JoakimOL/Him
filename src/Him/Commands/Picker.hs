@@ -9,6 +9,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (gets, modify')
 import Data.Text qualified as T
 import Him.Action
+import Him.Effect (Effect (..))
 import Him.Command
 import Him.Commands.File (openFile)
 import Him.Document (displayName)
@@ -21,11 +22,12 @@ actions :: [Action]
 actions =
   [ simple "file_picker" GBuffers "Open a file from the working directory" $ do
       files <- liftIO (listFiles maxFiles ".")
-      open (newPicker "files" [PickerItem (T.pack f) (PickFile f) | f <- files])
+      open (newPicker "files" [PickerItem (T.pack f) (PickFile f) "" | f <- files])
   , simple "buffer_picker" GBuffers "Switch to an open buffer" $ do
       (bs, cur) <- gets buffers
       let label i b = T.pack (show (i + 1)) <> (if i == cur then " * " else "   ") <> displayName (bufDoc b)
-      open ((newPicker "buffers" [PickerItem (label i b) (PickBuffer i) | (i, b) <- zip [0 ..] bs]) {pkSelected = cur})
+      open ((newPicker "buffers" [PickerItem (label i b) (PickBuffer i) "" | (i, b) <- zip [0 ..] bs]) {pkSelected = cur})
+  , simple "command_palette" GPrompt "List every action with its keys, and run one" (request OpenPalette)
   , simple "picker_close" GPrompt "Close the picker" close
   , simple "picker_accept" GPrompt "Open the selected item" $
       gets (fmap selectedItem . edPicker) >>= \case
@@ -34,6 +36,11 @@ actions =
           case piTarget item of
             PickFile path -> openFile path
             PickBuffer i -> modify' (gotoBuffer i)
+            PickAction name needsArgs
+              | needsArgs -> do
+                  modify' (\e -> e {edPrompt = ExPrompt, edCmdLine = "action " <> name <> " ", edCompletions = []})
+                  setMode CmdLine
+              | otherwise -> request (RunAction (Invocation name []))
         _ -> close
   , simple "picker_next" GPrompt "Select the next item" (onPicker (moveSelection 1))
   , simple "picker_previous" GPrompt "Select the previous item" (onPicker (moveSelection (-1)))

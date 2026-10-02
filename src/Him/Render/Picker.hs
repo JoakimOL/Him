@@ -11,6 +11,7 @@ import Him.Editor
 import Him.Picker
 import Him.Render.Frame
 import Him.Render.Theme
+import Him.Terminal.Ansi (Style (..))
 
 -- | Where the box goes inside the area: most of it, centred.
 box :: Rect -> Rect
@@ -41,13 +42,23 @@ drawPicker theme ed area f = case edPicker ed of
           fit t = T.take inner t <> T.replicate (inner - T.length t) " "
           queryLine = fit (T.take (inner - T.length count - 1) ("> " <> pkQuery p) `padTo` (inner - T.length count) <> count)
           padTo t n = t <> T.replicate (n - T.length t) " "
-          row i item = (if i == sel then themePopupSelected theme else themePopup theme, fit (" " <> piLabel item))
+          -- Labels are padded to a common width so details line up.
+          labelW = min (inner `div` 2) (maximum (0 : [T.length (piLabel it) | (_, it) <- visible]))
+          rowStyle i = if i == sel then themePopupSelected theme else themePopup theme
+          row i item = (rowStyle i, fit (" " <> piLabel item))
+          detailCol = left + 2 + labelW + 2
           lines' =
             [(top, themePopup theme, border "┌" "┐" "─" titled), (top + 1, themePopup theme, "│" <> queryLine <> "│")]
               <> [(top + 2 + j, themePopup theme, "│" <> fit "" <> "│") | j <- [0 .. listRows - 1]]
               <> [(top + h - 1, themePopup theme, border "└" "┘" "─" "")]
           framed = foldl' (\fr (r, st, t) -> putText r left st t fr) f lines'
-          withItems = foldl' (\fr (j, (i, item)) -> let (st, t) = row i item in putText (top + 2 + j) (left + 1) st t fr) framed (zip [0 ..] visible)
+          withLabels = foldl' (\fr (j, (i, item)) -> let (st, t) = row i item in putText (top + 2 + j) (left + 1) st t fr) framed (zip [0 ..] visible)
+          detailStyle i = (rowStyle i) {styleFg = styleFg (themePopupDetail theme)}
+          withItems =
+            foldl'
+              (\fr (j, (i, item)) -> if T.null (piDetail item) then fr else putText (top + 2 + j) detailCol (detailStyle i) (T.take (left + w - 1 - detailCol) (piDetail item)) fr)
+              withLabels
+              (zip [0 ..] visible)
        in withItems {frameRowKeys = foldr IntMap.delete (frameRowKeys withItems) [top .. top + h - 1]}
 
 -- | The terminal cursor sits at the end of the query.
