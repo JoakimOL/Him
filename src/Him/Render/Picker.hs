@@ -47,7 +47,7 @@ drawPicker theme ed area f = case edPicker ed of
           queryLine = fit (T.take (inner - T.length count - 1) ("> " <> pkQuery p) `padTo` (inner - T.length count) <> count)
           padTo t n = t <> T.replicate (n - T.length t) " "
           -- Labels are padded to a common width so details line up.
-          labelW = min (inner `div` 2) (maximum (0 : [T.length (piLabel it) | (_, it) <- visible]))
+          labelW = min (inner `div` 2) (pkLabelWidth p)
           rowStyle i = if i == sel then themePopupSelected theme else themePopup theme
           row i item = (rowStyle i, fit (" " <> piLabel item))
           detailCol = left + 2 + labelW + 2

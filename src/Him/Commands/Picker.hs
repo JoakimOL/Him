@@ -120,7 +120,8 @@ applyJobResult result =
     apply p = case result of
       FilesFound gen files
         | gen == pkGeneration p ->
-            Just (refresh p {pkItems = pkItems p <> Seq.fromList [pickerItem (T.pack f) (PickFile f) "" | f <- files]})
+            let new = [pickerItem (T.pack f) (PickFile f) "" | f <- files]
+             in Just (refresh p {pkItems = pkItems p <> Seq.fromList new, pkLabelWidth = max (pkLabelWidth p) (labelWidth new)})
       ScanFinished gen
         | gen == pkGeneration p -> Just (modify' (\e -> e {edPicker = Just p {pkLoading = False}}))
       PreviewLoaded file loaded ->

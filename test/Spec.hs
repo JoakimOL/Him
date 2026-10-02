@@ -157,6 +157,9 @@ rebindTests = do
               , [("insert_newline", "insert: ret Insert a line break")]
               ]
               [squeeze (row "goto_line"), squeeze (row "insert_newline")]
+    , test "picker details stay in one column while filtering" $
+        let p = newPicker "t" [pickerItem "a" (PickFile "") "x", pickerItem "a much longer label" (PickFile "") "y"]
+         in assertEqual (19, 19) (pkLabelWidth p, pkLabelWidth (setQuery "a" p))
     , test "palette descriptions line up" $
         let detailOf n = firstText [piDetail i | i <- paletteItems config Normal, piTarget i == PickAction n False]
             column n doc = T.length (fst (T.breakOn doc (detailOf n)))
@@ -310,6 +313,7 @@ openBufferTests = do
   listing <- ex ("o " <> T.pack dtree) start
   entered <- keys "ret" listing
   backUp <- keys "minus" entered
+  caretUp <- keys "^" entered
   openedFile <- keys "j ret" listing
   backToListing <- keys "space D" =<< keys "space d" openedFile
   ofFile <- keys "space d" openedFile
@@ -424,9 +428,10 @@ openBufferTests = do
         assertEqual (edPicker filteredBig, edPicker filteredBig) (edPicker staleDropped, edPicker otherScan)
     , test "space f opens the chosen file" (assertEqual (Just "test/Spec.hs", (1, 2)) (docPath (edDoc pickedFile), bufferIndex pickedFile))
     , test ":o of a directory lists it" $
-        assertEqual (Just dcanon, [T.pack dcanon <> ":", "../", "sub/", "a.txt", "b.txt"], 2, Directory)
+        assertEqual (Just dcanon, [T.pack dcanon <> ":  (ret opens, - goes up)", "../", "sub/", "a.txt", "b.txt"], 2, Directory)
           (docPath (edDoc listing), lines' listing, cursorLine listing, keymapMode listing)
     , test "ret enters a directory in the same buffer" (assertEqual (Just (dcanon <> "/sub"), bufferIndex listing) (docPath (edDoc entered), bufferIndex entered))
+    , test "^ goes up too" (assertEqual (Just dcanon) (docPath (edDoc caretUp)))
     , test "- goes up, onto the directory it came from" (assertEqual (Just dcanon, 2) (docPath (edDoc backUp), cursorLine backUp))
     , test "ret on a file opens it as a buffer" (assertEqual (Just (dcanon <> "/a.txt"), (2, 3)) (docPath (edDoc openedFile), bufferIndex openedFile))
     , test "space d shows the file's directory, on the file" (assertEqual (Just dcanon, 3, (1, 3)) (docPath (edDoc ofFile), cursorLine ofFile, bufferIndex ofFile))
@@ -448,7 +453,7 @@ openBufferTests = do
     , test "d on .. deletes nothing" (assertEqual (Just (Status Error "no entries selected")) (edStatus deleteUp))
     , test "dotfiles are hidden until g ." $
         assertEqual (True, Just ".dotfile")
-          ( any ("(1 hidden" `T.isInfixOf`) (take 1 (lines' ops))
+          ( any ("1 hidden" `T.isInfixOf`) (take 1 (lines' ops))
           , (\e -> deName e) <$> listToMaybe [e | e <- entriesIn 2 100 (edDoc hiddenShown), "." `isPrefixOf` deName e]
           )
     , test "listFiles lists files sorted, skipping hidden entries" (assertEqual ["a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt"] listed)

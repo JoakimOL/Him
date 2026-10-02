@@ -40,7 +40,7 @@ import Him.Lsp.Sync (syncMessages)
 import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Mode (Mode (..))
 import Data.Sequence qualified as Seq
-import Him.Picker (PickTarget (..), Picker (..), PickerSource (..), fuzzyScore, matchLimit, newPicker, pickerItem)
+import Him.Picker (PickTarget (..), Picker (..), PickerSource (..), fuzzyScore, labelWidth, matchLimit, newPicker, pickerItem)
 import System.FilePath (makeRelative)
 import Him.Position (Pos (..))
 import Control.Monad.IO.Class (liftIO)
@@ -785,6 +785,7 @@ workspaceSymbolsArrived gen query value = do
                   Just
                     p
                       { pkItems = Seq.fromList items
+                      , pkLabelWidth = labelWidth items
                       , pkMatches = take matchLimit items
                       , pkMatchCount = length items
                       , pkSelected = 0

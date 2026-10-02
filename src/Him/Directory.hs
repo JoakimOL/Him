@@ -61,7 +61,12 @@ listingDocument dir hidden entries =
     }
   where
     shown = DirEntry ".." True : sortOn (\e -> (not (deIsDir e), deName e)) entries
-    header = T.pack dir <> ":" <> if hidden > 0 then "  (" <> T.pack (show hidden) <> " hidden, g . shows them)" else ""
+    -- The path, the keys that matter most, and how many dotfiles are
+    -- hidden.
+    header =
+      T.pack dir <> ":  (ret opens, - goes up"
+        <> (if hidden > 0 then ", " <> T.pack (show hidden) <> " hidden: g . shows them" else "")
+        <> ")"
     -- A name with a line break would shift every line below it.
     label e = T.map (\c -> if c == '\n' || c == '\r' then '?' else c) (T.pack (deName e)) <> if deIsDir e then "/" else ""
 

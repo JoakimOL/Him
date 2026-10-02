@@ -17,6 +17,7 @@ module Him.Picker
   , rank
   , syncLimit
   , fuzzyScore
+  , labelWidth
   ) where
 
 import Data.Foldable (toList)
@@ -93,11 +94,18 @@ data Picker = Picker
   , pkStale :: !Bool
   -- ^ The matches are for an earlier query; a background filter is running.
   , pkSource :: !PickerSource
+  , pkLabelWidth :: !Int
+  -- ^ The longest label of all items, so the detail column stays put while
+  -- scrolling and filtering.
   }
   deriving stock (Eq, Show)
 
 newPicker :: Text -> [PickerItem] -> Picker
-newPicker title items = refilter (Picker title (Seq.fromList items) "" [] 0 0 0 False False StaticItems)
+newPicker title items = refilter (Picker title (Seq.fromList items) "" [] 0 0 0 False False StaticItems (labelWidth items))
+
+-- | The longest label among items.
+labelWidth :: [PickerItem] -> Int
+labelWidth items = maximum (0 : map piLength items)
 
 -- | Change the query, filter again, and select the best match.
 setQuery :: Text -> Picker -> Picker
@@ -106,7 +114,7 @@ setQuery q p = refilter p {pkQuery = q, pkSelected = 0}
 -- | Items that arrived (from a background scan): filter again, keeping the
 -- selection where it is when possible.
 addItems :: [PickerItem] -> Picker -> Picker
-addItems new p = refilter p {pkItems = pkItems p <> Seq.fromList new}
+addItems new p = refilter p {pkItems = pkItems p <> Seq.fromList new, pkLabelWidth = max (pkLabelWidth p) (labelWidth new)}
 
 refilter :: Picker -> Picker
 refilter p =

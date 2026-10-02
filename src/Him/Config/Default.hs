@@ -184,6 +184,7 @@ directoryBindings :: [(Text, Text)]
 directoryBindings =
   [ ("ret", "directory_open")
   , ("-", "directory_parent")
+  , ("^", "directory_parent")
   , ("backspace", "directory_parent")
   , ("g r", "directory_refresh")
   , ("g .", "directory_toggle_hidden")
