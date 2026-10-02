@@ -8,7 +8,9 @@ module Him.Render.TextArea
 import Data.IntMap.Strict qualified as IntMap
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
-import Him.Buffer (lineAt, lineCount)
+import Him.Buffer (endPos, lineAt, lineCount)
+import Him.Chat (ChatMark (..), ChatState (..), ChatStatus (..))
+import Him.Chat.Transcript (Inline (..), inlineSpans)
 import Him.Document (DirEntry (..), DocKind (..), Document (..))
 import Him.Syntax (SyntaxInfo (..))
 import Him.Syntax.Span (LineSpan (..))
@@ -21,8 +23,9 @@ import Him.Position (Pos (..))
 import Him.Render.Frame
 import Him.Render.Theme
 import Him.Lsp.Protocol (Severity (..))
+import Him.GitState (SignKind (..))
 import Him.Lsp.State (ShownDiagnostic (..), shownDiagnosticsIn)
-import Him.Terminal.Ansi (packStyle, patchStyle, unpackStyle)
+import Him.Terminal.Ansi (Style (..), defaultStyle, packStyle, patchStyle, unpackStyle)
 import Him.Selection
 import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
 import Him.View (View (..))
@@ -40,7 +43,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
       LineRow l -> drawRow f r l
       EmptyRow -> putText (rectRow rect + r) (rectCol rect) (themeTilde theme) "~" f
       HeaderRow n total h ->
-        band (themeReviewHeader theme) r (" change " <> T.pack (show n) <> "/" <> T.pack (show total) <> " (-" <> T.pack (show (hOldCount h)) <> " +" <> T.pack (show (hNewCount h)) <> ")  space c a/d: approve/deny  ] c: next") f
+        band (themeReviewHeader theme) r (" ✎ " <> T.pack (show n) <> "/" <> T.pack (show total) <> "  −" <> T.pack (show (hOldCount h)) <> " +" <> T.pack (show (hNewCount h)) <> "  ·  space c a keep  ·  space c d discard  ·  ] c next") f
       RemovedRow t -> band (themeRemoved theme) r (T.drop left (T.replace "\t" (T.replicate tabWidth " ") t)) f
     band st r t = putText (rectRow rect + r) (rectCol rect) st (T.take (rectWidth rect) t <> T.replicate (rectWidth rect - T.length t) " ")
     prevFrame = case prev of
@@ -77,19 +80,50 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
       DirectoryDoc entries
         | line == 0 -> 1
         | (e : _) <- drop (line - 1) entries, deIsDir e -> 2
-      ChatDoc _
-        | "you> " `T.isPrefixOf` lineAt line buf -> 4
-        | "claude> " `T.isPrefixOf` lineAt line buf -> 5
-        | "[" `T.isPrefixOf` lineAt line buf -> 6
+      -- The chat (ADR-45): the input box (empty, empty while the model
+      -- works, or with a message), and the transcript's lines by mark.
+      ChatDoc cs
+        | line >= posLine (csInput cs) ->
+            if csInput cs /= endPos buf then 32 else if csStatus cs == ChatWaiting then 31 else 30
+        | Just m <- IntMap.lookup line (csMarks cs) -> 10 + fromEnum m
+        | otherwise -> 4
       _ | any (\(a, b) -> a <= line && line < b) pending -> 3
       _ -> 0 :: Int
     -- Lines a proposed change adds (ADR-43).
     pending = addedLines review
     pendingStyle = packStyle (themeText theme `patchStyle` themeHighlight theme)
-    -- The chat's prompts, and its notes in brackets.
-    youStyle = packStyle (themeDirectoryHeader theme)
-    claudeStyle = packStyle (themeDirectory theme)
-    noteStyle = packStyle (themeText theme `patchStyle` themePopupDetail theme)
+    -- The chat's lines.
+    dim = themeText theme `patchStyle` themePopupDetail theme
+    -- A style's colour and modifiers over the text's background.
+    bold st = themeText theme `patchStyle` st {styleBg = styleBg (themeText theme), styleBold = True}
+    chatStyle = \case
+      MarkWelcome -> dim
+      MarkUser -> bold (themeDirectoryHeader theme)
+      MarkUserText -> themeText theme
+      MarkContext -> dim
+      MarkClaude -> bold (themeDirectory theme)
+      MarkTool -> dim
+      MarkChange -> themeText theme `patchStyle` (themeGitSign theme SignAdded False) {styleBg = styleBg (themeText theme)}
+      MarkReview -> themeReviewHeader theme
+      MarkNote -> dim `patchStyle` defaultStyle {styleItalic = True}
+      MarkError -> themeText theme `patchStyle` themeError theme
+      MarkFence -> themeCodeBlock theme `patchStyle` themePopupDetail theme
+      MarkCode -> themeCodeBlock theme
+    chatStyles = [(10 + fromEnum m, packStyle (chatStyle m)) | m <- [minBound .. maxBound]]
+    inputStyle = packStyle (themeChatInput theme)
+    placeholderStyle = packStyle (themeChatInput theme `patchStyle` themePopupDetail theme)
+    -- Rows drawn across the whole width (a box: code, the input, the
+    -- review summary), and what an empty input says.
+    banded c = c `elem` [10 + fromEnum MarkReview, 10 + fromEnum MarkFence, 10 + fromEnum MarkCode, 30, 31, 32]
+    placeholder = \case
+      30 -> "Ask about your code  (ret send · A-ret new line · up earlier)"
+      31 -> "Claude is working…  (C-c stops it)"
+      _ -> ""
+    -- Markdown in the chat's prose.
+    inlineStyle = \case
+      InlineCode -> themeInlineCode theme
+      InlineBold -> defaultStyle {styleBold = True}
+      InlineHeading -> bold (themeDirectoryHeader theme)
     diagnosticsByLine =
       IntMap.fromListWith (<>) [(sdLine sd, [(sdStart sd, sdEnd sd, sdSeverity sd)]) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) buf top bottom]
     sevRank = \case
@@ -115,7 +149,9 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
           [] -> Nothing
         syntax = IntMap.findWithDefault [] line (siSpans (docSyntax doc))
         -- The syntax style of each highlighted span, under the selection.
-        syntaxStyles = [(lsStart sp, lsEnd sp, over st base) | sp <- syntax, Just st <- [scopeStyle theme (lsScope sp)]]
+        syntaxStyles =
+          [(lsStart sp, lsEnd sp, over st base) | sp <- syntax, Just st <- [scopeStyle theme (lsScope sp)]]
+            <> [(a, b, over (inlineStyle k) base) | cls == 4, (a, b, k) <- inlineSpans text]
         syntaxAt i = case [st | (a, b, st) <- syntaxStyles, a <= i, i < b] of
           st : _ -> st
           [] -> base
@@ -127,9 +163,8 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
           1 -> headerStyle
           2 -> dirStyle
           3 -> pendingStyle
-          4 -> youStyle
-          5 -> claudeStyle
-          6 -> noteStyle
+          c | c >= 30 -> inputStyle
+          c | Just st <- lookup c chatStyles -> st
           _ -> textStyle
         remember fr = fr {frameRowKeys = Map.insert (screenRow, rectCol rect) key (frameRowKeys fr)}
         screenRow = rectRow rect + r
@@ -154,9 +189,18 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
         lineCells
           | plain = zipWith (\i ch -> Cell ch (styled i)) [0 ..] (T.unpack text) <> lineEndCell
           | otherwise = concatMap charCells (layoutLine tabWidth text) <> lineEndCell
-        visible
-          | plain = take (rectWidth rect) (drop left lineCells)
-          | otherwise = fixEdges (take (rectWidth rect) (drop left lineCells))
+        visible = fillRow $
+          if plain
+            then take (rectWidth rect) (drop left lineCells)
+            else fixEdges (take (rectWidth rect) (drop left lineCells))
+        -- A banded row is filled to the edge (after an empty input's
+        -- placeholder).
+        fillRow cs
+          | banded cls =
+              let extra = [Cell ch placeholderStyle | ch <- T.unpack (placeholder cls)]
+                  row = take (rectWidth rect) (cs <> extra)
+               in row <> replicate (rectWidth rect - length row) (Cell ' ' base)
+          | otherwise = cs
         charCells (i, _, w, c) =
           let style = styled i
            in if isWide c

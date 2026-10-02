@@ -14,10 +14,13 @@ module Him.Chat
     -- * A chat buffer
   , ChatState (..)
   , ChatStatus (..)
+  , ChatMark (..)
   , Review (..)
   , newChatState
   ) where
 
+import Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict qualified as IntMap
 import Data.Text (Text)
 import Him.Diff (Hunk)
 import Him.Json (Value)
@@ -65,6 +68,9 @@ data ChatEvent
     -- Code through MCP); answered with 'sessAnswer'.
     ChatToolCall !ToolCall
   | ChatFailed !Text
+  | -- | Something the model did that the editor did not do for it (Claude
+    -- Code's own search tools), to show.
+    ChatActivity !Text
   deriving stock (Eq, Show)
 
 -- | A tool call: its id, the tool, and the input (or the raw text when it
@@ -110,8 +116,32 @@ data Review = Review
   }
   deriving stock (Eq, Show)
 
--- | A chat buffer: the transcript is the document's text, what is typed
--- after 'csInput' is the next message.
+-- | What a line of the transcript is, for how it is drawn
+-- ("Him.Chat.Transcript"). The model's prose has no mark.
+data ChatMark
+  = MarkWelcome
+  | -- | "You", above a message.
+    MarkUser
+  | MarkUserText
+  | -- | What the editor told the model with the message (the file).
+    MarkContext
+  | -- | "Claude", above an answer.
+    MarkClaude
+  | -- | Something the model did: read a file, searched.
+    MarkTool
+  | -- | A change it proposed.
+    MarkChange
+  | -- | The changes waiting for review, at the end of a turn.
+    MarkReview
+  | MarkNote
+  | MarkError
+  | -- | A code block's fence (@```@) and its lines.
+    MarkFence
+  | MarkCode
+  deriving stock (Eq, Show, Enum, Bounded)
+
+-- | A chat buffer: the transcript, then the prompt and what is typed after
+-- 'csInput' (the next message).
 data ChatState = ChatState
   { csInput :: !Pos
   , csStatus :: !ChatStatus
@@ -122,8 +152,16 @@ data ChatState = ChatState
   , csDecisions :: ![Text]
   -- ^ What the user decided since the last message (told to the model
   -- with the next one).
+  , csMarks :: !(IntMap ChatMark)
+  -- ^ The transcript's lines that are not the model's prose.
+  , csFence :: !Bool
+  -- ^ The transcript's last line is inside a code block.
+  , csSent :: ![Text]
+  -- ^ The messages sent, the last first (recalled with up and down).
+  , csRecall :: !Int
+  -- ^ Which of them is in the input (-1: none).
   }
   deriving stock (Eq, Show)
 
 newChatState :: ChatState
-newChatState = ChatState (Pos 0 0) ChatIdle [] [] []
+newChatState = ChatState (Pos 0 0) ChatIdle [] [] [] IntMap.empty False [] (-1)

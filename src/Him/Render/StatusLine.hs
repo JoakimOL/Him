@@ -5,9 +5,9 @@ module Him.Render.StatusLine
   ) where
 
 import Data.Text qualified as T
-import Him.Document (Document (..), displayName, unsaved)
+import Him.Document (DocKind (..), Document (..), displayName, unsaved)
 import Him.Editor (Editor (..), allDocuments, keymapMode, reviewFor)
-import Him.Chat (Review (..))
+import Him.Chat (ChatState (..), ChatStatus (..), Review (..))
 import Data.List (findIndex)
 import Him.Key (showKeys)
 import Him.Mode (modeLabel)
@@ -50,6 +50,10 @@ drawStatusLine theme focused ed rect =
       | otherwise = ""
     -- Proposed changes waiting in this buffer (ADR-43).
     review = case maybe 0 (length . rvHunks) (reviewFor ed (docId doc)) of
-      0 -> ""
+      0 -> working
       n -> T.pack (show n) <> " to review  "
+    -- The chat while its model answers.
+    working = case docKind doc of
+      ChatDoc cs | csStatus cs == ChatWaiting -> "working…  "
+      _ -> ""
     right = maybe "" (T.pack . show) (edCount ed) <> showKeys (edPending ed) <> "  " <> review <> sels <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "

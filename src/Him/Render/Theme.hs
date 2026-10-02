@@ -64,6 +64,13 @@ data Theme = Theme
   -- ^ Lines a proposed change removes, shown above it: @diff.minus@.
   , themeReviewHeader :: Style
   -- ^ The header above a proposed change.
+  , themeCodeBlock :: Style
+  -- ^ A code block in the chat: @ui.cursorline.primary@'s background, else
+  -- @ui.popup@'s.
+  , themeInlineCode :: Style
+  -- ^ Inline code in the chat's prose: @markup.raw@.
+  , themeChatInput :: Style
+  -- ^ The chat's input box: @ui.popup@.
   }
 
 -- | The style for a scope, by its longest known prefix:
@@ -116,6 +123,9 @@ fromScopes name scopes =
     , themeHighlight = fromMaybe defaultStyle {styleBg = Indexed 22} (exact "ui.highlight")
     , themeRemoved = text `patchStyle` foreground (get "diff.minus") `patchStyle` defaultStyle {styleItalic = True}
     , themeReviewHeader = popup `patchStyle` defaultStyle {styleBold = True}
+    , themeCodeBlock = text `patchStyle` maybe (background popup) background (exact "ui.cursorline.primary")
+    , themeInlineCode = foreground (get "markup.raw")
+    , themeChatInput = popup
     }
   where
     get = fromMaybe defaultStyle . lookupScope scopes
@@ -123,6 +133,7 @@ fromScopes name scopes =
     text = get "ui.text"
     -- Only the colour of the text and its modifiers, not a background.
     foreground st = st {styleBg = DefaultColor}
+    background st = defaultStyle {styleBg = styleBg st}
     popup = text `patchStyle` get "ui.popup"
     statusLine = get "ui.statusline"
     modeStyle m =

@@ -1075,6 +1075,13 @@ reviewed like staged hunks (ADR-43):
 - The text area draws extra rows for each change: a header, and the removed lines.
   These rows are not in the buffer.
 
+The chat buffer is laid out like an editor's chat panel (ADR-45, `Him.Chat.Transcript`).
+Output goes *above* the prompt, so the input box stays at the bottom. The transcript
+only ever grows at its last line, so a line's number never changes: what each line is
+(your message, a code block, a tool line) is kept in a map by line number, and the
+renderer styles lines from it. The model's prose is wrapped as it streams by
+re-wrapping just the last line with each new chunk.
+
 The history sent to the model is append-only. The assistant's messages go back exactly
 as they came, thinking blocks included, which the API requires.
 

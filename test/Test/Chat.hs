@@ -28,6 +28,8 @@ import System.Posix.Files (createNamedPipe, ownerReadMode, ownerWriteMode, union
 import System.Process (createPipe)
 import System.Timeout (timeout)
 import Him.Chat.Tools
+import Him.Chat.Transcript
+import Data.IntMap.Strict qualified as IntMap
 import Him.Diff (diffLines)
 import Him.Review (DisplayRow (..), approveHunk, approveOnto, denyHunk, displayRows, hunkAtLine, rowOfLine)
 import Him.Selection (primary, rangeHead)
@@ -50,7 +52,43 @@ chatTests = do
   flow <- flowTests
   bridge <- bridgeTests
   live <- liveTests
-  pure (pureTests <> claudeCodeTests <> flow <> bridge <> live)
+  pure (pureTests <> transcriptTests <> claudeCodeTests <> flow <> bridge <> live)
+
+-- | The chat buffer's layout (ADR-45).
+transcriptTests :: [Test]
+transcriptTests =
+  [ test "a long line is wrapped at spaces, list items under their text" $
+      assertEqual
+        (["one two three", "four five"], ["- alpha beta", "  gamma"], ["abcdefghij", "klm"])
+        (wrapLine 13 "one two three four five", wrapLine 12 "- alpha beta gamma", wrapLine 10 "abcdefghijklm")
+  , test "the model's text goes above the prompt, wrapped as it streams, code blocks kept whole and marked" $
+      let d = foldl (\doc t -> appendModel 12 t doc) newChatDocument ["Here is ", "some code for you:\n```\nlet x = a very long line\n```\nok"]
+          marks = maybe [] (IntMap.toList . csMarks) (chatState d)
+       in assertEqual
+            ( ["Here is some", "code for", "you:", "```", "let x = a very long line", "```", "ok", chatPrompt]
+            , [(3, MarkFence), (4, MarkCode), (5, MarkFence)]
+            , fmap csInput (chatState d)
+            )
+            (B.toLines (docBuffer d), marks, Just (Pos 7 (T.length chatPrompt)))
+  , test "lines of the editor's own start on a new line, a gap is one blank line" $
+      let d = appendLines 40 MarkTool ["◦ Read a.txt"] (appendGap 40 (appendModel 40 "Text" newChatDocument))
+       in assertEqual (["Text", "", "◦ Read a.txt", "", chatPrompt], Just MarkTool) (B.toLines (docBuffer d), chatState d >>= IntMap.lookup 2 . csMarks)
+  , test "typing waits below output: the cursor in the input moves down with it" $
+      let typed = (setMessage "hi" newChatDocument)
+          d = appendModel 40 "one\ntwo\n" typed
+       in assertEqual (Pos 3 (T.length chatPrompt + 2), Just "hi") (rangeHead (primary (docSelection d)), fst <$> takeMessage d)
+  , test "taking the message empties the input" $
+      case takeMessage (setMessage "a\nb" newChatDocument) of
+        Just (t, d) -> assertEqual ("a\nb", [ "", chatPrompt]) (t, B.toLines (docBuffer d))
+        Nothing -> Left "no message"
+  , test "inline code, bold and headings in prose" $
+      assertEqual
+        ([(4, 9, InlineCode), (10, 17, InlineBold)], [(0, 5, InlineHeading)], [])
+        (inlineSpans "use `foo` **bar** x", inlineSpans "# Hi!", inlineSpans "a * b ` c")
+  , test "the code block under the cursor, else the last one above it" $
+      let d = appendModel 40 "```\nA\nB\n```\ntext\n```\nC\n```\nend\n" newChatDocument
+       in assertEqual (Just "A\nB", Just "A\nB", Just "C") (codeBlockAt 2 d, codeBlockAt 4 d, codeBlockAt maxBound d)
+  ]
 
 -- | Claude Code's output (recorded shapes) and the MCP messages.
 claudeCodeTests :: [Test]
@@ -63,7 +101,7 @@ claudeCodeTests =
           lines' = [textStart, delta "Hi", toolStart "Grep", toolStart "mcp__him__read_file", textStart, delta "Done", object [("type", JString "result"), ("subtype", JString "success")]]
           (events, _) = foldl (\(acc, seen) v -> let (es, seen') = claudeEvent v seen in (acc <> es, seen')) ([], False) lines'
        in assertEqual
-            [ChatText "Hi", ChatText "\n[Grep]\n", ChatText "\n\n", ChatText "Done", ChatFinished "end_turn" (object [("role", JString "assistant"), ("content", JArray [])]) []]
+            [ChatText "Hi", ChatActivity "Searched the code", ChatText "\n\n", ChatText "Done", ChatFinished "end_turn" (object [("role", JString "assistant"), ("content", JArray [])]) []]
             events
   , test "a failed Claude Code turn fails the chat's turn" $
       assertEqual [ChatFailed "rate limited"] (fst (claudeEvent (object [("type", JString "result"), ("is_error", JBool True), ("result", JString "rate limited")]) True))
@@ -331,7 +369,7 @@ flowTests = do
         modifyIORef' script (const [proposing, done, done])
         -- Both changes come in one turn; the turn ends with them under
         -- review, and the editor on the first one.
-        proposed <- settleChat (T.isInfixOf "2 proposed changes" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
+        proposed <- settleChat (T.isInfixOf "2 changes to review" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
         diskAfterProposing <- TIO.readFile "a.txt"
         -- Out of order: the second first (approve), then the first (deny).
         secondApproved <- typeKeys "] c space c a" proposed
@@ -339,13 +377,19 @@ flowTests = do
         firstDenied <- typeKeys "[ c space c d" secondApproved
         diskAfterDeny <- TIO.readFile "a.txt"
         -- The next message tells the model what became of them.
-        _ <- settleChat (T.isInfixOf "Done." . T.takeEnd 40 . transcript) =<< typeKeys "space c c o k ret" firstDenied
+        finished <- settleChat (T.isInfixOf "Done." . T.takeEnd 40 . transcript) =<< typeKeys "space c c o k ret" firstDenied
+        -- Earlier messages come back with up, newest first.
+        recalled <- typeKeys "up up" finished
         requests <- readIORef sent
-        pure (proposed, diskAfterProposing, secondApproved, diskAfterApprove, firstDenied, diskAfterDeny, requests)
+        pure (proposed, diskAfterProposing, secondApproved, diskAfterApprove, firstDenied, diskAfterDeny, requests, (finished, recalled))
     )
       `finally` setCurrentDirectory original
   removeDirectoryRecursive dir
-  let (proposed, diskAfterProposing, secondApproved, diskAfterApprove, firstDenied, diskAfterDeny, requests) = results
+  let (proposed, diskAfterProposing, secondApproved, diskAfterApprove, firstDenied, diskAfterDeny, requests, (finished, recalled)) = results
+      chatDoc ed = find isChatDoc (allDocuments ed)
+      markedLines m ed = case chatDoc ed of
+        Just d | Just cs <- chatState d -> [B.lineAt l (docBuffer d) | (l, m') <- IntMap.toList (csMarks cs), m' == m]
+        _ -> []
       messageText m = T.concat [t | Just cs <- [key "content" m >>= asArray], c <- cs, Just t <- [key "text" c >>= asText]]
       lastUser = case requests of
         [] -> ""
@@ -364,6 +408,12 @@ flowTests = do
         assertEqual (1, "one\ntwo\nthree\nFOUR\n") (reviewCount secondApproved, diskAfterApprove)
     , test "denying puts the old lines back in the buffer and leaves the file" $
         assertEqual (0, "one\ntwo\nthree\nFOUR", "one\ntwo\nthree\nFOUR\n") (reviewCount firstDenied, fileText firstDenied, diskAfterDeny)
+    , test "the transcript: your messages and the answers as blocks, what the model read and proposed" $
+        assertEqual
+          (["You", "You"], ["hi", "ok"], ["Claude", "Claude"], ["◦ Read a.txt"], ["✎ a.txt  +1 −1", "✎ a.txt  +1 −1"])
+          (markedLines MarkUser finished, markedLines MarkUserText finished, markedLines MarkClaude finished, markedLines MarkTool finished, markedLines MarkChange finished)
+    , test "up recalls the messages sent, the last first" $
+        assertEqual (Just "hi") (fst <$> (chatDoc recalled >>= takeMessage))
     , test "the next message tells the model what was approved and rejected" $
         assertEqual (True, True) ("approved a.txt:4" `T.isInfixOf` lastUser, "rejected a.txt:2" `T.isInfixOf` lastUser)
     ]

@@ -183,7 +183,7 @@ claudeEvent v seen = case key "type" v >>= asText of
       | Just "tool_use" <- path ["content_block", "type"] e >>= asText
       , Just name <- path ["content_block", "name"] e >>= asText
       , not ("mcp__him__" `T.isPrefixOf` name) ->
-          ([ChatText ("\n[" <> name <> "]\n")], seen)
+          ([ChatActivity (activity name)], seen)
     Just "content_block_delta"
       | Just "text_delta" <- path ["delta", "type"] e >>= asText
       , Just t <- path ["delta", "text"] e >>= asText ->
@@ -194,6 +194,13 @@ claudeEvent v seen = case key "type" v >>= asText of
         ([ChatFailed (fromMaybe (fromMaybe "error" (key "subtype" v >>= asText)) (key "result" v >>= asText))], False)
     | otherwise -> ([ChatFinished "end_turn" (object [("role", JString "assistant"), ("content", JArray [])]) []], False)
   _ -> ([], seen)
+
+-- | What one of Claude Code's own tools is shown as.
+activity :: Text -> Text
+activity = \case
+  "Grep" -> "Searched the code"
+  "Glob" -> "Looked for files"
+  name -> "Used " <> name
 
 -- | The editor's end of the pipes: tool calls from the bridge go to
 -- @onCall@ (as they come); the first action answers one, the second stops

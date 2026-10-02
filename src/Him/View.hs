@@ -28,6 +28,7 @@ scrollToCursor (height, width) scrolloff (line, col) (View top left) = View top'
       | line >= top + height - so = max 0 (line - height + so + 1)
       | otherwise = top
     left'
-      | col < left = col
+      -- Back to the line's start when the cursor fits from there.
+      | col < left = if col < width then 0 else col
       | col >= left + width = col - width + 1
       | otherwise = left

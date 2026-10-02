@@ -1,12 +1,14 @@
--- | The AI chat plugin (ADR-41, ADR-43). @space c c@ opens the chat in a
--- window beside the code; type a message and @ret@ sends it (@A-ret@ is a
--- line break). The model reads files on its own and proposes changes, all
--- in one go: they appear in the files' buffers, each with a header and the
--- lines it removes, and nothing is written. Review them in any order with
--- the cursor on one: @space c a@ approves it (written to the file),
--- @space c d@ denies it (the old lines come back); @space c A@ / @D@ do all;
--- @] c@ / @[ c@ move between them, @space c l@ lists them. The decisions go
--- to the model with the next message.
+-- | The AI chat plugin (ADR-41, ADR-43, ADR-45). @space c c@ opens the
+-- chat in a window beside the code; type a message in the box at the
+-- bottom and @ret@ sends it (@A-ret@ is a line break, @up@ / @down@ recall
+-- earlier messages). The transcript shows your messages, the answers, and
+-- what the model did. The model reads files on its own and proposes
+-- changes, all in one go: they appear in the files' buffers, each with a
+-- header and the lines it removes, and nothing is written. Review them in
+-- any order with the cursor on one: @space c a@ keeps it (written to the
+-- file), @space c d@ discards it (the old lines come back); @space c A@ /
+-- @D@ do all; @] c@ / @[ c@ move between them, @space c l@ lists them. The
+-- decisions go to the model with the next message.
 module Him.Actions.Chat
   ( chatPlugin
   ) where
@@ -23,11 +25,14 @@ import Data.Text.IO qualified as TIO
 import Control.Exception (IOException, try)
 import Him.Action hiding (text)
 import Him.Actions.File (openFile)
+import Him.Actions.Motion (vertical)
+import Him.Chat.Transcript
 import Him.Buffer qualified as Buffer
 import Him.Chat
 import Him.Chat.Tools
 import Him.Config (Plugin (..), plugin)
 import Him.Document (DocKind (..), Document (..), clampSelection, newDocument, replaceBuffer)
+import Him.Diff (Hunk (..), diffLines)
 import Him.Edit (selectionText)
 import Him.Editor
 import Him.EditorM
@@ -40,10 +45,9 @@ import Him.Mode (Mode (..))
 import Him.Key (KeyCode (..), plain)
 import Him.Position (Pos (..))
 import Him.Selection (Range (..), point, primary, rangeHead, rangeStart, ranges, single)
-import Him.Transcript (insertOutput, takeInput)
 import Him.View (View (..))
 import Him.Window (Axis (..), Box (..), Window (..))
-import Him.Diff (Hunk (..), diffLines)
+import Data.Maybe (fromMaybe)
 import Him.Review (approveHunk, approveOnto, denyHunk, hunkAtLine, hunkLabel)
 import Him.Picker (PickTarget (..), newPicker, pickerItem)
 import Data.IntMap.Strict qualified as IntMap
@@ -52,7 +56,7 @@ import System.FilePath (isAbsolute, makeRelative, normalise, splitDirectories)
 
 chatPlugin :: Plugin
 chatPlugin =
-  (plugin "chat" "An AI chat beside the code (space c c); its edits wait for your approval (space c a / d)")
+  (plugin "chat" "An AI chat beside the code (space c c); its edits wait for you to keep or discard them (space c a / d)")
     { plActions = actions
     , plBindings =
         Map.fromList
@@ -65,11 +69,13 @@ chatPlugin =
               , ("space c D", "chat_deny_all")
               , ("space c l", "chat_changes")
               , ("space c s", "chat_add_selection")
+              , ("space c y", "chat_copy_code")
+              , ("space c n", "chat_new")
               , ("] c", "chat_next_change")
               , ("[ c", "chat_prev_change")
               ]
             )
-          , (Chat, [("ret", "chat_submit"), ("A-ret", "insert_newline"), ("C-c", "chat_cancel")])
+          , (Chat, [("ret", "chat_submit"), ("A-ret", "insert_newline"), ("C-c", "chat_cancel"), ("up", "chat_history_previous"), ("down", "chat_history_next"), ("C-l", "chat_new")])
           ]
     , plPrefixNames = [([plain (KChar ' '), plain (KChar 'c')], "chat")]
     , plExCommands = exCommands
@@ -87,22 +93,26 @@ actions =
   [ simple "chat_open" GMisc "Open the AI chat beside the code, and go there" (openChat True)
   , simple "chat_submit" GMisc "Send what was typed in the chat" submit
   , simple "chat_cancel" GMisc "Stop the chat's answer" cancel
-  , simple "chat_approve" GMisc "Approve the proposed change under the cursor (it is written to the file)" (decideAtCursor True)
-  , simple "chat_deny" GMisc "Deny the proposed change under the cursor (the old lines come back)" (decideAtCursor False)
-  , simple "chat_approve_all" GMisc "Approve every proposed change" (decideAll True)
-  , simple "chat_deny_all" GMisc "Deny every proposed change" (decideAll False)
+  , simple "chat_approve" GMisc "Keep the proposed change under the cursor (it is written to the file)" (decideAtCursor True)
+  , simple "chat_deny" GMisc "Discard the proposed change under the cursor (the old lines come back)" (decideAtCursor False)
+  , simple "chat_approve_all" GMisc "Keep every proposed change" (decideAll True)
+  , simple "chat_deny_all" GMisc "Discard every proposed change" (decideAll False)
   , simple "chat_next_change" GMovement "Go to the next proposed change" (jumpChange True)
   , simple "chat_prev_change" GMovement "Go to the previous proposed change" (jumpChange False)
   , simple "chat_changes" GMisc "List every proposed change" listChanges
   , simple "chat_add_selection" GMisc "Put the selection into the chat's message, with its file and line" addSelection
+  , simple "chat_new" GMisc "Start a new conversation (proposed changes stay under review)" newConversation
+  , simple "chat_copy_code" GClipboard "Copy a code block of the chat: the one under the cursor, or the last one" copyCode
+  , simple "chat_history_previous" GMisc "In the chat's input: the message sent before (or up a line)" (recall True)
+  , simple "chat_history_next" GMisc "In the chat's input: the message sent after (or down a line)" (recall False)
   ]
 
 exCommands :: [ExCommand]
 exCommands =
   [ ExCommand ["chat"] "Open the AI chat beside the code" NoArgs $ \_ -> openChat True
   , ExCommand ["chat-new"] "Start a new conversation (the chat buffer is cleared)" NoArgs $ \_ -> newConversation
-  , ExCommand ["chat-approve"] "Approve the proposed change under the cursor (:chat-approve all: every one)" NoArgs $ \args -> if args == ["all"] then decideAll True else decideAtCursor True
-  , ExCommand ["chat-deny"] "Deny the proposed change under the cursor (:chat-deny all: every one)" NoArgs $ \args -> if args == ["all"] then decideAll False else decideAtCursor False
+  , ExCommand ["chat-approve", "chat-keep"] "Keep the proposed change under the cursor (:chat-keep all: every one)" NoArgs $ \args -> if args == ["all"] then decideAll True else decideAtCursor True
+  , ExCommand ["chat-deny", "chat-discard"] "Discard the proposed change under the cursor (:chat-discard all: every one)" NoArgs $ \args -> if args == ["all"] then decideAll False else decideAtCursor False
   ]
 
 -- * The chat buffer
@@ -122,11 +132,60 @@ modifyChat i f = modifyDocument i $ \d -> case docKind d of
   ChatDoc cs -> d {docKind = ChatDoc (f cs)}
   _ -> d
 
+-- | The model's text, at the end of the transcript. After what it did (a
+-- tool line), its text starts after a blank line.
 say :: Int -> Text -> EditorM ()
-say i t = modify' (followEnd i . modifyDocument i (insertOutput t))
+say i t = do
+  d <- gets (find ((== i) . docId) . allDocuments)
+  case d of
+    Just doc | openLineEmpty doc -> case T.dropWhile (== '\n') t of
+      "" -> pure ()
+      t' -> do
+        when (fmap fst (lastMark doc) `elem` map (Just . Just) [MarkTool, MarkChange, MarkNote]) $ gap i
+        withWidth i (\w -> appendModel w t')
+    _ -> withWidth i (\w -> appendModel w t)
 
-prompt :: Text
-prompt = "you> "
+-- | Lines of the editor's own (a tool line, a note), after the model's
+-- prose with a blank line between.
+sayLines :: Int -> ChatMark -> [Text] -> EditorM ()
+sayLines i mark ls = do
+  d <- gets (find ((== i) . docId) . allDocuments)
+  let afterProse = case d of
+        Just doc -> not (openLineEmpty doc) || fmap fst (lastMark doc) == Just Nothing
+        Nothing -> False
+  when afterProse $ gap i
+  withWidth i (\w -> appendLines w mark ls)
+
+gap :: Int -> EditorM ()
+gap i = withWidth i appendGap
+
+-- | The end of the transcript for now: its last line finished, so the
+-- empty line above the input separates them.
+settle :: Int -> EditorM ()
+settle i = do
+  d <- gets (find ((== i) . docId) . allDocuments)
+  when (maybe False (not . openLineEmpty) d) $ withWidth i (`appendModel` "\n")
+
+-- | Change the chat's document, laid out for the width of its window.
+withWidth :: Int -> (Int -> Document -> Document) -> EditorM ()
+withWidth i f = do
+  ed <- get
+  let width = case [boxWidth b | Just w <- [windowShowing i ed], (w', b) <- windowBoxes ed, w' == w] of
+        bw : _ -> max 20 (bw - 2)
+        [] -> 78
+  modify' (followEnd i . modifyDocument i (f width))
+
+-- | What a new chat says before the first message.
+welcome :: Int -> EditorM ()
+welcome i =
+  sayLines
+    i
+    MarkWelcome
+    [ "Ask Claude about your code. It sees which file you are in, reads the project, and proposes changes that you keep or discard in the editor."
+    , ""
+    , "ret send · A-ret new line · up/down earlier messages · C-c stop · C-l new chat"
+    , "In a file: space c s puts the selection in your message."
+    ]
 
 -- | Show the chat (beside the current window if it is not shown), and
 -- with @focus@ go there to type. Its buffer's id.
@@ -139,6 +198,7 @@ openChat focus = do
     modifyDoc (\d -> d {docSelection = single (point (Buffer.endPos (docBuffer d)))})
     setMode Insert
 
+
 ensureChat :: EditorM Int
 ensureChat = do
   from <- gets edFocus
@@ -149,9 +209,10 @@ ensureChat = do
       when (isNothing shown) $ modify' (showBuffer (docId d) . splitWindow Beside)
       pure (docId d)
     Nothing -> do
-      let doc = (newDocument Nothing (Buffer.fromText prompt)) {docKind = ChatDoc newChatState {csInput = Pos 0 (T.length prompt)}}
-      modify' (openBuffer doc . splitWindow Beside)
-      gets (docId . edDoc)
+      modify' (openBuffer newChatDocument . splitWindow Beside)
+      i <- gets (docId . edDoc)
+      welcome i
+      pure i
   modify' (focusWindow from)
   pure i
   where
@@ -166,14 +227,19 @@ newConversation = do
       request (ChatCancel (docId d))
       modify' $ modifyDocument (docId d) $ \doc ->
         doc
-          { docBuffer = Buffer.fromText prompt
-          , docSelection = single (point (Pos 0 (T.length prompt)))
-          -- Proposed changes stay under review: they are in the buffers.
-          , docKind = ChatDoc newChatState {csInput = Pos 0 (T.length prompt), csReviews = csReviews cs}
+          { docBuffer = docBuffer newChatDocument
+          , docSelection = docSelection newChatDocument
+          -- Proposed changes stay under review: they are in the buffers;
+          -- earlier messages can still be recalled.
+          , docKind = ChatDoc (fromMaybe newChatState (chatState newChatDocument)) {csReviews = csReviews cs, csSent = csSent cs}
           , docVersion = docVersion doc + 1
           }
+      welcome (docId d)
+      info "a new conversation"
 
--- | Windows on the chat that are not focused follow its end.
+
+-- | Windows on the chat follow its end: those not focused always, the
+-- focused one while its cursor is in the input (not while reading above).
 followEnd :: Int -> Editor -> Editor
 followEnd i ed = case find ((== i) . docId) (allDocuments ed) of
   Nothing -> ed
@@ -183,7 +249,11 @@ followEnd i ed = case find ((== i) . docId) (allDocuments ed) of
         follow w win
           | winDoc win == i = win {winView = (winView win) {viewTop = max 0 (posLine end - height w + 1)}, winSelection = single (point end)}
           | otherwise = win
-     in ed {edWindows = IntMap.mapWithKey follow (edWindows ed)}
+        inInput = maybe False (\cs -> posLine (rangeHead (primary (docSelection d))) >= posLine (csInput cs)) (chatState d)
+        focused
+          | docId (edDoc ed) == i && inInput = ed {edView = (edView ed) {viewTop = max (viewTop (edView ed)) (posLine end - height (edFocus ed) + 1)}}
+          | otherwise = ed
+     in focused {edWindows = IntMap.mapWithKey follow (edWindows ed)}
 
 -- * Sending
 
@@ -193,14 +263,22 @@ submit = do
   case docKind d of
     ChatDoc cs -> case csStatus cs of
       ChatWaiting -> failWith "the answer is still coming (C-c stops it)"
-      ChatIdle -> case takeInput d of
+      ChatIdle -> case takeMessage d of
         Just (text, d') | not (T.null (T.strip text)) -> do
+          let i = docId d
           modifyDoc (const d')
           context <- editorContext
           review <- reviewNote
-          let message = object [("role", JString "user"), ("content", JArray [object [("type", JString "text"), ("text", JString (review <> context <> T.strip text))]])]
-          modify' (modifyChat (docId d) (\c -> c {csHistory = csHistory c <> [message], csDecisions = []}))
-          continue (docId d)
+          let message = object [("role", JString "user"), ("content", JArray [object [("type", JString "text"), ("text", JString (review <> maybe "" fst context <> T.strip text))]])]
+          modify' (modifyChat i (\c -> c {csHistory = csHistory c <> [message], csDecisions = [], csSent = T.strip text : filter (/= T.strip text) (csSent c)}))
+          -- The message as a block of the transcript, then the answer's.
+          gap i
+          sayLines i MarkUser ["You"]
+          withWidth i (\w -> appendUser w (T.strip text))
+          mapM_ (\(_, label) -> sayLines i MarkContext ["↳ " <> label]) context
+          gap i
+          sayLines i MarkClaude ["Claude"]
+          continue i
         _ -> pure ()
     _ -> pure ()
 
@@ -209,7 +287,6 @@ continue :: Int -> EditorM ()
 continue i = do
   root <- liftIO getCurrentDirectory
   modify' (modifyChat i (\c -> c {csStatus = ChatWaiting}))
-  say i "\nclaude> "
   history <- gets (maybe [] (csHistory . snd) . chatOf)
   request (ChatSend i (ChatRequest (systemPrompt root) history chatTools))
 
@@ -226,13 +303,16 @@ reviewNote = do
       <> T.concat ["[Still waiting for review: " <> T.intercalate ", " waiting <> ".]\n" | not (null waiting)]
       <> (if null decided && null waiting then "" else "\n")
 
--- | What the user is looking at, said before their message.
-editorContext :: EditorM Text
+-- | What the user is looking at, said before their message, and how it is
+-- shown under the message.
+editorContext :: EditorM (Maybe (Text, Text))
 editorContext = do
   ed <- get
   pure $ case editorDocument ed of
-    Just d | Just p <- docPath d -> "[I am looking at " <> T.pack p <> ", line " <> T.pack (show (posLine (rangeHead (primary (docSelection d))) + 1)) <> ".]\n\n"
-    _ -> ""
+    Just d | Just p <- docPath d ->
+      let line = T.pack (show (posLine (rangeHead (primary (docSelection d))) + 1))
+       in Just ("[I am looking at " <> T.pack p <> ", line " <> line <> ".]\n\n", T.pack p <> ":" <> line)
+    _ -> Nothing
 
 -- | The document the user is looking at: the focused one, or (with the
 -- chat focused) the one in another window.
@@ -249,7 +329,7 @@ cancel =
     Just (d, cs) | csStatus cs /= ChatIdle -> do
       request (ChatCancel (docId d))
       modify' (modifyChat (docId d) (\c -> c {csStatus = ChatIdle}))
-      say (docId d) ("\n[stopped]\n\n" <> prompt)
+      sayLines (docId d) MarkNote ["Stopped."]
     _ -> pure ()
 
 -- | @space c s@: the selection, with its file and line, into the message.
@@ -272,12 +352,13 @@ applyChatResult :: JobResult -> EditorM ()
 applyChatResult = \case
   ChatReply i ev -> case ev of
     ChatText t -> say i t
+    ChatActivity t -> sayLines i MarkTool ["◦ " <> t]
     -- A tool Claude Code waits for (ADR-42): answered at once, an edit as
     -- proposed.
     ChatToolCall call -> runCall i call >>= \(isError, text) -> request (ChatAnswer i (tcId call) isError text)
     ChatFailed e -> do
       modify' (modifyChat i (\c -> c {csStatus = ChatIdle}))
-      say i ("\n[error: " <> e <> "]\n")
+      sayLines i MarkError ["Error: " <> e]
       endOfTurn i
     ChatFinished stop message calls -> do
       modify' (modifyChat i (\c -> c {csHistory = csHistory c <> [message]}))
@@ -294,7 +375,7 @@ applyChatResult = \case
           let why = if stop == "refusal" then "the request was declined" else "the answer was cut off"
           appendResults i [toolResult (tcId c) True ("not run: " <> why) | c <- calls]
           modify' (modifyChat i (\c -> c {csStatus = ChatIdle}))
-          say i ("\n[" <> why <> "]")
+          sayLines i MarkNote [T.toUpper (T.take 1 why) <> T.drop 1 why <> "."]
           endOfTurn i
       | otherwise = do
           -- The API provider: the calls came with the reply; the results
@@ -307,17 +388,25 @@ appendResults :: Int -> [Value] -> EditorM ()
 appendResults i results =
   modify' (modifyChat i (\c -> c {csHistory = csHistory c <> [object [("role", JString "user"), ("content", JArray results)]]}))
 
--- | The turn is over: a new prompt, and with changes proposed, the editor
--- on the first of them (in normal mode, to review).
+-- | The turn is over. With changes proposed: a summary of them, and the
+-- editor on the first (in normal mode, to review).
 endOfTurn :: Int -> EditorM ()
 endOfTurn i = do
   refreshReviews
   reviews <- gets (maybe [] (csReviews . snd) . chatOf)
   let n = sum (map (length . rvHunks) reviews)
+      counts rv = let hs = rvHunks rv in " (+" <> T.pack (show (sum (map hNewCount hs))) <> " −" <> T.pack (show (sum (map hOldCount hs))) <> ")"
   if n == 0
-    then say i ("\n\n" <> prompt)
+    then settle i
     else do
-      say i ("\n\n[" <> T.pack (show n) <> " proposed change" <> (if n == 1 then "" else "s") <> " in " <> T.intercalate ", " (map (T.pack . rvPath) reviews) <> "]\n[review in the editor, cursor on a change:]\n[space c a / d: approve / deny]\n[] c / [ c: next / previous]\n[A / D: all, space c l: list]\n\n" <> prompt)
+      gap i
+      sayLines
+        i
+        MarkReview
+        ( [T.pack (show n) <> " change" <> (if n == 1 then "" else "s") <> " to review"]
+            <> ["  " <> T.pack (rvPath rv) <> counts rv | rv <- reviews]
+            <> ["In the editor, cursor on a change: space c a keep · space c d discard · ] c next · space c A / D all · space c l list"]
+        )
       case reviews of
         rv : _ | h : _ <- rvHunks rv -> showChange rv h
         _ -> pure ()
@@ -331,8 +420,11 @@ runCall i call = do
     Right req -> case req of
       ListFiles -> do
         files <- liftIO (listFiles (defaultWalk 2000) root)
+        sayLines i MarkTool ["◦ Listed the project's files"]
         pure (False, T.unlines (map T.pack files))
-      ReadFile p -> withPath root p $ \path -> either (True,) (False,) <$> readProjectFile path
+      ReadFile p -> withPath root p $ \path -> do
+        sayLines i MarkTool ["◦ Read " <> T.pack path]
+        either (True,) (False,) <$> readProjectFile path
       EditFile p old new -> withPath root p $ \path -> do
         target <- openTarget path
         d <- gets (find ((== target) . docId) . allDocuments)
@@ -360,7 +452,8 @@ propose i target path buf = do
         modify' (modifyChat i (\c -> c {csReviews = csReviews c <> [Review target path (Buffer.toLines (docBuffer doc)) [] (-1)]}))
       modify' (modifyDocument target (replaceBuffer buf (clampSelection buf (docSelection doc))))
       refreshReviews
-      say i ("\n[proposed a change to " <> T.pack path <> "]\n")
+      let hunks = diffLines (Buffer.toLines (docBuffer doc)) (Buffer.toLines buf)
+      sayLines i MarkChange ["✎ " <> T.pack path <> "  +" <> T.pack (show (sum (map hNewCount hunks))) <> " −" <> T.pack (show (sum (map hOldCount hunks)))]
       pure (False, proposedResult path)
 
 -- | After every event: each review's changes are the diff from its base to
@@ -441,7 +534,7 @@ decideAtCursor approve = do
       Just (_, h) -> do
         ok <- decide approve rv h
         left <- gets (\e -> maybe 0 (length . rvHunks) (reviewFor e (docId d)))
-        when ok $ info ((if approve then "approved" else "denied") <> (if left == 0 then "; no changes left here" else "; " <> T.pack (show left) <> " left here (] c: next)"))
+        when ok $ info ((if approve then "kept" else "discarded") <> (if left == 0 then "; no changes left here" else "; " <> T.pack (show left) <> " left here (] c: next)"))
 
 -- | Approve (write to the file) or deny (put back) one change; 'False' when
 -- it could not be approved.
@@ -501,7 +594,7 @@ decideAll approve =
               ]
             pure True
       refreshReviews
-      when ok $ info (if approve then "approved every proposed change" else "denied every proposed change")
+      when ok $ info (if approve then "kept every proposed change" else "discarded every proposed change")
     _ -> failWith "no proposed changes"
 
 -- | Approve a document's changes, last first, until none are left or one
@@ -570,3 +663,43 @@ listChanges = do
     items -> do
       focusEditorWindow
       modify' (\e -> e {edPicker = Just (newPicker "proposed changes" items), edMode = Picking})
+
+-- * The input
+
+-- | @up@ / @down@ in the chat's input: on its first (last) line, the
+-- message sent before (after) the one shown; elsewhere, a line up (down).
+recall :: Bool -> EditorM ()
+recall back = do
+  d <- getDoc
+  case chatState d of
+    Just cs
+      | onEdge cs d -> do
+          let n = csRecall cs + (if back then 1 else -1)
+              sent = csSent cs
+          case drop n sent of
+            _ | n < 0 -> do
+              modifyDoc (setMessage "")
+              setRecall (-1)
+            m : _ -> do
+              modifyDoc (setMessage m)
+              setRecall n
+            [] -> pure ()
+    _ -> vertical (if back then -1 else 1)
+  where
+    line d = posLine (rangeHead (primary (docSelection d)))
+    onEdge cs d
+      | back = line d == posLine (csInput cs)
+      | otherwise = line d == Buffer.lineCount (docBuffer d) - 1
+    setRecall n = modifyDoc (\doc -> maybe doc (\cs -> doc {docKind = ChatDoc cs {csRecall = n}}) (chatState doc))
+
+-- | @space c y@: a code block of the chat into the register.
+copyCode :: EditorM ()
+copyCode = do
+  ed <- get
+  let here = edDoc ed
+      line = if isChat here then posLine (rangeHead (primary (docSelection here))) else maxBound
+  case chatOf ed >>= codeBlockAt line . fst of
+    Nothing -> failWith "no code block in the chat"
+    Just code -> do
+      setRegister '"' [code <> "\n"]
+      info ("copied a code block (" <> T.pack (show (length (T.lines code))) <> " lines); p pastes it")

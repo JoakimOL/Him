@@ -34,13 +34,17 @@ turn = 0
 for line in sys.stdin:
     turn += 1
     L("user", line.strip()[:200])
-    out({"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}})
-    out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": f"Turn {turn}: editing."}}})
+    def text(index, t):
+        # Streamed in small pieces, as a model does.
+        out({"type": "stream_event", "event": {"type": "content_block_start", "index": index, "content_block": {"type": "text", "text": ""}}})
+        for i in range(0, len(t), 7):
+            out({"type": "stream_event", "event": {"type": "content_block_delta", "index": index, "delta": {"type": "text_delta", "text": t[i:i + 7]}}})
+    text(0, f"Turn {turn}: the file spells two numbers in lower case, which is **inconsistent** with the rest; I will change `two` and `four`.\n\n```python\nprint('a long line of code that is not wrapped, whatever the width of the window is')\n```\n")
     if turn == 1:
+        out({"type": "stream_event", "event": {"type": "content_block_start", "index": 5, "content_block": {"type": "tool_use", "id": "g", "name": "Grep", "input": {}}}})
         for old, new in (("two", "TWO\nand a new line"), ("four", "FOUR")):
             r = rpc("tools/call", {"name": "edit_file", "arguments": {"path": "a.txt", "old_text": old, "new_text": new}})
             L("answer", r["result"]["content"][0]["text"])
-        out({"type": "stream_event", "event": {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}}})
-        out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "I proposed two changes."}}})
+        text(1, "I proposed two changes.")
     out({"type": "result", "subtype": "success", "is_error": False, "result": "ok", "session_id": "fake-session"})
 L("stdin closed; exiting")

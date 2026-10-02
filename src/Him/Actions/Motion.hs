@@ -2,6 +2,7 @@
 module Him.Actions.Motion
   ( actions
   , awaitedKey
+  , vertical
   ) where
 
 import Control.Monad (replicateM_)

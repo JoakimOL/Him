@@ -1038,6 +1038,54 @@ prompt; you can still move, select and yank anywhere.
 - **What is the transcript** is the document's input position (`inputPos`): REPL and
   chat buffers have one, other documents don't, so nothing else changes for them.
 
+**ADR-45: The chat looks and works like an editor's chat panel (VS Code's).**
+The transcript of `you>` / `claude>` lines and `[…]` notes was hard to read in a narrow
+split. Its long lines ran off the edge, and the review hints were scattered. The chat
+is now laid out as blocks, with an input box at the bottom (`Him.Chat.Transcript`,
+pure).
+- **Layout.** The buffer is the transcript, then the prompt `› ` and the message being
+  typed.
+  - Output goes on the transcript's last line, *above* the prompt, so the box stays
+    at the bottom while the answer streams, and what you type moves down with it.
+  - The transcript only grows at its last line, so lines keep their numbers. What
+    each line is (`ChatMark`: You, your text, the context, Claude, a tool line, a
+    proposed change, the review summary, a note, an error, a code fence or code) is
+    kept in `csMarks` by line number.
+  - The model's prose has no mark. The text area styles inline `code`, `**bold**`
+    and headings in it (`inlineSpans`).
+- **Wrapping.** Prose is wrapped at spaces to the chat window's width as it arrives:
+  the last line is re-wrapped with each chunk, and list items wrap under their text.
+  Code blocks are not wrapped (copying code must give the code).
+  - This is hard wrapping: a window resized later keeps the old width. Soft wrapping
+    would mean wrapping in the renderer, cursor movement and the review rows, which
+    is too big for this.
+- **Drawing.**
+  - No line numbers: the gutter is one column, with a bar beside your messages and
+    the code, review and input boxes.
+  - Code blocks, the review summary and the input are drawn across the whole width
+    (`ui.cursorline.primary` or `ui.popup` backgrounds).
+  - An empty input shows a placeholder: the keys, or "Claude is working… (C-c stops
+    it)" while the model answers. The status line says `working…` too.
+- **What the model did** is shown as it happens:
+  - `◦ Read a.txt`, `◦ Listed the project's files`;
+  - Claude Code's own tools, through a new `ChatActivity` event: `◦ Searched the
+    code` (Grep), `◦ Looked for files` (Glob);
+  - `✎ a.txt +2 −1` for each proposed change.
+  - At the end of the turn, a summary of the changes per file, with the keys.
+- **Words.** Proposed changes are *kept* or *discarded*, as in VS Code (its "Undo"
+  would be confused with `u`). The keys and the action names stay
+  (`chat_approve` / `chat_deny`), and `:chat-keep` / `:chat-discard` are new aliases.
+  Messages to the model still say "approved" and "rejected".
+- **Input.** `up` / `down` recall the messages sent (on the input's first / last
+  line; elsewhere they move a line), and `C-l` (or `space c n`) starts a new
+  conversation. `space c y` copies the code block under the cursor (or the last one)
+  into the register. A new chat shows a short welcome with the keys.
+- **Smaller fixes found on the way:**
+  - The view scrolls back to column 0 when the cursor returns to a column that fits
+    (`scrollToCursor`). Before, it stopped with the cursor at the left edge.
+  - The focused chat window follows the end of the transcript while its cursor is
+    in the input.
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -1072,6 +1120,7 @@ Pure modules are marked *(pure)*.
 |---|---|
 | `Him.Editor` | The whole editor state: the focused document and view, the buffer zipper, windows (ADR-37), popups, plugin state; `windowEditor`, `pendingEditLines` *(pure)*. |
 | `Him.Window` | The layout tree of windows, boxes, neighbours (ADR-37) *(pure)*. |
+| `Him.Chat.Transcript` | The chat buffer's layout: blocks above the prompt, marks per line, wrapping, code blocks, the input (ADR-45) *(pure)*. |
 | `Him.Mode`, `Him.Key`, `Him.Keymap` | Modes and keymap layers (directory, completion, REPL, chat); keys; keymap tries. |
 | `Him.EditorM` | The monad actions run in and its helpers (`edit`, `motion`, `request`, `info`). |
 | `Him.Action`, `Him.Invocation` | Named actions with typed parameters; invocations as text (ADR-17). |
@@ -1198,6 +1247,9 @@ Each milestone ends with something runnable, and with this file updated.
   approval in the editor (ADR-41).
 - [x] **38. Claude Code provider.** The chat through `claude`, with him's tools served
   over MCP by `him --mcp-bridge` (ADR-42).
+- [x] **41. A chat panel like VS Code's.** Blocks for messages and answers, an input
+  box with a placeholder, wrapping, tool and change lines, a review summary, input
+  history, copying code blocks (ADR-45).
 - [x] **40. Transcripts.** REPL and chat buffers: only the input after the prompt can
   change; select and yank anywhere; insert mode goes to the input (ADR-44).
 - [x] **39. Reviewing proposed changes.** All of a turn's changes at once, decided in
@@ -1234,13 +1286,13 @@ them in the editor.
 | git plugin | `] g` / `[ g` (next / previous change); `space g s` / `u` (stage / unstage the selected lines), `S` / `U` (the file), `r` (reset the lines). |
 | lsp plugin | `space k` (hover), `g d` / `g y` / `g i` / `g r` (definition, type definition, implementation, references), `space s` / `space S` (symbols / in the project), `space r` (rename), `space a` (code actions), `space x` / `] d` / `[ d` (diagnostics); insert mode: completion (`C-x`, `tab` / `C-n` / `C-p`, `ret`), signature help. |
 | repl plugin | `space e` (send the selection or line), `space E` (reload); in the REPL buffer (insert): `ret` sends, `C-c` interrupts. |
-| chat plugin | `space c c` (open the chat), `space c s` (put the selection into the message); proposed changes: `space c a` / `space c d` (approve / deny the one under the cursor), `space c A` / `space c D` (all), `] c` / `[ c` (next / previous), `space c l` (list); in the chat (insert): `ret` sends, `A-ret` a line break, `C-c` stops the answer. |
+| chat plugin | `space c c` (open the chat), `space c s` (put the selection into the message), `space c y` (copy a code block), `space c n` (new chat); proposed changes: `space c a` / `space c d` (keep / discard the one under the cursor), `space c A` / `space c D` (all), `] c` / `[ c` (next / previous), `space c l` (list); in the chat (insert): `ret` sends, `A-ret` a line break, `up` / `down` earlier messages, `C-c` stops the answer, `C-l` a new chat. |
 
 `:` commands (`tab` completes, and the `:` menu lists them as you type):
 - **files and buffers:** `:w [path]`, `:wa`, `:wq` / `:x`, `:wqa`, `:q` (closes the window; quits with the last), `:q!`, `:qa`, `:qa!`, `:o` / `:e path…`, `:reload` (`!`), `:reload-all`, `:new`, `:bc` (`!`), `:cd`, `:pwd`;
 - **windows:** `:vsplit` / `:vs [files]`, `:hsplit` / `:hs [files]`, `:vnew`, `:hnew`;
 - **config:** `:theme [name]`, `:config-open`, `:config-reload`, `:plugins`, `:plugin-enable` / `:plugin-disable <name>`, `:action <invocation>`;
-- **plugins:** `:format`, `:lsp-info`, `:lsp-start`, `:lsp-stop`, `:lsp-restart`; `:repl [language]`, `:repl-send <text>`, `:repl-reload`, `:repl-interrupt`, `:repl-stop`, `:repl-restart`; `:chat`, `:chat-new`, `:chat-approve [all]`, `:chat-deny [all]`.
+- **plugins:** `:format`, `:lsp-info`, `:lsp-start`, `:lsp-stop`, `:lsp-restart`; `:repl [language]`, `:repl-send <text>`, `:repl-reload`, `:repl-interrupt`, `:repl-stop`, `:repl-restart`; `:chat`, `:chat-new`, `:chat-keep [all]` (`:chat-approve`), `:chat-discard [all]` (`:chat-deny`).
 
 ## 7. How to extend
 
@@ -1274,7 +1326,7 @@ work is match mode and `I` / `A` (ADR-40), the AI chat plugin (ADR-41) with Clau
 Code as its default provider over MCP (ADR-42), and a sweep of the repository and the
 documents.
 
-- **State:** milestones 1–40 (§5) and ADR-1…44 (§3). `make test` runs 564 tests (pure
+- **State:** milestones 1–41 (§5) and ADR-1…45 (§3). `make test` runs 573 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).

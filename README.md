@@ -55,10 +55,12 @@ make fmt / make lint         # format / lint
   - **chat:** `space c c` opens an AI chat beside the code. By default it runs
     through Claude Code (`claude`, with your login), which gets him's file tools over
     MCP. `provider = "anthropic"` in `[chat]` uses the API with `ANTHROPIC_API_KEY`
-    instead. The model proposes all its changes in one go; they
-    show up in the editor with the lines they remove, and nothing is written until
-    you approve. With the cursor on a change, `space c a` / `space c d` approve or
-    deny it (in any order); `] c` / `[ c` move between them, `A` / `D` do all.
+    instead. Like VS Code's chat: your messages and the answers as blocks, an input
+    box (`ret` sends, `up` recalls), what the model read and changed, `space c y`
+    copies a code block. The model proposes all its changes in one go; they show up
+    in the editor with the lines they remove, and nothing is written until you keep
+    them. With the cursor on a change, `space c a` / `space c d` keep or discard it
+    (in any order); `] c` / `[ c` move between them, `A` / `D` do all.
 - `C-z` suspends the editor (`fg` brings it back).
 
 ## Configuration

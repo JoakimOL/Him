@@ -10,13 +10,15 @@ import Him.Buffer (lineCount)
 import Data.IntMap.Strict qualified as IntMap
 import Him.GitState (Sign (..), SignKind (..), gitSigns, tracking)
 import Him.Lsp.State (ShownDiagnostic (..), shownDiagnosticsIn)
-import Him.Document (Document (..))
+import Him.Document (DocKind (..), Document (..))
+import Him.Chat (ChatMark (..), ChatState (..))
 import Him.Editor (Editor (..), reviewFor)
 import Him.Review (DisplayRow (..), addedLines, displayRows)
 import Him.Options (LineNumbers (..), Options (..))
 import Him.Position (Pos (..))
 import Him.Render.Frame
 import Him.Render.Theme
+import Him.Terminal.Ansi (Style (..))
 import Him.Selection (primary, rangeHead)
 import Him.View (View (..))
 
@@ -24,7 +26,10 @@ import Him.View (View (..))
 -- digits of the largest line number (at least three; none when line
 -- numbers are off), and one column of padding.
 gutterWidth :: Editor -> Int
-gutterWidth ed = signLane ed + numbers + 1
+gutterWidth ed = case docKind (edDoc ed) of
+  -- The chat has no line numbers: a column for its bars (ADR-45).
+  ChatDoc _ -> 1
+  _ -> signLane ed + numbers + 1
   where
     numbers = case optLineNumbers (edOptions ed) of
       LineNumbersOff -> 0
@@ -34,7 +39,9 @@ signLane :: Editor -> Int
 signLane ed = if edSignLane ed then 1 else 0
 
 drawGutter :: Theme -> Editor -> Rect -> Frame -> Frame
-drawGutter theme ed rect frame0 = foldl' drawDisplayRow frame0 (zip [0 ..] rows)
+drawGutter theme ed rect frame0 = case docKind (edDoc ed) of
+  ChatDoc cs -> drawChatBars theme ed cs rect frame0
+  _ -> foldl' drawDisplayRow frame0 (zip [0 ..] rows)
   where
     -- The same rows as the text area: a review's removed lines get a minus,
     -- the lines it adds a plus (ADR-43).
@@ -74,3 +81,29 @@ drawGutter theme ed rect frame0 = foldl' drawDisplayRow frame0 (zip [0 ..] rows)
           SignAdded -> "▎"
           SignChanged -> "▎"
           SignRemoved -> "▁"
+
+-- | The chat's gutter: a bar beside your messages, the code blocks, the
+-- changes to review, and the input.
+drawChatBars :: Theme -> Editor -> ChatState -> Rect -> Frame -> Frame
+drawChatBars theme ed cs rect frame0 = foldl' bar frame0 [0 .. rectHeight rect - 1]
+  where
+    top = viewTop (edView ed)
+    count = lineCount (docBuffer (edDoc ed))
+    bar f r =
+      let line = top + r
+          st
+            | line >= count = Nothing
+            | line >= posLine (csInput cs) = Just (themeChatInput theme)
+            | otherwise = case IntMap.lookup line (csMarks cs) of
+                Just m
+                  | m `elem` [MarkUser, MarkUserText, MarkContext] -> Just (themeDirectoryHeader theme)
+                  | m `elem` [MarkFence, MarkCode] -> Just (themeCodeBlock theme)
+                  | m == MarkReview -> Just (themeReviewHeader theme)
+                _ -> Nothing
+       in case st of
+            Just s
+              | m <- IntMap.lookup line (csMarks cs)
+              , m `elem` map Just [MarkUser, MarkUserText, MarkContext] ->
+                  putText (rectRow rect + r) (rectCol rect) s {styleBg = styleBg (themeText theme)} "▌" f
+              | otherwise -> putText (rectRow rect + r) (rectCol rect) s " " f
+            Nothing -> f

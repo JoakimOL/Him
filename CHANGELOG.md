@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- The chat looks and works like VS Code's: message blocks, an input box with history, wrapped answers, code blocks (`space c y` copies one), tool and change lines, a review summary; changes are kept or discarded.
 - Insert-mode chords such as `"j j" = "normal_mode"`: a first key the chord doesn't continue from is typed as usual.
 - REPL and chat buffers are transcripts: only the input can change.
 - Claude Code chat provider (the default): him's tools served over MCP (`him --mcp-bridge`), no API key needed.
