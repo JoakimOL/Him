@@ -23,6 +23,7 @@ import Him.Commands.Search (refreshSearchPreview)
 import Him.Config.Default (defaultConfig)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
+import Him.Info (refreshInfo)
 import Him.Mode (Mode (..))
 import Him.Editor
 import Him.Event (Event (..))
@@ -124,6 +125,7 @@ handleEvent config (EvKey key) = do
         -- Only a key typed on its own falls back (a failed chord is dropped).
         when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
   commitOutsideInsert
+  modify' (refreshInfo config)
 
 -- | A digit typed before a key sequence, in normal or select mode, adds to
 -- the count (@1 2 j@ moves 12 lines). @0@ only continues a count, and a

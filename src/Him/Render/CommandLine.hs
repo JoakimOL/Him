@@ -27,4 +27,4 @@ promptLabel ed = case edPrompt ed of
 
 commandLineCursor :: Editor -> Rect -> (Int, Int)
 commandLineCursor ed rect =
-  (rectRow rect, rectCol rect + min (rectWidth rect - 1) (1 + T.length (edCmdLine ed)))
+  (rectRow rect, rectCol rect + min (rectWidth rect - 1) (T.length (promptLabel ed) + T.length (edCmdLine ed)))

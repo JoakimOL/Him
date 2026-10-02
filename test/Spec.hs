@@ -670,7 +670,12 @@ widthTests =
 
 renderTests :: [Test]
 renderTests =
-  [ test "gutter shows line numbers" (assertEqual "  1 hello" (T.take 9 (rowText (frameOf "hello") 0)))
+  [ test "a closed info box is redrawn, not copied from the row cache" $
+      let ed = newEditor (12, 40) (newDocument Nothing (buf (T.intercalate "\n" (replicate 20 "some text here"))))
+          withBox = ed {edInfo = Just (InfoBox "goto" [("g", "Go to the first line")] BottomRight)}
+          f1 = render defaultTheme Nothing withBox
+       in assertEqual (frameCells (render defaultTheme Nothing ed)) (frameCells (render defaultTheme (Just f1) ed))
+  , test "gutter shows line numbers" (assertEqual "  1 hello" (T.take 9 (rowText (frameOf "hello") 0)))
   , test "wide chars use a continuation cell" $
       assertEqual [Just '漢', Just continuation, Just 'x'] (map (cellAt (frameOf "漢x") 0) [4, 5, 6])
   , test "control chars are drawn as ^X" (assertEqual "^[x" (T.take 3 (T.drop 4 (rowText (frameOf "\ESCx") 0))))
@@ -890,6 +895,12 @@ integrationTests = do
   countPending <- typeKeys "4 2" (start "abc")
   zeroAlone <- typeKeys "0" (start "abc")
   countInsert <- textAfter "" "i 3 esc"
+  infoG <- typeKeys "g" (start "abc")
+  infoAfterG <- typeKeys "g g" (start "abc")
+  infoColon <- typeKeys ": w" (start "abc")
+  infoArgs <- typeKeys ": o space x" (start "abc")
+  completeName <- typeKeys ": b u f f e r - n tab" (start "abc")
+  completeMany <- typeKeys ": w r i tab" (start "abc")
   pendingG <- typeKeys "g" (start "abc")
   badChord <- typeKeys "g z" (start "abc")
   pure
@@ -951,6 +962,18 @@ integrationTests = do
     , test "the count is shown while typed" (assertEqual (Just 42) (edCount countPending))
     , test "0 does not start a count" (assertEqual Nothing (edCount zeroAlone))
     , test "digits type in insert mode" (assertEqual "3" countInsert)
+    , test "g shows the goto keys" $
+        assertEqual
+          (Just ("goto", Just "Go to the first line"))
+          ((\b -> (infoTitle b, lookup "g" (infoRows b))) <$> edInfo infoG)
+    , test "the info box goes away after the chord" (assertEqual Nothing (edInfo infoAfterG))
+    , test ": lists the matching commands" $
+        assertEqual (Just ["write, w", "write-quit, wq, x", "write-all, wa", "write-quit-all, wqa, xa"]) (map fst . infoRows <$> edInfo infoColon)
+    , test "after the name, the command is described" $
+        assertEqual (Just ["open, o, edit, e"]) (map fst . infoRows <$> edInfo infoArgs)
+    , test "tab completes a unique command" (assertEqual "buffer-next " (edCmdLine completeName))
+    , test "tab extends to the common prefix and lists candidates" $
+        assertEqual ("write", ["write", "write-quit", "write-all", "write-quit-all"]) (edCmdLine completeMany, edCompletions completeMany)
     , test "g waits for the next key" (assertEqual [plain (KChar 'g')] (edPending pendingG))
     , test "an unknown chord is dropped" (assertEqual ([], "abc") (edPending badChord, B.toText (docBuffer (edDoc badChord))))
     ]

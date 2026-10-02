@@ -17,6 +17,7 @@ import Him.Position (Pos (..))
 import Him.Render.CommandLine
 import Him.Render.Frame
 import Him.Render.Gutter
+import Him.Render.Info
 import Him.Render.StatusLine
 import Him.Render.TextArea
 import Him.Render.Theme
@@ -68,6 +69,7 @@ render theme prev ed =
     frame =
       drawCommandLine theme ed cmdR
         . drawStatusLine theme ed statusR
+        . drawInfo theme ed (Rect 0 0 (rectHeight textR) cols)
         . drawTextArea theme prev ed textR
         . drawGutter theme ed gutterR
         $ blankFrame rows cols

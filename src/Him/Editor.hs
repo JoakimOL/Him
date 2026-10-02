@@ -4,6 +4,8 @@ module Him.Editor
   , Status (..)
   , Severity (..)
   , PromptKind (..)
+  , InfoBox (..)
+  , InfoPlace (..)
   , newEditor
     -- * Buffers
   , Buffered (..)
@@ -47,6 +49,21 @@ data PromptKind
     SelectPrompt !Selection
   deriving stock (Eq, Show)
 
+-- | A popup listing what can be typed next: the keys after a prefix such
+-- as @g@, or the @:@ commands matching what is typed. Computed after every
+-- key ("Him.Info"), drawn by "Him.Render.Info".
+data InfoBox = InfoBox
+  { infoTitle :: !Text
+  , infoRows :: ![(Text, Text)]
+  -- ^ A key or name, and its description.
+  , infoPlace :: !InfoPlace
+  }
+  deriving stock (Eq, Show)
+
+-- | Which corner of the text area the box sits in.
+data InfoPlace = BottomLeft | BottomRight
+  deriving stock (Eq, Show)
+
 -- | The open documents form a zipper: the current one ('edDoc', with
 -- 'edView'), and the others before and after it in buffer order. Code that
 -- works on the current document never sees the others.
@@ -71,6 +88,10 @@ data Editor = Editor
   , edPreviewPending :: !Bool
   -- ^ The search text changed; the incremental search preview is computed
   -- once before the next render, not for every key of a burst.
+  , edInfo :: !(Maybe InfoBox)
+  , edCompletions :: ![Text]
+  -- ^ Candidates from the last @tab@ on the command line, shown until the
+  -- line changes.
   , edRegisters :: !(Map Char [Text])
   -- ^ Registers: @\"@ (yanked text, one value per range) and @/@ (the
   -- last search).
@@ -93,6 +114,8 @@ newEditor size doc =
     , edCmdLine = ""
     , edPrompt = ExPrompt
     , edPreviewPending = False
+    , edInfo = Nothing
+    , edCompletions = []
     , edRegisters = Map.empty
     , edQuit = False
     }

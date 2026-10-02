@@ -14,7 +14,7 @@ import Him.Buffer qualified as Buffer
 import Him.Command
 import Him.Document (Document (..), displayName, newDocument)
 import Him.Editor
-import Him.Ex (ExCommand (..))
+import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.File (loadDocument, saveDocument)
 import System.Directory (canonicalizePath)
 
@@ -26,33 +26,33 @@ actions =
 
 exCommands :: [ExCommand]
 exCommands =
-  [ ExCommand ["write", "w"] "Write the file, optionally to a new path" $ \args ->
+  [ ExCommand ["write", "w"] "Write the file, optionally to a new path" PathArgs $ \args ->
       () <$ write args
-  , ExCommand ["quit", "q"] "Quit (refuses with unsaved changes in any buffer)" $ \_ -> quitChecked
-  , ExCommand ["quit!", "q!"] "Quit, discarding unsaved changes" $ \_ -> quit
-  , ExCommand ["quit-all", "qa"] "Quit (refuses with unsaved changes in any buffer)" $ \_ -> quitChecked
-  , ExCommand ["quit-all!", "qa!"] "Quit, discarding unsaved changes" $ \_ -> quit
-  , ExCommand ["write-quit", "wq", "x"] "Write the file and quit" $ \args -> do
+  , ExCommand ["quit", "q"] "Quit (refuses with unsaved changes in any buffer)" NoArgs $ \_ -> quitChecked
+  , ExCommand ["quit!", "q!"] "Quit, discarding unsaved changes" NoArgs $ \_ -> quit
+  , ExCommand ["quit-all", "qa"] "Quit (refuses with unsaved changes in any buffer)" NoArgs $ \_ -> quitChecked
+  , ExCommand ["quit-all!", "qa!"] "Quit, discarding unsaved changes" NoArgs $ \_ -> quit
+  , ExCommand ["write-quit", "wq", "x"] "Write the file and quit" PathArgs $ \args -> do
       ok <- write args
       if ok then quitChecked else pure ()
-  , ExCommand ["write-all", "wa"] "Write every modified buffer" $ \_ -> () <$ writeAll
-  , ExCommand ["write-quit-all", "wqa", "xa"] "Write every modified buffer and quit" $ \_ -> do
+  , ExCommand ["write-all", "wa"] "Write every modified buffer" NoArgs $ \_ -> () <$ writeAll
+  , ExCommand ["write-quit-all", "wqa", "xa"] "Write every modified buffer and quit" NoArgs $ \_ -> do
       ok <- writeAll
       if ok then quit else pure ()
-  , ExCommand ["open", "o", "edit", "e"] "Open files (switches to one already open)" $ \case
+  , ExCommand ["open", "o", "edit", "e"] "Open files (switches to one already open)" PathArgs $ \case
       [] -> failWith ":open needs a path"
       paths -> mapM_ (openFile . T.unpack) paths
-  , ExCommand ["new", "n"] "Open a new scratch buffer" $ \_ ->
+  , ExCommand ["new", "n"] "Open a new scratch buffer" NoArgs $ \_ ->
       modify' (openBuffer (newDocument Nothing Buffer.empty))
-  , ExCommand ["buffer-close", "bc", "bclose"] "Close the buffer (refuses with unsaved changes)" $ \_ -> do
+  , ExCommand ["buffer-close", "bc", "bclose"] "Close the buffer (refuses with unsaved changes)" NoArgs $ \_ -> do
       dirty <- docDirty <$> getDoc
       if dirty
         then failWith "unsaved changes (use :bc! to discard them)"
         else modify' closeBuffer
-  , ExCommand ["buffer-close!", "bc!", "bclose!"] "Close the buffer, discarding unsaved changes" $ \_ ->
+  , ExCommand ["buffer-close!", "bc!", "bclose!"] "Close the buffer, discarding unsaved changes" NoArgs $ \_ ->
       modify' closeBuffer
-  , ExCommand ["buffer-next", "bn", "bnext"] "Go to the next buffer" $ \_ -> modify' (switchBuffer 1)
-  , ExCommand ["buffer-previous", "bp", "bprev"] "Go to the previous buffer" $ \_ -> modify' (switchBuffer (-1))
+  , ExCommand ["buffer-next", "bn", "bnext"] "Go to the next buffer" NoArgs $ \_ -> modify' (switchBuffer 1)
+  , ExCommand ["buffer-previous", "bp", "bprev"] "Go to the previous buffer" NoArgs $ \_ -> modify' (switchBuffer (-1))
   ]
 
 -- | Quit unless a buffer has unsaved changes.

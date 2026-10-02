@@ -9,6 +9,8 @@ module Him.Keymap
   , resolve
   , unionKeymap
   , keymapBindings
+  , lookupPrefix
+  , children
   ) where
 
 import Control.Monad (foldM)
@@ -81,3 +83,18 @@ keymapBindings (Keymap m) = concatMap go (Map.toList m)
   where
     go (k, Leaf b) = [([k], b)]
     go (k, Prefix sub) = [(k : ks, b) | (ks, b) <- keymapBindings sub]
+
+-- | The keymap below a prefix (@g@ in @g g@).
+lookupPrefix :: Keymap a -> [Key] -> Maybe (Keymap a)
+lookupPrefix km [] = Just km
+lookupPrefix (Keymap m) (k : ks) = case Map.lookup k m of
+  Just (Prefix sub) -> lookupPrefix sub ks
+  _ -> Nothing
+
+-- | The keys a keymap binds directly: a binding, or 'Nothing' for a key
+-- that starts a longer sequence.
+children :: Keymap a -> [(Key, Maybe a)]
+children (Keymap m) = [(k, leaf n) | (k, n) <- Map.toList m]
+  where
+    leaf (Leaf b) = Just b
+    leaf (Prefix _) = Nothing

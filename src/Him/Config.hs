@@ -19,6 +19,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Action
 import Him.Command (EditorM)
+import Him.Ex (ExCommand)
 import Him.Key (Key)
 import Him.Keymap (Keymap, fromBindings, unionKeymap)
 import Him.Mode (Mode (..))
@@ -29,6 +30,10 @@ data Config = Config
   , cfgFallback :: Mode -> Key -> Maybe (EditorM ())
   -- ^ What to do with a key that no binding matches, e.g. insert the typed
   -- character in insert mode.
+  , cfgExCommands :: [ExCommand]
+  -- ^ For completing and describing @:@ commands.
+  , cfgPrefixNames :: Map [Key] Text
+  -- ^ Titles for key prefixes in the info box, e.g. @g@ = "goto".
   }
 
 -- | Per mode, @(keys, action invocation)@ pairs such as
@@ -71,5 +76,7 @@ buildConfig actions bindings fallback = do
           { cfgActions = registry
           , cfgKeymaps = Map.mapWithKey withParent own
           , cfgFallback = fallback
+          , cfgExCommands = []
+          , cfgPrefixNames = Map.empty
           }
     errs -> Left (T.intercalate "\n" errs)

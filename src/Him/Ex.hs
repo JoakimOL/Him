@@ -1,6 +1,7 @@
 -- | @:@ commands ("ex commands"), such as @:w file@ or @:q!@.
 module Him.Ex
   ( ExCommand (..)
+  , ExArgs (..)
   , parseExLine
   , runExLine
   ) where
@@ -14,9 +15,14 @@ data ExCommand = ExCommand
   { exNames :: ![Text]
   -- ^ The full name first, then aliases: @["write", "w"]@.
   , exDoc :: !Text
+  , exArgs :: !ExArgs
   , exRun :: [Text] -> EditorM ()
   -- ^ Receives the whitespace-separated arguments.
   }
+
+-- | What the arguments are, for completion.
+data ExArgs = NoArgs | PathArgs
+  deriving stock (Eq, Show)
 
 -- | Split a command line into a command name and its arguments.
 parseExLine :: Text -> Maybe (Text, [Text])

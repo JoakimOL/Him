@@ -22,9 +22,9 @@ import Him.Commands.Edit qualified as Edit
 import Him.Commands.File qualified as File
 import Him.Commands.Motion qualified as Motion
 import Him.Commands.Search qualified as Search
-import Him.Config (Bindings, Config, buildConfig, overrideBindings)
+import Him.Config (Bindings, Config (..), buildConfig, overrideBindings)
 import Him.Ex (ExCommand)
-import Him.Key (Key (..), KeyCode (..), Modifier (..))
+import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))
 
 allActions :: [Action]
@@ -115,6 +115,7 @@ commandBindings :: [(Text, Text)]
 commandBindings =
   [ ("esc", "cmdline_cancel")
   , ("ret", "cmdline_execute")
+  , ("tab", "cmdline_complete")
   , ("backspace", "cmdline_backspace")
   ]
 
@@ -136,7 +137,17 @@ defaultConfig = configWith Map.empty
 
 -- | The defaults with some bindings replaced, e.g. from a config file.
 configWith :: Bindings -> Either Text Config
-configWith user = buildConfig allActions (overrideBindings user defaultBindings) fallback
+configWith user = do
+  config <- buildConfig allActions (overrideBindings user defaultBindings) fallback
+  pure config {cfgExCommands = exCommands, cfgPrefixNames = prefixNames}
+
+-- | Titles of the key prefixes, shown above the keys that can follow them.
+prefixNames :: Map.Map [Key] Text
+prefixNames =
+  Map.fromList
+    [ ([plain (KChar 'g')], "goto")
+    , ([plain (KChar ' ')], "space")
+    ]
 
 -- | Unbound printable characters are typed in insert and command mode.
 fallback :: Mode -> Key -> Maybe (EditorM ())

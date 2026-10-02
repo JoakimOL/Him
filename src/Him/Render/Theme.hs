@@ -18,6 +18,8 @@ data Theme = Theme
   , themeStatusLine :: Style
   , themeMode :: Mode -> Style
   , themeInfo :: Style
+  , themePopup :: Style
+  , themePopupKey :: Style
   , themeError :: Style
   }
 
@@ -33,6 +35,8 @@ defaultTheme =
     , themeStatusLine = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 252}
     , themeMode = \m -> defaultStyle {styleBold = True, styleFg = Indexed 235, styleBg = modeColor m}
     , themeInfo = defaultStyle
+    , themePopup = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 252}
+    , themePopupKey = defaultStyle {styleBg = Indexed 236, styleFg = Indexed 110, styleBold = True}
     , themeError = defaultStyle {styleFg = Ansi 9}
     }
   where
