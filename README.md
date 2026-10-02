@@ -38,8 +38,9 @@ menu shows what can follow. The full key list is in docs/PLAN.md §6.
 
 With a language server installed (clangd, rust-analyzer, haskell-language-server,
 typescript-language-server, …), diagnostics show in the gutter. `space k` shows
-documentation, `g d` goes to a definition, `g R` lists references, and completion opens
-while you type.
+documentation, `g d` goes to a definition, `g R` lists references, `space r` renames,
+`space a` shows code actions, `:format` formats, and completion and signature help show
+while you type. `:lsp-restart` restarts the server.
 
 Syntax highlighting uses tree-sitter grammars that him compiles itself. Fetch grammar
 sources once with Helix (`hx --grammar fetch`), then run `him --build-grammars`. That

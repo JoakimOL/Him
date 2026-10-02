@@ -465,8 +465,27 @@ starting point for regex search.
     function;
   - diagnostics are kept by absolute path, and converted to character columns against
     the current text when drawn.
-- **Sync:** `didOpen` / `didChange` send the whole text, once per input batch, just
-  before drawing (`lspFlush`), and before every request.
+- **Sync** (milestone 25, `Him.Lsp.Sync`): it runs once per input batch, just before
+  drawing (`lspFlush`), and before every request.
+  - **Incremental changes:** `didChange` sends one range edit, computed by
+    `Buffer.changeBetween` from the text last sent. Shared storage blocks are skipped
+    with a memory comparison, then lines, then characters. A one-character edit in a
+    196,000-line buffer is found in under 1 ms, where the whole text was 14 MB per
+    batch before. This covers any kind of change, undo included. Servers that ask for
+    full sync get the whole text; an undo back to the sent text sends nothing.
+  - **The server's copy** is the buffer plus the file's final line break, which edits
+    never touch, so buffer positions are valid in it.
+  - **Saves and closes:** `didSave` follows a save (`docSaves`), and `didClose` follows
+    `:bc`.
+- **Server commands:** `:lsp-start`, `:lsp-stop`, `:lsp-restart` and `:lsp-info`.
+  `LspStop` removes the server from the runtime before stopping it, and an exiting
+  server is only reported if it is still the one registered under its key, so a
+  restart cannot be undone by the old server's exit. Stopping drops the server's
+  attachments, diagnostics and pending requests; restarting re-attaches its documents.
+- **Edits** (`Him.Lsp.Edit`): text edits apply from the last to the first, so
+  positions stay valid, and insertions at the same place keep the server's order.
+  Workspace edits change open buffers in place; files that are not open are opened and
+  left modified, and the current buffer stays current.
 - **Features:**
   - diagnostics: a gutter sign over git signs, an underline in the severity's colour,
     the cursor line's message in the bottom row, `] d` / `[ d`, and `space x`;
@@ -474,6 +493,17 @@ starting point for regex search.
   - `g d` definition and `g R` references (one location jumps, several open a picker);
   - completion in insert mode, automatic or on `C-x`, in a `Completing` keymap layer
     over insert mode.
+  - since milestone 25:
+    - `space r` rename (a prompt starting with the word);
+    - `:format`;
+    - `space a` code actions. The request sends the selected lines' diagnostics back
+      raw. Picking one applies its edit, runs its command, or resolves it first.
+      Servers that apply edits through `workspace/applyEdit` (clangd's tweaks) are
+      handled.
+    - signature help after the server's trigger characters (above the cursor, until
+      `)`);
+    - `space s` document symbols, `g y` type definition, `g i` implementation;
+    - jumps convert the server's columns exactly.
 - **Tests:** against clangd when it is installed (attach, diagnostics, hover, `g d`,
   fixing an error, completion), plus the pure protocol tests.
 
@@ -517,6 +547,7 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Syntax.TreeSitter`, `Him.GrammarBuild` + `cbits/tree-sitter`, `cbits/ts_shim.c` | ✅ | The tree-sitter provider and the grammar builder (`him --build-grammars`) (ADR-27). |
 | `Him.Regex` | ✅ | Backtracking regex subset and Lua patterns (ADR-28). |
 | `Him.Lsp.Protocol`, `Him.Lsp.State`, `Him.Lsp.Config`, `Him.Lsp.Server`, `Him.Commands.Lsp` | ✅ | The LSP client: pure protocol and editor state, server table, server processes, and the editor-side actions and housekeeping (ADR-29). |
+| `Him.Lsp.Sync`, `Him.Lsp.Edit` | ✅ | Sync messages (incremental `didChange`, `didSave`, `didClose`); parsing and applying text and workspace edits. |
 | `Him.Render.Completion` | ✅ | The completion menu. |
 | `Him.Effect`, `Him.Runtime` | ✅ | Effects as data (`RunAction`, `OpenPalette`, `StartJob`, `CancelJob`) and the background-job runtime (ADR-23). |
 | `Him.Invocation` | ✅ | Pure invocation parsing/rendering (re-exported by `Him.Action`). |
@@ -599,6 +630,10 @@ Each milestone ends with something runnable, and with this file updated.
   `him --build-grammars` (ADR-27); `Him.Regex` (ADR-28).
 - [x] **24. LSP client** (roadmap phase 4). Diagnostics, hover, definition, references
   and completion, with servers run by the runtime (ADR-29).
+- [x] **25. More LSP.** Incremental sync (`Buffer.changeBetween`), `didSave` and
+  `didClose`; rename, format, code actions, signature help, document symbols, type
+  definition and implementation; `:lsp-start`, `:lsp-stop`, `:lsp-restart` and
+  `:lsp-info` (ADR-29).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -623,7 +658,7 @@ Implemented (defined in `Him.Config.Default`):
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
 | `:` commands | `:w [path]`, `:q` / `:qa` (refuse when any buffer is modified), `:q!` / `:qa!`, `:wq` / `:x`, `:wa`, `:wqa` / `:xa`, `:open` / `:o` / `:e path...`, `:new` / `:n`, `:buffer-close` / `:bc` (`!` discards), `:buffer-next` / `:bn`, `:buffer-previous` / `:bp`. `tab` completes names and paths. |
 | Directory listings | `:o dir`, `him dir`, `space d` (the current file's directory, cursor on the file), `space D` (the working directory). In a listing: normal motions and search, `ret` (enter a directory / open a file), `-` or `backspace` (parent), `g r` (refresh), `a` (new file, or directory with a trailing `/`), `+` (new directory), `r` (rename/move), `d` (delete the selected entries, asks `y`), `g .` (show/hide dotfiles). `:cd [dir]` (default: the listed directory), `:pwd`. |
-| Language server | Diagnostics in the gutter, underlined, and the cursor line's message at the bottom; `] d` / `[ d` next/previous, `space x` list. `space k` hover, `g d` definition, `g R` references. Insert mode: completion opens by itself (or `C-x`); `tab`/`C-n`/`down` and `S-tab`/`C-p`/`up` select, `ret` accepts, `esc` closes. Servers: hls, rust-analyzer, clangd, typescript-language-server, pylsp, gopls (`Him.Lsp.Config`). |
+| Language server | Diagnostics in the gutter, underlined, and the cursor line's message at the bottom; `] d` / `[ d` next/previous, `space x` list. `space k` hover, `g d` definition, `g y` type definition, `g i` implementation, `g R` references, `space s` symbols, `space r` rename, `space a` code actions, `:format`. Insert mode: completion opens by itself (or `C-x`); `tab`/`C-n`/`down` and `S-tab`/`C-p`/`up` select, `ret` accepts, `esc` closes; signature help appears after `(` and `,`. `:lsp-start`, `:lsp-stop`, `:lsp-restart`, `:lsp-info`. Servers: hls, rust-analyzer, clangd, typescript-language-server, pylsp, gopls (`Him.Lsp.Config`). |
 | Git | Gutter signs (green added, yellow changed, red removed; dimmer when staged). `] g` / `[ g` next/previous change; `space g s` / `space g u` stage/unstage the selected lines, `space g S` / `space g U` the whole file, `space g r` reset the selected lines to the index. |
 | Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker), `space ?` (command palette: every action, its keys and doc; one with arguments opens `:action <name> `). `:action <invocation>` runs any action. In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
 
@@ -709,9 +744,9 @@ numbers are provisional.*
     injections (code blocks in Markdown, `<script>` in HTML).
   - [x] Phase 4, LSP client (milestone 24, ADR-29). Diagnostics, hover, definition,
     references, completion.
-  - **Roadmap complete.** Follow-ups, roughly by value: incremental `didChange` (and
-    3b incremental parsing) from a buffer change log; `didSave` / `didClose`; rename
-    (`space r`), formatting, code actions, signature help; a config file for keys,
+  - **Roadmap complete.** Follow-ups, roughly by value: incremental parsing (3b),
+    which can now reuse `Buffer.changeBetween`; workspace symbols, completion's
+    additional edits; a config file for keys,
     languages and servers; syntax injections; regex search on `Him.Regex`; and a full
     benchmark run on an idle machine (see above).
 - **Next suggestions:**
@@ -734,10 +769,10 @@ numbers are provisional.*
   - Git: the signs refresh when a buffer becomes current, on save and after staging, but
     not when the files change outside the editor while it is shown. A diff of a huge file
     with an edit in the middle takes about 50 ms (in the background).
-  - LSP: every batch of edits sends the whole text (no incremental sync yet), so very
-    large files with a server attached cost more per keystroke. There is no `didSave`
-    or `didClose`. Definition jumps take the server's column as characters. Rename,
-    format and code actions are not implemented.
+  - LSP: there are no workspace symbols, inlay hints or semantic tokens. Completion
+    items' additional edits (such as auto-imports) are not applied. Snippets are
+    inserted as plain text. Code actions that create, rename or delete files have only
+    their text edits applied.
   - Highlighting needs `him --build-grammars` once (see ADR-27). Without built grammars,
     files are shown plain, and nothing says why except `$HIM_LOG`.
   - Syntax sessions are not closed when their buffer is closed.
@@ -753,7 +788,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (397 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (423 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

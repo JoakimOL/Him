@@ -922,6 +922,23 @@ The tests drive a real clangd: open a C file with a type error, wait for the
 diagnostic, hover, jump to a definition, fix the error and watch the diagnostic
 disappear, then complete a word.
 
+**Sending less.** The first version sent the whole file after every burst of typing.
+Incremental sync needs to know *what* changed. Rather than threading a change log
+through every edit function (and through undo, which swaps whole snapshots), the
+client compares the text it last sent with the text now (`Buffer.changeBetween`).
+That sounds expensive but is not. The rope shares unchanged blocks between versions,
+so a memory comparison skips them; only the edited block is compared line by line,
+and the remaining lines character by character. A one-character edit in 196,000 lines
+costs under a millisecond. A randomized test checks that applying the computed change
+to the old text gives the new one.
+
+**Where edits come back.** Rename, formatting and code actions all return edits. One
+function applies them, from the last position to the first so that earlier positions
+stay valid. One trap is worth knowing: clangd's "extract variable" is a *command*.
+The client runs it, and clangd answers by *asking the client* to apply an edit
+(`workspace/applyEdit`). A client that answers every server request automatically, as
+the first version did, silently drops that edit.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with
