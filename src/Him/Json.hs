@@ -1,6 +1,6 @@
--- | JSON: values, a parser and an encoder (for the LSP client; ADR-23).
--- There is no JSON library among GHC's boot libraries, so this is a small
--- one: strict, UTF-8, RFC 8259.
+-- | JSON: values, a parser and an encoder (the LSP client, the chat, the
+-- config file; ADR-23). There is no JSON library among GHC's boot libraries,
+-- so this is a small one: strict, UTF-8, RFC 8259.
 module Him.Json
   ( Value (..)
   , parseJson

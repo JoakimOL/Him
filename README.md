@@ -3,8 +3,10 @@
 A modal, selection-first (Helix-style) text editor for the terminal, written in Haskell
 using only GHC boot libraries.
 
-The design, the decisions behind it, and the milestone status are in
-**[docs/PLAN.md](docs/PLAN.md)**.
+The design, the decisions behind it and the status are in
+**[docs/PLAN.md](docs/PLAN.md)**. **[docs/TUTORIAL.md](docs/TUTORIAL.md)** explains how it
+is built, step by step, and **[docs/BENCHMARK.md](docs/BENCHMARK.md)** compares it with
+Vim and Helix.
 
 ## Requirements
 
@@ -12,57 +14,62 @@ The design, the decisions behind it, and the milestone status are in
   if needed.
 - Optional: haskell-language-server 2.14+ (it has a GHC 9.10.3 binary). `hie.yaml` is
   included.
-- Optional: `fourmolu` and `hlint` on your PATH, for `make fmt` and `make lint`
-  (`stack install fourmolu hlint`). HLS runs both inline anyway.
+- Optional: `fourmolu` and `hlint` on your PATH, for `make fmt` and `make lint`.
 
 ## Usage
 
 ```sh
-make build              # stack build
+make build                   # stack build
 make run ARGS="a.txt b.txt"  # run the editor (each file opens as a buffer)
-make test               # run the test suite
-make bench              # compare performance with vim and helix (docs/BENCHMARK.md)
-make watch              # rebuild on save
-make ghci               # REPL
-make fmt / make lint    # format / lint
+make test                    # run the test suite
+make bench                   # compare performance with vim and helix
+make watch                   # rebuild on save
+make ghci                    # REPL
+make fmt / make lint         # format / lint
 ```
 
-In the editor, `space ?` lists every command with its keys (pickers preview the file
-and line an item points at), `space f` opens a file picker
-(it streams in the background and honours `.gitignore` and `.ignore`),
-`space b` a buffer picker, `space d` a directory listing (`ret` opens, `-` goes up, `a` /
-`+` / `r` / `d` create, rename and delete, `g .` shows dotfiles; also `:o dir` or
-`him dir`), and `:` shows
-the commands as you type (`tab` completes). In a git repository the gutter shows changed
-lines; `space g s` stages the selected lines (`space g u` unstages, `] g` jumps). After a prefix key such as `g` or `space`, a
-menu shows what can follow. The full key list is in docs/PLAN.md §6.
+## What it does
 
-With a language server installed (clangd, rust-analyzer, haskell-language-server,
-typescript-language-server, …), diagnostics show in the gutter. `space k` shows
-documentation, `g d` goes to a definition, `g r` lists references, `space r` renames,
-`space a` shows code actions, `space S` searches symbols in the project, `:format` formats, and completion and signature help show
-while you type. `:lsp-restart` restarts the server.
+- **Editing, Helix-style.** Select, then act. Multiple selections; `f t`, counts,
+  pages. Match mode: `m i w`, `m a (`, `m s"`, `m r ( [`, `m d (`, `m m`.
+- **Files, buffers, windows.**
+  - `space f` / `space b` pickers with a preview.
+  - `space d` lists a directory (create, rename, delete).
+  - `space ?` lists every command with its keys.
+  - Splits: `C-w v` / `C-w s` (or `space w`), `:vsplit`, `:hsplit`.
+- **The `:` line** shows the commands as you type; `tab` completes.
+- **Highlighting** with tree-sitter grammars that him compiles itself. Fetch grammar
+  sources once with Helix (`hx --grammar fetch`), then run `him --build-grammars`.
+- **Themes:** any Helix theme (`:theme onedark`), or your own.
+- **Plugins**, each of which can be switched off (`[plugins]` in the config,
+  `:plugin-disable`):
+  - **git:** signs for changed lines; `space g s` stages the selected lines, `] g`
+    jumps.
+  - **lsp:** diagnostics, `space k` hover, `g d`, `g r`, `space r` rename,
+    `space a` code actions, completion, `:format`. Servers: clangd, rust-analyzer,
+    haskell-language-server, typescript-language-server, pylsp, gopls.
+  - **repl:** `:repl` opens one beside the file (`stack ghci` in a Haskell project),
+    `space e` sends the selection, and saving reloads.
+  - **chat:** `space c c` opens an AI chat beside the code. It needs
+    `ANTHROPIC_API_KEY`. The model's edits show up in the editor and wait for you:
+    `space c a` / `space c d` approve or deny the next one, `A` / `D` all of them.
+- `C-z` suspends the editor (`fg` brings it back).
 
-Syntax highlighting uses tree-sitter grammars that him compiles itself. Fetch grammar
-sources once with Helix (`hx --grammar fetch`), then run `him --build-grammars`. That
-builds them into `~/.config/him/runtime/grammars`; the highlight queries are read from
-Helix's runtime.
+## Configuration
 
-`C-z` suspends the editor (`fg` brings it back).
-
-Keys, editor settings and language servers can be changed in `~/.config/him/config.toml`.
-`him --dump-default-config > ~/.config/him/config.toml` gives a file with every default to
-start from (or use `:config-open` inside him); `:config-reload` applies changes.
+`~/.config/him/config.toml` holds keys, settings, the theme, language servers, REPLs,
+the chat and plugins. `him --dump-default-config` prints every default, with what each
+key does. `:config-open` edits the file and `:config-reload` applies it.
 
 Debug logging: `HIM_LOG=/tmp/him.log make run ARGS=file.txt`.
 
 ## Layout
 
 ```
-app/Main.hs         argument parsing, then Him.App.run
-src/Him/…           the library (see the module map in docs/PLAN.md)
-cbits/              tiny C shims used through FFI (terminal size)
-test/               test suite with a minimal built-in harness
-bench/bench.py      benchmark against vim and helix (Python stdlib only)
-docs/PLAN.md        living plan: assumptions, ADRs, milestones, where to pick up
+app/Main.hs         arguments (--dump-default-config, --build-grammars), then Him.App.run
+src/Him/…           the library (module map: docs/PLAN.md §4)
+cbits/              C used through FFI: text scans, terminal size, tree-sitter
+test/               the test suite (test/Test/*.hs) with a minimal built-in harness
+bench/              bench.py (vim/helix comparison, Python stdlib only), micro-benchmarks
+docs/               PLAN.md (decisions, status), TUTORIAL.md, BENCHMARK.md, ROADMAP.md
 ```

@@ -10,11 +10,12 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
--- | @him [FILE...]@, @him --dump-default-config@, or
--- @him --build-grammars [SOURCES] [NAME...]@.
+-- | @him [FILE...]@, @him --dump-default-config@,
+-- @him --build-grammars [SOURCES] [NAME...]@, or @him --help@.
 main :: IO ()
 main =
   getArgs >>= \case
+    [flag] | flag `elem` ["--help", "-h"] -> putStr usage
     "--build-grammars" : rest -> buildCommand rest
     ["--dump-default-config"] -> TIO.putStr defaultConfigText
     files -> App.run files
@@ -39,3 +40,14 @@ buildCommand args = do
       putStrLn (show (length results - length failed) <> " built, " <> show (length failed) <> " failed")
   where
     filterM' p = fmap concat . mapM (\x -> (\ok -> [x | ok]) <$> p x)
+
+usage :: String
+usage =
+  unlines
+    [ "him [FILE|DIRECTORY...]              edit files (a directory opens as a listing)"
+    , "him --dump-default-config            print every default, as a config file"
+    , "him --build-grammars [SOURCES] [NAME...]"
+    , "                                     compile tree-sitter grammars (sources: hx --grammar fetch)"
+    , ""
+    , "Config: ~/.config/him/config.toml ($HIM_CONFIG). In the editor, space ? lists every command."
+    ]

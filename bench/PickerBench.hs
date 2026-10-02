@@ -9,7 +9,7 @@ import Control.Exception (evaluate)
 import Control.Monad (forM_)
 import Data.Text qualified as T
 import GHC.Clock (getMonotonicTime)
-import Him.FileTree (listFiles)
+import Him.FileTree (defaultWalk, listFiles)
 import Him.Picker (PickTarget (..), Picker (..), newPicker, pickerItem, setQuery)
 import System.Environment (getArgs)
 import Text.Printf (printf)
@@ -25,7 +25,7 @@ main :: IO ()
 main = do
   dirs <- getArgs
   forM_ dirs $ \dir -> do
-    (files, ms) <- timed (listFiles 1000000 dir >>= \fs -> length fs `seq` pure fs)
+    (files, ms) <- timed (listFiles (defaultWalk 1000000) dir >>= \fs -> length fs `seq` pure fs)
     printf "listFiles %s: %d files in %.1f ms\n" dir (length files) ms
     (picker, mi) <- timed (let p = newPicker "files" [pickerItem (T.pack f) (PickFile f) "" | f <- files] in evaluate (length (pkItems p)) >> pure p)
     printf "  building %d items: %.1f ms\n" (length (pkItems picker)) mi

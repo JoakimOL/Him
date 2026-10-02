@@ -1051,6 +1051,35 @@ some output text, insert the text at `p`. Then move every cursor at or after `p`
 that one at the end of the typed input stays at the end. Test it with output that has
 no newline, and with output that has two.
 
+### 5.12 Text objects and an AI chat (ADR-40, ADR-41)
+
+**Match mode** (`m`) is small once selections are pure:
+- `m i w` and `m a (` ask `Him.TextObject.textObject` for a range around the cursor:
+  the run of word characters, the innermost pair around it, the paragraph.
+- Brackets are found by walking the text lazily backwards and forwards, counting
+  nesting.
+- `m s (` surrounds every selection through the same `applyEdits` that typing uses.
+
+**The chat** reuses three earlier pieces:
+- the transcript from the REPL (5.11), now `Him.Transcript`;
+- splits, for the window beside the code;
+- the provider idea from highlighting (5.9). A `ChatProvider` takes a request and
+  streams events back, so the tests drive the whole flow with a scripted provider.
+
+The interesting part is the model's edits. Each one becomes a *pending edit*:
+- It is applied to the file's buffer as an undoable change of whole lines, and drawn
+  with `ui.highlight`.
+- Approving keeps it and saves the file; denying puts the old lines back.
+- Only when every edit of a turn is decided does the conversation go on, with one
+  tool result per call, in order.
+
+The history sent to the model is append-only. The assistant's messages go back exactly
+as they came, thinking blocks included, which the API requires.
+
+**▶ Task 7c.** Write `textObject True 'w'`: given a line and a column, return the run
+of characters of the same kind (word, punctuation, blank) around it. Then make `m a w`
+include the blanks after the word, or before it at the end of a line.
+
 ---
 
 ## Part 6: Benchmarking against Vim and Helix
@@ -1277,12 +1306,13 @@ and Vim and Helix only send the cells that changed. Four fixes followed:
 
    ```haskell
    | Just p <- prevFrame
-   , IntMap.lookup (prevRowOf screenRow) (frameRowKeys p) == Just key
+   , Map.lookup (prevRowOf screenRow, rectCol rect) (frameRowKeys p) == Just key
    = remember (copyCells (prevRowOf screenRow) screenRow (rectCol rect) (rectWidth rect) p f)
    ```
 
    `prevRowOf` looks the row up *by line* (`screenRow + top - prevTop`), so rows survive
-   scrolling.
+   scrolling. (The key is a row *and* a column since splits put windows side by side,
+   ADR-37.)
 3. **Terminal scrolling.** When the view moves by less than a screen, the diff sets a
    scroll region over the text area and scrolls it (`ESC[1;38r`, `ESC[1S`). It then
    compares the new frame with the *shifted* old one, so a `j` that scrolls writes one
@@ -1342,24 +1372,27 @@ millisecond off every `n`.
 
 ### 7.8 Where it ended up
 
-Median of several runs, 200,000-line (14 MB) file, same machine:
+Median of five runs, 200,000-line (14 MB) file, same machine. "Now" is 2026-10-02,
+with themes, plugins, splits and all (every plugin on; `docs/BENCHMARK.md` has the
+plugins-off and IDE-style runs):
 
-| Scenario | first version | final | vim | helix |
+| Scenario | first version | now | vim | helix |
 |---|---:|---:|---:|---:|
-| startup (ms) | 6.3 | **8.1** | 29.7 | 31.0 |
-| open 14 MB: peak RSS (MB) | 38.6 | **24.1** | 37.2 | 46.8 |
-| 2000 × `j` at once (ms) | 2809 | **20.9** | 62.9 | 636 |
-| 100 × jump to end and back (ms) | 505 | **6.1** | 34.7 | 113 |
-| edit and save: peak RSS (MB) | 88.5 | **35.4** | 37.1 | 65.0 |
-| per-key latency `j` (ms) | 4.6 | 1.2 | **0.5** | 2.0 |
-| per-key latency typing (ms) | 4.7 | 1.1 | **0.5** | 1.8 |
-| search, match at the end (ms) | — | **11.3** | 30.0 | 24.0 |
-| search, no match (ms) | — | **5.7** | 25.2 | 48.1 |
-| `n` (ms) | — | 2.6 | **1.6** | 2.6 |
+| startup (ms) | 6.3 | **~12** | 24.0 | 30.2 |
+| open 14 MB: first paint (ms) | — | 30.2 | 34.8 | **22.8** |
+| open 14 MB: peak RSS (MB) | 38.6 | **30.2** | 37.2 | 46.8 |
+| 2000 × `j` at once (ms) | 2809 | **≈20** | 62.2 | 628 |
+| 100 × jump to end and back (ms) | 505 | **7.0** | 34.3 | 114 |
+| edit and save (ms) | — | **13.0** | 22.7 | 18.2 |
+| per-key latency `j` (ms) | 4.6 | 1.3 | **0.5** | 2.0 |
+| per-key latency typing (ms) | 4.7 | 1.1 | **0.3** | 1.9 |
+| search, match at the end (ms) | — | **11.2** | 30.3 | 25.7 |
+| search, no match (ms) | — | **5.1** | 24.9 | 47.6 |
+| `n` (ms) | — | 2.8 | **1.6** | 2.8 |
 
 The remaining gaps are documented in `docs/BENCHMARK.md`:
-- **Opening large files** is about 2× slower than Helix.
-- **Per-key latency** is about 2× Vim's.
+- **Opening large plain files** is slower than Helix (30 vs 23 ms).
+- **Per-key latency** is about 2–3× Vim's.
 
 Each has a concrete next step.
 
@@ -1386,8 +1419,8 @@ Each has a concrete next step.
 
 The editor is deliberately unfinished. Good next exercises, in increasing difficulty:
 
-- **Splits:** give each window its own view over a shared document, and turn
-  `layout` into a tree of rectangles.
+- **Tree-sitter text objects:** `m i f` (inside a function) like Helix, from the
+  syntax tree the highlighter already has.
 - **Highlight all matches:** a render pass over the visible rows. Remember to add the
   highlight to `RowKey`.
 - **Regex search:** write a small backtracking or Thompson-NFA engine. `Him.Search` only

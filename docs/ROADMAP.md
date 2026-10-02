@@ -1,7 +1,10 @@
 # him roadmap: language awareness, git, and the remaining gaps
 
-This is the approved plan (2026-10-02) for the next phases. Progress is tracked in
-`docs/PLAN.md` §8; each phase ends with its ADRs and a §8 update.
+> **Done.** All five phases were completed (milestones 21–24, ADR-23…29). This file is
+> kept as the record of the plan; what was built, and how it differs from the plan,
+> is in the ADRs in `docs/PLAN.md`, and the current status is in its §8.
+
+This was the approved plan (2026-10-02) for the next phases.
 
 ## Context
 

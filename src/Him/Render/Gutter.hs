@@ -1,4 +1,5 @@
--- | Line numbers to the left of the text area.
+-- | The gutter left of the text area: a sign lane (git changes,
+-- diagnostics; only while a plugin draws there) and line numbers.
 module Him.Render.Gutter
   ( drawGutter
   , gutterWidth
