@@ -26,8 +26,9 @@ import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
-import Him.Commands.Picker (listFiles)
+import Him.FileTree (listFiles)
 import Him.Picker
+import Him.Ignore
 import Him.Key
 import Him.Keymap
 import Him.Mode (Mode (..))
@@ -148,6 +149,17 @@ openBufferTests = do
   mapM_ (\f -> writeFile (tree <> "/" <> f) "") ["b.txt", "a.txt", "sub/c.txt", "sub/deeper/d.txt", ".hidden/x.txt", ".dotfile"]
   listed <- listFiles 100 tree
   listedFew <- listFiles 2 tree
+  createDirectoryIfMissing True (tree <> "/build")
+  mapM_ (\f -> writeFile (tree <> "/" <> f) "") ["x.log", "sub/y.log", "sub/keep.log", "build/out.txt", "sub/deeper/gen.txt"]
+  writeFile (tree <> "/.gitignore") "*.log\nbuild/\n"
+  writeFile (tree <> "/sub/.gitignore") "!keep.log\n"
+  writeFile (tree <> "/sub/.ignore") "deeper/gen.txt\n"
+  listedIgnoring <- listFiles 100 tree
+  -- Started below a repository root, the root's ignore files still apply.
+  createDirectoryIfMissing True (tree <> "/.git/info")
+  writeFile (tree <> "/.gitignore") "/sub/c.txt\n"
+  writeFile (tree <> "/.git/info/exclude") "d.txt\n"
+  listedInRepo <- listFiles 100 (tree <> "/sub")
   removeDirectoryRecursive tree
   mapM_ removeFile [fileA, fileB]
   pure
@@ -177,6 +189,10 @@ openBufferTests = do
     , test "space f opens the chosen file" (assertEqual (Just "test/Spec.hs", (1, 2)) (docPath (edDoc pickedFile), bufferIndex pickedFile))
     , test "listFiles lists files sorted, skipping hidden entries" (assertEqual ["a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt"] listed)
     , test "listFiles stops at the limit" (assertEqual ["a.txt", "b.txt"] listedFew)
+    , test "listFiles honours .gitignore and .ignore at every level" $
+        assertEqual ["a.txt", "b.txt", "sub/c.txt", "sub/deeper/d.txt", "sub/keep.log"] listedIgnoring
+    , test "listFiles below a repository root uses the root's ignore files" $
+        assertEqual ["keep.log", "y.log"] listedInRepo
     ]
 
 main :: IO ()
@@ -197,6 +213,7 @@ main = do
     , group "Him.Keymap" keymapTests
     , group "Him.Action" actionTests
     , group "Him.Picker" pickerTests
+    , group "Him.Ignore" ignoreTests
     , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests
     , group "Him.Ex" exTests
@@ -574,6 +591,31 @@ multiSelectionTests =
     deleteAll t dels offs =
       let t' = T.pack [c | (i, c) <- zip [0 ..] (T.unpack t), i `notElem` dels]
        in (t', [o - length [d | d <- dels, d < o] | o <- offs])
+
+ignoreTests :: [Test]
+ignoreTests =
+  [ test "a name matches at any depth" (assertEqual [True, True, False] (map (ign "*.o") ["a.o", "dir/b.o", "a.oo"]))
+  , test "a leading slash anchors" (assertEqual [True, False] (map (ign "/build") ["build", "src/build"]))
+  , test "a slash in the middle anchors" (assertEqual [True, False, False] (map (ign "doc/*.txt") ["doc/a.txt", "doc/sub/a.txt", "x/doc/a.txt"]))
+  , test "a trailing slash matches directories only" $
+      assertEqual (Just True, Nothing) (matchRules (parseIgnore "build/") "build" True, matchRules (parseIgnore "build/") "build" False)
+  , test "**/ matches any directories" (assertEqual [True, True] (map (ign "**/foo") ["foo", "a/b/foo"]))
+  , test "/**/ matches zero or more directories" (assertEqual [True, True, False] (map (ign "a/**/b") ["a/b", "a/x/y/b", "c/a/b"]))
+  , test "/** matches everything inside" (assertEqual [True, True, False] (map (ign "abc/**") ["abc/x", "abc/x/y", "abc"]))
+  , test "? and character classes" $
+      assertEqual [True, False, True, False, True, False] (map (uncurry ign) [("a?c", "abc"), ("a?c", "a/c"), ("[a-c]x", "bx"), ("[a-c]x", "dx"), ("[!a]x", "bx"), ("[!a]x", "ax")])
+  , test "comments, blank lines, escapes and trailing spaces" $
+      assertEqual [Nothing, Just True, Just True] [matchRules (parseIgnore "# c\n\n") "c" False, matchRules (parseIgnore "\\#x") "#x" False, matchRules (parseIgnore "foo   ") "foo" False]
+  , test "the last matching rule wins; ! re-includes" $
+      assertEqual [True, False] (map (\f -> isIgnored [(Below "", parseIgnore "*.log\n!keep.log")] f False) ["a.log", "keep.log"])
+  , test "a deeper file overrides" $
+      let ig = [(Below "", parseIgnore "*.txt"), (Below "sub", parseIgnore "!keep.txt")]
+       in assertEqual [False, True] (map (\f -> isIgnored ig f False) ["sub/keep.txt", "other/keep.txt"])
+  , test "rules from an ancestor see the root's path in it" $
+      assertEqual [True, False] (map (\f -> isIgnored [(Above "src", parseIgnore "/src/gen")] f True) ["gen", "other"])
+  ]
+  where
+    ign pat path = isIgnored [(Below "", parseIgnore pat)] path False
 
 pickerTests :: [Test]
 pickerTests =

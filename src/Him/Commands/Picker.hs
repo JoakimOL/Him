@@ -3,22 +3,19 @@
 module Him.Commands.Picker
   ( actions
   , pickerInsert
-  , listFiles
   ) where
 
-import Control.Exception (IOException, try)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (gets, modify')
-import Data.List (isPrefixOf, sort)
 import Data.Text qualified as T
 import Him.Action
 import Him.Command
 import Him.Commands.File (openFile)
 import Him.Document (displayName)
 import Him.Editor
+import Him.FileTree (listFiles)
 import Him.Mode (Mode (..))
 import Him.Picker
-import System.Directory (doesDirectoryExist, listDirectory)
 
 actions :: [Action]
 actions =
@@ -57,24 +54,3 @@ onPicker f = modify' (\e -> e {edPicker = f <$> edPicker e})
 -- | The picker lists at most this many files.
 maxFiles :: Int
 maxFiles = 50000
-
--- | Files below a directory, sorted, relative to it. Hidden entries
--- (@.git@, …) and build directories are skipped, and the walk stops
--- after @limit@ files.
-listFiles :: Int -> FilePath -> IO [FilePath]
-listFiles limit root = sort . take limit <$> walk limit [""]
-  where
-    walk _ [] = pure []
-    walk n _ | n <= 0 = pure []
-    walk n (dir : rest) = do
-      entries <- either (const []) sort <$> (try (listDirectory (root `join` dir)) :: IO (Either IOException [FilePath]))
-      let visible = [dir `join` e | e <- entries, not ("." `isPrefixOf` e), e `notElem` skipped]
-      kinds <- traverse (\p -> (p,) <$> doesDirectoryExist (root `join` p)) visible
-      let files = [p | (p, False) <- kinds]
-          dirs = [p | (p, True) <- kinds]
-      (files <>) <$> walk (n - length files) (rest <> dirs)
-    join d "" = d
-    join "" p = p
-    join "." p = p
-    join d p = d <> "/" <> p
-    skipped = ["dist-newstyle", "node_modules", "target"]

@@ -42,6 +42,7 @@ library:
   - bytestring
   - containers
   - directory
+  - filepath
   - stm
   - text
   - transformers
