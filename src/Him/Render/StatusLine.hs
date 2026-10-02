@@ -6,7 +6,8 @@ module Him.Render.StatusLine
 
 import Data.Text qualified as T
 import Him.Document (Document (..), displayName, unsaved)
-import Him.Editor (Editor (..), allDocuments, keymapMode)
+import Him.Editor (Editor (..), allDocuments, keymapMode, reviewFor)
+import Him.Chat (Review (..))
 import Data.List (findIndex)
 import Him.Key (showKeys)
 import Him.Mode (modeLabel)
@@ -47,4 +48,8 @@ drawStatusLine theme focused ed rect =
     sels
       | rangeCount sel > 1 = T.pack (show (primaryIndex sel + 1) <> "/" <> show (rangeCount sel) <> " sels  ")
       | otherwise = ""
-    right = maybe "" (T.pack . show) (edCount ed) <> showKeys (edPending ed) <> "  " <> sels <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "
+    -- Proposed changes waiting in this buffer (ADR-43).
+    review = case maybe 0 (length . rvHunks) (reviewFor ed (docId doc)) of
+      0 -> ""
+      n -> T.pack (show n) <> " to review  "
+    right = maybe "" (T.pack . show) (edCount ed) <> showKeys (edPending ed) <> "  " <> review <> sels <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "

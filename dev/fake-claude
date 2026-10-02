@@ -2,9 +2,10 @@
 # A stand-in for `claude -p` with no model behind it, for checking the chat's
 # Claude Code provider by hand (ADR-42). Put it first on PATH as `claude`:
 #   mkdir -p /tmp/fc && cp dev/fake-claude /tmp/fc/claude
-#   PATH=/tmp/fc:$PATH FAKE_CLAUDE_LOG=/tmp/fc.log him a.txt     (a.txt contains "two")
-# It starts the MCP bridge from --mcp-config, and on the first message calls
-# edit_file (a.txt: two -> TWO), waits for the answer, and reports it.
+#   printf 'one\ntwo\nthree\nfour\n' > a.txt
+#   PATH=/tmp/fc:$PATH FAKE_CLAUDE_LOG=/tmp/fc.log him a.txt
+# It starts the MCP bridge from --mcp-config, and on the first message
+# proposes two changes to a.txt (two -> TWO, four -> FOUR), then reports.
 import json, os, subprocess, sys, time
 log = open(os.environ.get("FAKE_CLAUDE_LOG", "/dev/null"), "a")
 def L(*a): print(time.strftime("%H:%M:%S"), *a, file=log, flush=True)
@@ -36,9 +37,10 @@ for line in sys.stdin:
     out({"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}})
     out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": f"Turn {turn}: editing."}}})
     if turn == 1:
-        r = rpc("tools/call", {"name": "edit_file", "arguments": {"path": "a.txt", "old_text": "two", "new_text": "TWO"}})
-        text = r["result"]["content"][0]["text"]
+        for old, new in (("two", "TWO\nand a new line"), ("four", "FOUR")):
+            r = rpc("tools/call", {"name": "edit_file", "arguments": {"path": "a.txt", "old_text": old, "new_text": new}})
+            L("answer", r["result"]["content"][0]["text"])
         out({"type": "stream_event", "event": {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}}})
-        out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "Result: " + text}}})
+        out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "I proposed two changes."}}})
     out({"type": "result", "subtype": "success", "is_error": False, "result": "ok", "session_id": "fake-session"})
 L("stdin closed; exiting")

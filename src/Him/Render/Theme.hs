@@ -59,7 +59,11 @@ data Theme = Theme
   , themeDirectoryHeader :: Style
   , themeError :: Style
   , themeHighlight :: Style
-  -- ^ Lines to look at (a chat's pending edits): @ui.highlight@.
+  -- ^ Lines a proposed change adds: @ui.highlight@.
+  , themeRemoved :: Style
+  -- ^ Lines a proposed change removes, shown above it: @diff.minus@.
+  , themeReviewHeader :: Style
+  -- ^ The header above a proposed change.
   }
 
 -- | The style for a scope, by its longest known prefix:
@@ -110,6 +114,8 @@ fromScopes name scopes =
     , themeDirectoryHeader = fromMaybe text {styleBold = True} (exact "ui.text.focus")
     , themeError = get "error"
     , themeHighlight = fromMaybe defaultStyle {styleBg = Indexed 22} (exact "ui.highlight")
+    , themeRemoved = text `patchStyle` foreground (get "diff.minus") `patchStyle` defaultStyle {styleItalic = True}
+    , themeReviewHeader = popup `patchStyle` defaultStyle {styleBold = True}
     }
   where
     get = fromMaybe defaultStyle . lookupScope scopes

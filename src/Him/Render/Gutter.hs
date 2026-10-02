@@ -11,7 +11,8 @@ import Data.IntMap.Strict qualified as IntMap
 import Him.GitState (Sign (..), SignKind (..), gitSigns, tracking)
 import Him.Lsp.State (ShownDiagnostic (..), shownDiagnosticsIn)
 import Him.Document (Document (..))
-import Him.Editor (Editor (..))
+import Him.Editor (Editor (..), reviewFor)
+import Him.Review (DisplayRow (..), addedLines, displayRows)
 import Him.Options (LineNumbers (..), Options (..))
 import Him.Position (Pos (..))
 import Him.Render.Frame
@@ -33,8 +34,18 @@ signLane :: Editor -> Int
 signLane ed = if edSignLane ed then 1 else 0
 
 drawGutter :: Theme -> Editor -> Rect -> Frame -> Frame
-drawGutter theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 1]
+drawGutter theme ed rect frame0 = foldl' drawDisplayRow frame0 (zip [0 ..] rows)
   where
+    -- The same rows as the text area: a review's removed lines get a minus,
+    -- the lines it adds a plus (ADR-43).
+    review = reviewFor ed (docId doc)
+    rows = displayRows review (lineCount (docBuffer doc)) top (rectHeight rect)
+    added = addedLines review
+    drawDisplayRow f (r, row) = case row of
+      LineRow l -> drawRow f r l
+      RemovedRow _ -> sign r "-" (themeGitSign theme SignRemoved False) f
+      _ -> f
+    sign r t st f = if lane == 0 then f else putText (rectRow rect + r) (rectCol rect) st t f
     doc = edDoc ed
     top = viewTop (edView ed)
     current = posLine (rangeHead (primary (docSelection doc)))
@@ -44,13 +55,10 @@ drawGutter theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 
     -- Diagnostics win over git signs: the most severe on each line.
     diagnostics =
       IntMap.fromListWith min [(sdLine sd, sdSeverity sd) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) (docBuffer doc) top (top + rectHeight rect)]
-    drawRow f r
-      | line >= lineCount (docBuffer doc) = f
-      | otherwise =
-          putText (rectRow rect + r) (rectCol rect + lane) style label $
-            if lane == 0 then f else putText (rectRow rect + r) (rectCol rect) signStyle signText f
+    drawRow f r line =
+      putText (rectRow rect + r) (rectCol rect + lane) style label $
+        if lane == 0 then f else putText (rectRow rect + r) (rectCol rect) signStyle signText f
       where
-        line = top + r
         style = if line == current then themeGutterCurrent theme else themeGutter theme
         -- Relative numbers count from the cursor's line, which shows its own.
         number = case optLineNumbers (edOptions ed) of
@@ -58,6 +66,7 @@ drawGutter theme ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 
           _ -> line + 1
         label = if digits <= 0 then "" else T.justifyRight digits ' ' (T.pack (show number)) <> " "
         (signText, signStyle) = case (IntMap.lookup line diagnostics, IntMap.lookup line signs) of
+          _ | any (\(a, b) -> a <= line && line < b) added -> ("+", themeGitSign theme SignAdded False)
           (Just sev, _) -> ("●", themeDiagnostic theme sev)
           (_, Just (Sign kind staged)) -> (glyph kind, themeGitSign theme kind staged)
           _ -> (" ", themeGutter theme)

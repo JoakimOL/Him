@@ -1,20 +1,22 @@
--- | The AI chat plugin (ADR-41). @space c c@ opens the chat in a window
--- beside the code; type a message and @ret@ sends it (@A-ret@ is a line
--- break). The model reads files on its own; its edits are applied to the
--- files' buffers in the editor window, highlighted, and wait for you:
--- @space c a@ approves the next one (kept and saved), @space c d@ denies it
--- (the old lines come back), @space c A@ / @space c D@ do all of them. When
--- every edit of a turn is decided, the conversation goes on.
+-- | The AI chat plugin (ADR-41, ADR-43). @space c c@ opens the chat in a
+-- window beside the code; type a message and @ret@ sends it (@A-ret@ is a
+-- line break). The model reads files on its own and proposes changes, all
+-- in one go: they appear in the files' buffers, each with a header and the
+-- lines it removes, and nothing is written. Review them in any order with
+-- the cursor on one: @space c a@ approves it (written to the file),
+-- @space c d@ denies it (the old lines come back); @space c A@ / @D@ do all;
+-- @] c@ / @[ c@ move between them, @space c l@ lists them. The decisions go
+-- to the model with the next message.
 module Him.Actions.Chat
   ( chatPlugin
   ) where
 
-import Control.Monad (forM, unless, when)
+import Control.Monad (forM, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.List (find, findIndex)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isJust, isNothing)
+import Data.Maybe (isNothing)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -25,7 +27,7 @@ import Him.Buffer qualified as Buffer
 import Him.Chat
 import Him.Chat.Tools
 import Him.Config (Plugin (..), plugin)
-import Him.Document (DocKind (..), Document (..), newDocument)
+import Him.Document (DocKind (..), Document (..), clampSelection, newDocument, replaceBuffer)
 import Him.Edit (selectionText)
 import Him.Editor
 import Him.EditorM
@@ -41,6 +43,9 @@ import Him.Selection (Range (..), point, primary, rangeHead, rangeStart, ranges,
 import Him.Transcript (insertOutput, takeInput)
 import Him.View (View (..))
 import Him.Window (Axis (..), Box (..), Window (..))
+import Him.Diff (Hunk (..), diffLines)
+import Him.Review (approveHunk, denyHunk, hunkAtLine, hunkLabel)
+import Him.Picker (PickTarget (..), newPicker, pickerItem)
 import Data.IntMap.Strict qualified as IntMap
 import System.Directory (doesFileExist, getCurrentDirectory)
 import System.FilePath (isAbsolute, makeRelative, normalise, splitDirectories)
@@ -58,7 +63,10 @@ chatPlugin =
               , ("space c d", "chat_deny")
               , ("space c A", "chat_approve_all")
               , ("space c D", "chat_deny_all")
+              , ("space c l", "chat_changes")
               , ("space c s", "chat_add_selection")
+              , ("] c", "chat_next_change")
+              , ("[ c", "chat_prev_change")
               ]
             )
           , (Chat, [("ret", "chat_submit"), ("A-ret", "insert_newline"), ("C-c", "chat_cancel")])
@@ -66,6 +74,8 @@ chatPlugin =
     , plPrefixNames = [([plain (KChar ' '), plain (KChar 'c')], "chat")]
     , plExCommands = exCommands
     , plJobResult = applyChatResult
+    , plHousekeeping = refreshReviews
+    , plSigns = True
     , plDisable = do
         ids <- gets (map docId . filter isChat . allDocuments)
         mapM_ (request . ChatCancel) ids
@@ -77,10 +87,13 @@ actions =
   [ simple "chat_open" GMisc "Open the AI chat beside the code, and go there" (openChat True)
   , simple "chat_submit" GMisc "Send what was typed in the chat" submit
   , simple "chat_cancel" GMisc "Stop the chat's answer" cancel
-  , simple "chat_approve" GMisc "Approve the chat's next pending edit (keep and save it)" (decideNext True)
-  , simple "chat_deny" GMisc "Deny the chat's next pending edit (put the old lines back)" (decideNext False)
-  , simple "chat_approve_all" GMisc "Approve every pending edit of the chat" (decideAll True)
-  , simple "chat_deny_all" GMisc "Deny every pending edit of the chat" (decideAll False)
+  , simple "chat_approve" GMisc "Approve the proposed change under the cursor (it is written to the file)" (decideAtCursor True)
+  , simple "chat_deny" GMisc "Deny the proposed change under the cursor (the old lines come back)" (decideAtCursor False)
+  , simple "chat_approve_all" GMisc "Approve every proposed change" (decideAll True)
+  , simple "chat_deny_all" GMisc "Deny every proposed change" (decideAll False)
+  , simple "chat_next_change" GMovement "Go to the next proposed change" (jumpChange True)
+  , simple "chat_prev_change" GMovement "Go to the previous proposed change" (jumpChange False)
+  , simple "chat_changes" GMisc "List every proposed change" listChanges
   , simple "chat_add_selection" GMisc "Put the selection into the chat's message, with its file and line" addSelection
   ]
 
@@ -88,8 +101,8 @@ exCommands :: [ExCommand]
 exCommands =
   [ ExCommand ["chat"] "Open the AI chat beside the code" NoArgs $ \_ -> openChat True
   , ExCommand ["chat-new"] "Start a new conversation (the chat buffer is cleared)" NoArgs $ \_ -> newConversation
-  , ExCommand ["chat-approve"] "Approve the next pending edit (:chat-approve all: every one)" NoArgs $ \args -> if args == ["all"] then decideAll True else decideNext True
-  , ExCommand ["chat-deny"] "Deny the next pending edit (:chat-deny all: every one)" NoArgs $ \args -> if args == ["all"] then decideAll False else decideNext False
+  , ExCommand ["chat-approve"] "Approve the proposed change under the cursor (:chat-approve all: every one)" NoArgs $ \args -> if args == ["all"] then decideAll True else decideAtCursor True
+  , ExCommand ["chat-deny"] "Deny the proposed change under the cursor (:chat-deny all: every one)" NoArgs $ \args -> if args == ["all"] then decideAll False else decideAtCursor False
   ]
 
 -- * The chat buffer
@@ -149,13 +162,14 @@ newConversation = do
   existing <- gets chatOf
   case existing of
     Nothing -> openChat True
-    Just (d, _) -> do
+    Just (d, cs) -> do
       request (ChatCancel (docId d))
       modify' $ modifyDocument (docId d) $ \doc ->
         doc
           { docBuffer = Buffer.fromText prompt
           , docSelection = single (point (Pos 0 (T.length prompt)))
-          , docKind = ChatDoc newChatState {csInput = Pos 0 (T.length prompt)}
+          -- Proposed changes stay under review: they are in the buffers.
+          , docKind = ChatDoc newChatState {csInput = Pos 0 (T.length prompt), csReviews = csReviews cs}
           , docVersion = docVersion doc + 1
           }
 
@@ -179,13 +193,13 @@ submit = do
   case docKind d of
     ChatDoc cs -> case csStatus cs of
       ChatWaiting -> failWith "the answer is still coming (C-c stops it)"
-      ChatDeciding -> failWith "decide the pending edits first: space c a / space c d (A / D: all)"
       ChatIdle -> case takeInput d of
         Just (text, d') | not (T.null (T.strip text)) -> do
           modifyDoc (const d')
           context <- editorContext
-          let message = object [("role", JString "user"), ("content", JArray [object [("type", JString "text"), ("text", JString (context <> T.strip text))]])]
-          modify' (modifyChat (docId d) (\c -> c {csHistory = csHistory c <> [message]}))
+          review <- reviewNote
+          let message = object [("role", JString "user"), ("content", JArray [object [("type", JString "text"), ("text", JString (review <> context <> T.strip text))]])]
+          modify' (modifyChat (docId d) (\c -> c {csHistory = csHistory c <> [message], csDecisions = []}))
           continue (docId d)
         _ -> pure ()
     _ -> pure ()
@@ -198,6 +212,19 @@ continue i = do
   say i "\nclaude> "
   history <- gets (maybe [] (csHistory . snd) . chatOf)
   request (ChatSend i (ChatRequest (systemPrompt root) history chatTools))
+
+-- | What became of the model's proposed changes since its last turn, and
+-- which still wait, said before the user's message.
+reviewNote :: EditorM Text
+reviewNote = do
+  ed <- get
+  let decided = maybe [] (csDecisions . snd) (chatOf ed)
+      waiting = [hunkLabel (rvPath rv) h | Just (_, cs) <- [chatOf ed], rv <- csReviews cs, h <- rvHunks rv]
+  pure $
+    T.concat
+      [ "[The user reviewed your proposed changes: " <> T.intercalate "; " decided <> ".]\n" | not (null decided)]
+      <> T.concat ["[Still waiting for review: " <> T.intercalate ", " waiting <> ".]\n" | not (null waiting)]
+      <> (if null decided && null waiting then "" else "\n")
 
 -- | What the user is looking at, said before their message.
 editorContext :: EditorM Text
@@ -220,7 +247,6 @@ cancel :: EditorM ()
 cancel =
   gets chatOf >>= \case
     Just (d, cs) | csStatus cs /= ChatIdle -> do
-      dropUndecided (docId d)
       request (ChatCancel (docId d))
       modify' (modifyChat (docId d) (\c -> c {csStatus = ChatIdle}))
       say (docId d) ("\n[stopped]\n\n" <> prompt)
@@ -246,11 +272,13 @@ applyChatResult :: JobResult -> EditorM ()
 applyChatResult = \case
   ChatReply i ev -> case ev of
     ChatText t -> say i t
-    ChatToolCall call -> liveCall i call
+    -- A tool Claude Code waits for (ADR-42): answered at once, an edit as
+    -- proposed.
+    ChatToolCall call -> runCall i call >>= \(isError, text) -> request (ChatAnswer i (tcId call) isError text)
     ChatFailed e -> do
-      dropUndecided i
       modify' (modifyChat i (\c -> c {csStatus = ChatIdle}))
-      say i ("\n[error: " <> e <> "]\n\n" <> prompt)
+      say i ("\n[error: " <> e <> "]\n")
+      endOfTurn i
     ChatFinished stop message calls -> do
       modify' (modifyChat i (\c -> c {csHistory = csHistory c <> [message]}))
       finished i stop calls
@@ -258,93 +286,98 @@ applyChatResult = \case
   where
     finished i stop calls
       | null calls = do
-            modify' (modifyChat i (\c -> c {csStatus = ChatIdle}))
-            say i ("\n\n" <> prompt)
+          modify' (modifyChat i (\c -> c {csStatus = ChatIdle}))
+          endOfTurn i
       | stop == "refusal" || stop == "max_tokens" = do
-            -- Tools of a cut-off or declined turn never run; the history
-            -- still needs their results.
-            let why = if stop == "refusal" then "the request was declined" else "the answer was cut off"
-            appendResults i [toolResult (tcId c) True ("not run: " <> why) | c <- calls]
-            modify' (modifyChat i (\c -> c {csStatus = ChatIdle}))
-            say i ("\n[" <> why <> "]\n\n" <> prompt)
-      | otherwise = runCalls i calls
+          -- Tools of a cut-off or declined turn never run; the history
+          -- still needs their results.
+          let why = if stop == "refusal" then "the request was declined" else "the answer was cut off"
+          appendResults i [toolResult (tcId c) True ("not run: " <> why) | c <- calls]
+          modify' (modifyChat i (\c -> c {csStatus = ChatIdle}))
+          say i ("\n[" <> why <> "]")
+          endOfTurn i
+      | otherwise = do
+          -- The API provider: the calls came with the reply; the results
+          -- go back with the next request, at once.
+          results <- forM calls $ \call -> (\(isError, text) -> toolResult (tcId call) isError text) <$> runCall i call
+          appendResults i results
+          continue i
 
 appendResults :: Int -> [Value] -> EditorM ()
 appendResults i results =
-  modify' (modifyChat i (\c -> c {csHistory = csHistory c <> [object [("role", JString "user"), ("content", JArray results)]], csResults = [], csEdits = []}))
+  modify' (modifyChat i (\c -> c {csHistory = csHistory c <> [object [("role", JString "user"), ("content", JArray results)]]}))
 
--- | Run a turn's tool calls (the API provider: they came with the finished
--- reply): reads at once, edits as pending edits; the results go back with
--- the next request.
-runCalls :: Int -> [ToolCall] -> EditorM ()
-runCalls i calls = do
-  results <- forM calls $ \call ->
-    runCall i call >>= \case
-      Left (isError, text) -> pure (tcId call, Just (toolResult (tcId call) isError text))
-      Right () -> pure (tcId call, Nothing)
-  modify' (modifyChat i (\c -> c {csResults = results}))
-  if all (isJust . snd) results
-    then finishTurn i
-    else awaitDecisions i
+-- | The turn is over: a new prompt, and with changes proposed, the editor
+-- on the first of them (in normal mode, to review).
+endOfTurn :: Int -> EditorM ()
+endOfTurn i = do
+  refreshReviews
+  reviews <- gets (maybe [] (csReviews . snd) . chatOf)
+  let n = sum (map (length . rvHunks) reviews)
+  if n == 0
+    then say i ("\n\n" <> prompt)
+    else do
+      say i ("\n\n[" <> T.pack (show n) <> " proposed change" <> (if n == 1 then "" else "s") <> " in " <> T.intercalate ", " (map (T.pack . rvPath) reviews) <> "]\n[review in the editor, cursor on a change:]\n[space c a / d: approve / deny]\n[] c / [ c: next / previous]\n[A / D: all, space c l: list]\n\n" <> prompt)
+      case reviews of
+        rv : _ | h : _ <- rvHunks rv -> showChange rv h
+        _ -> pure ()
 
--- | A tool call the model waits for now (Claude Code over MCP, ADR-42):
--- answered at once, or when its edit is decided.
-liveCall :: Int -> ToolCall -> EditorM ()
-liveCall i call =
-  runCall i call >>= \case
-    Left (isError, text) -> request (ChatAnswer i (tcId call) isError text)
-    Right () -> awaitDecisions i
-
-awaitDecisions :: Int -> EditorM ()
-awaitDecisions i = do
-  modify' (modifyChat i (\c -> c {csStatus = ChatDeciding}))
-  say i "[space c a / d: approve / deny · A / D: all]\n"
-  -- The keys are normal mode's: typing in the chat stops here.
-  ed <- get
-  when (docId (edDoc ed) == i && edMode ed == Insert) (setMode Normal)
-  showNextEdit i
-
--- | Run one tool call: its result, or 'Right' when it became a pending edit.
-runCall :: Int -> ToolCall -> EditorM (Either (Bool, Text) ())
+-- | Run one tool call: whether it failed, and what to tell the model.
+runCall :: Int -> ToolCall -> EditorM (Bool, Text)
 runCall i call = do
   root <- liftIO getCurrentDirectory
   case parseToolCall call of
-    Left e -> pure (Left (True, e))
+    Left e -> pure (True, e)
     Right req -> case req of
       ListFiles -> do
         files <- liftIO (listFiles (defaultWalk 2000) root)
-        pure (Left (False, T.unlines (map T.pack files)))
-      ReadFile p -> withPath root p $ \path -> either (\e -> Left (True, e)) (\t -> Left (False, t)) <$> readProjectFile path
+        pure (False, T.unlines (map T.pack files))
+      ReadFile p -> withPath root p $ \path -> either (True,) (False,) <$> readProjectFile path
       EditFile p old new -> withPath root p $ \path -> do
         target <- openTarget path
-        number <- nextNumber i
         d <- gets (find ((== target) . docId) . allDocuments)
-        case maybe (Left "the file could not be opened") (proposeEdit number (tcId call) path old new) d of
-          Right (pe, d') -> Right () <$ pending i pe d'
-          Left e -> pure (Left (True, e))
+        case maybe (Left "the file could not be opened") (editBuffer path old new . docBuffer) d of
+          Right buf -> propose i target path buf
+          Left e -> pure (True, e)
       WriteFile p content -> withPath root p $ \path -> do
         target <- openTarget path
-        number <- nextNumber i
-        gets (find ((== target) . docId) . allDocuments) >>= \case
-          Just d -> let (pe, d') = proposeWrite number (tcId call) path content d in Right () <$ pending i pe d'
-          Nothing -> pure (Left (True, "the file could not be opened"))
+        propose i target path (writeBuffer content)
   where
     withPath root p k = case projectPath root p of
       Right path -> k path
-      Left e -> pure (Left (True, e))
+      Left e -> pure (True, e)
 
-nextNumber :: Int -> EditorM Int
-nextNumber i = do
-  n <- gets (maybe 1 (csNextEdit . snd) . chatOf)
-  modify' (modifyChat i (\c -> c {csNextEdit = n + 1}))
-  pure n
+-- | A proposed change: the buffer takes the new text (an undoable change),
+-- and the document is under review from its text before the first one.
+propose :: Int -> Int -> FilePath -> Buffer.Buffer -> EditorM (Bool, Text)
+propose i target path buf = do
+  d <- gets (find ((== target) . docId) . allDocuments)
+  case d of
+    Nothing -> pure (True, "the file could not be opened")
+    Just doc -> do
+      known <- gets (\ed -> reviewFor ed target)
+      when (isNothing known) $
+        modify' (modifyChat i (\c -> c {csReviews = csReviews c <> [Review target path (Buffer.toLines (docBuffer doc)) [] (-1)]}))
+      modify' (modifyDocument target (replaceBuffer buf (clampSelection buf (docSelection doc))))
+      refreshReviews
+      say i ("\n[proposed a change to " <> T.pack path <> "]\n")
+      pure (False, proposedResult path)
 
--- | Record a pending edit: the document changed, the chat shows the diff.
-pending :: Int -> PendingEdit -> Document -> EditorM ()
-pending i pe d' = do
-  modify' (modifyDocument (docId d') (const d'))
-  modify' (modifyChat i (\c -> c {csEdits = csEdits c <> [pe]}))
-  say i ("\n" <> editSummary pe)
+-- | After every event: each review's changes are the diff from its base to
+-- the buffer as it is now; a review without changes left is done.
+refreshReviews :: EditorM ()
+refreshReviews =
+  gets chatOf >>= \case
+    Just (chat, cs) | not (null (csReviews cs)) -> do
+      ed <- get
+      let refresh rv = case find ((== rvDoc rv) . docId) (allDocuments ed) of
+            Nothing -> Nothing
+            Just d
+              | docVersion d == rvVersion rv -> Just rv
+              | otherwise -> Just rv {rvHunks = diffLines (rvBase rv) (Buffer.toLines (docBuffer d)), rvVersion = docVersion d}
+          reviews = [rv | Just rv <- map refresh (csReviews cs), not (null (rvHunks rv))]
+      when (reviews /= csReviews cs) $ modify' (modifyChat (docId chat) (\c -> c {csReviews = reviews}))
+    _ -> pure ()
 
 -- | A path the model gave, inside the project (relative to it).
 projectPath :: FilePath -> FilePath -> Either Text FilePath
@@ -355,7 +388,7 @@ projectPath root p
   where
     rel = normalise (if isAbsolute p then makeRelative root p else p)
 
--- | A file's text as the editor has it (unsaved changes included).
+-- | A file's text as the editor has it (proposed changes included).
 readProjectFile :: FilePath -> EditorM (Either Text Text)
 readProjectFile path = do
   open <- gets (find ((== Just path) . docPath) . allDocuments)
@@ -372,102 +405,143 @@ readProjectFile path = do
 openTarget :: FilePath -> EditorM Int
 openTarget path = do
   from <- gets edFocus
-  ed <- get
-  chat <- gets (fmap (docId . fst) . chatOf)
-  let others = [w | (w, win) <- IntMap.toList (edWindows ed), Just (winDoc win) /= chat]
-  if Just (docId (edDoc ed)) /= chat
-    then pure ()
-    else case others of
-      w : _ -> modify' (focusWindow w)
-      [] -> modify' (splitWindow Beside)
+  focusEditorWindow
   exists <- liftIO (doesFileExist path)
-  if exists then openFile path else modify' (openBuffer (newDocument (Just path) Buffer.empty))
+  open <- gets (find ((== Just path) . docPath) . allDocuments)
+  case open of
+    Just d -> modify' (\ed -> maybe ed (`gotoBuffer` ed) (findIndex ((== docId d) . docId) (allDocuments ed)))
+    Nothing -> if exists then openFile path else modify' (openBuffer (newDocument (Just path) Buffer.empty))
   i <- gets (docId . edDoc)
   modify' (focusWindow from)
   pure i
 
--- | All of a turn's results are there: send them and go on.
-finishTurn :: Int -> EditorM ()
-finishTurn i = do
-  results <- gets (maybe [] (csResults . snd) . chatOf)
-  appendResults i [r | (_, Just r) <- results]
-  continue i
+-- | Focus a window that is not the chat's (splitting one off if needed).
+focusEditorWindow :: EditorM ()
+focusEditorWindow = do
+  ed <- get
+  chat <- gets (fmap (docId . fst) . chatOf)
+  let others = [w | (w, win) <- IntMap.toList (edWindows ed), Just (winDoc win) /= chat]
+  when (Just (docId (edDoc ed)) == chat) $ case others of
+    w : _ -> modify' (focusWindow w)
+    [] -> modify' (splitWindow Beside)
 
--- * Deciding
+-- * Reviewing
 
--- | A turn that ended without its edits decided (an error, a cancel):
--- they are undone, so no unapproved change stays in a buffer.
-dropUndecided :: Int -> EditorM ()
-dropUndecided i = do
-  undecided <- gets (maybe [] (filter ((== Undecided) . peDecision) . csEdits . snd) . chatOf)
-  mapM_ (\pe -> modify' (modifyDocument (peDoc pe) (revertEdit pe))) (reverse undecided)
-  unless (null undecided) (say i ("[" <> T.pack (show (length undecided)) <> " pending edit(s) undone]\n"))
-  modify' (modifyChat i (\c -> c {csEdits = [], csResults = []}))
+-- | Approve or deny the change under the cursor.
+decideAtCursor :: Bool -> EditorM ()
+decideAtCursor approve = do
+  refreshReviews
+  ed <- get
+  let d = edDoc ed
+      line = posLine (rangeHead (primary (docSelection d)))
+  case reviewFor ed (docId d) of
+    Nothing -> failWith "no proposed changes in this buffer (space c l lists them)"
+    Just rv -> case hunkAtLine (Buffer.lineCount (docBuffer d)) line (rvHunks rv) of
+      Nothing -> failWith "the cursor is not on a proposed change (] c goes to the next)"
+      Just (_, h) -> do
+        decide approve rv h
+        left <- gets (\e -> maybe 0 (length . rvHunks) (reviewFor e (docId d)))
+        info ((if approve then "approved" else "denied") <> (if left == 0 then "; no changes left here" else "; " <> T.pack (show left) <> " left here (] c: next)"))
 
-decideNext :: Bool -> EditorM ()
-decideNext approve =
-  gets chatOf >>= \case
-    Just (d, cs) | Just pe <- find ((== Undecided) . peDecision) (csEdits cs) -> do
-      decide (docId d) approve pe
-      afterDecision (docId d)
-    _ -> failWith "no pending edits"
+-- | Approve (write to the file) or deny (put back) one change.
+decide :: Bool -> Review -> Hunk -> EditorM ()
+decide approve rv h = do
+  chat <- gets (fmap (docId . fst) . chatOf)
+  ed <- get
+  case (chat, find ((== rvDoc rv) . docId) (allDocuments ed)) of
+    (Just i, Just d) -> do
+      let current = Buffer.toLines (docBuffer d)
+          label = hunkLabel (rvPath rv) h
+      if approve
+        then do
+          let base' = approveHunk h (rvBase rv) current
+          ok <- writeBase d (rvPath rv) base'
+          when ok $ do
+            setBase i rv base'
+            note i ("approved " <> label)
+        else do
+          let current' = Buffer.fromLines (denyHunk h (rvBase rv) current)
+          modify' (modifyDocument (docId d) (\doc -> replaceBuffer current' (clampSelection current' (docSelection doc)) doc))
+          note i ("rejected " <> label <> ", its old lines are back")
+      refreshReviews
+    _ -> pure ()
 
+-- | Approve or deny every proposed change.
 decideAll :: Bool -> EditorM ()
 decideAll approve =
   gets chatOf >>= \case
-    Just (d, cs) | any ((== Undecided) . peDecision) (csEdits cs) -> do
-      mapM_ (decide (docId d) approve) [pe | pe <- csEdits cs, peDecision pe == Undecided]
-      afterDecision (docId d)
-    _ -> failWith "no pending edits"
-
--- | Keep (and save) or undo one edit, and record its tool result (or,
--- for a call the model waits for, answer it).
-decide :: Int -> Bool -> PendingEdit -> EditorM ()
-decide i approve pe = do
-  (isError, text) <-
-    if approve
-      then
-        gets (find ((== peDoc pe) . docId) . allDocuments) >>= \case
-          Nothing -> pure (True, "the file's buffer was closed before the edit was approved")
-          Just d ->
-            liftIO (saveDocument (pePath pe) d) >>= \case
-              Left e -> pure (True, "approved, but saving failed: " <> e)
-              Right _ -> do
-                modify' (modifyDocument (peDoc pe) (\doc -> doc {docDirty = False, docSavedBuffer = docBuffer doc, docSaves = docSaves doc + 1}))
-                pure (False, "The user approved the edit; " <> T.pack (pePath pe) <> " is saved.")
-      else do
-        modify' (modifyDocument (peDoc pe) (revertEdit pe))
-        pure (False, "The user rejected this edit; the file is unchanged.")
-  batch <- gets (maybe False (elem (peToolId pe) . map fst . csResults . snd) . chatOf)
-  modify' $ modifyChat i $ \c ->
-    c
-      { csEdits = [if peNumber e == peNumber pe then e {peDecision = if approve then Approved else Denied} else e | e <- csEdits c]
-      , csResults = [(k, if k == peToolId pe then Just (toolResult k isError text) else r) | (k, r) <- csResults c]
-      }
-  if batch then pure () else request (ChatAnswer i (peToolId pe) isError text)
-  say i ("[#" <> T.pack (show (peNumber pe)) <> (if approve then " approved]\n" else " denied]\n"))
-
-afterDecision :: Int -> EditorM ()
-afterDecision i = do
-  cs <- gets (fmap snd . chatOf)
-  case cs of
-    Just c
-      | not (null (csResults c)), all (isJust . snd) (csResults c) -> finishTurn i
-      -- Calls the model waits for: once all are decided, it goes on by itself.
-      | null (csResults c), all ((/= Undecided) . peDecision) (csEdits c) ->
-          modify' (modifyChat i (\st -> st {csStatus = ChatWaiting, csEdits = []}))
-    _ -> showNextEdit i
-
--- | Put the editor window on the next undecided edit.
-showNextEdit :: Int -> EditorM ()
-showNextEdit _ =
-  gets chatOf >>= \case
-    Just (_, cs) | Just pe <- find ((== Undecided) . peDecision) (csEdits cs) -> do
-      let lines' = max 1 (length (peNew pe))
-          sel = single (Range (Pos (peLine pe) 0) (Pos (peLine pe + lines' - 1) 0) Nothing)
+    Just (chat, cs) | not (null (csReviews cs)) -> do
       ed <- get
-      if docId (edDoc ed) == peDoc pe
-        then modifyDoc (\d -> d {docSelection = sel})
-        else modify' $ \e ->
-          e {edWindows = fmap (\win -> if winDoc win == peDoc pe then win {winSelection = sel, winView = (winView win) {viewTop = max 0 (peLine pe - 3)}} else win) (edWindows e)}
-    _ -> pure ()
+      sequence_
+        [ if approve
+            then do
+              ok <- writeBase d (rvPath rv) (Buffer.toLines (docBuffer d))
+              when ok $ do
+                setBase (docId chat) rv (Buffer.toLines (docBuffer d))
+                note (docId chat) ("approved all changes to " <> T.pack (rvPath rv))
+            else do
+              let base = Buffer.fromLines (rvBase rv)
+              modify' (modifyDocument (docId d) (\doc -> replaceBuffer base (clampSelection base (docSelection doc)) doc))
+              note (docId chat) ("rejected all changes to " <> T.pack (rvPath rv))
+        | rv <- csReviews cs
+        , Just d <- [find ((== rvDoc rv) . docId) (allDocuments ed)]
+        ]
+      refreshReviews
+      info (if approve then "approved every proposed change" else "denied every proposed change")
+    _ -> failWith "no proposed changes"
+
+-- | Write a document's file with these lines (its line endings kept); the
+-- document stays as it is (other changes may still be proposed).
+writeBase :: Document -> FilePath -> [Text] -> EditorM Bool
+writeBase d path lines' = do
+  let saved = Buffer.fromLines lines'
+  liftIO (saveDocument path d {docBuffer = saved}) >>= \case
+    Left e -> False <$ failWith ("could not write " <> T.pack path <> ": " <> e)
+    Right _ -> do
+      modify' (modifyDocument (docId d) (\doc -> doc {docSavedBuffer = saved, docDirty = docBuffer doc /= saved, docSaves = docSaves doc + 1}))
+      pure True
+
+setBase :: Int -> Review -> [Text] -> EditorM ()
+setBase i rv base' = modify' (modifyChat i (\c -> c {csReviews = [if rvDoc r == rvDoc rv then r {rvBase = base', rvVersion = -1} else r | r <- csReviews c]}))
+
+-- | A decision, for the model's next message.
+note :: Int -> Text -> EditorM ()
+note i t = modify' (modifyChat i (\c -> c {csDecisions = csDecisions c <> [t]}))
+
+-- | @] c@ / @[ c@: the next or previous change in this buffer (wrapping).
+jumpChange :: Bool -> EditorM ()
+jumpChange forward = do
+  refreshReviews
+  ed <- get
+  let d = edDoc ed
+      line = posLine (rangeHead (primary (docSelection d)))
+      starts = maybe [] (map hNewStart . rvHunks) (reviewFor ed (docId d))
+      target
+        | forward = case filter (> line) starts of
+            l : _ -> Just l
+            [] -> case starts of l : _ -> Just l; [] -> Nothing
+        | otherwise = case reverse (filter (< line) starts) of
+            l : _ -> Just l
+            [] -> case reverse starts of l : _ -> Just l; [] -> Nothing
+  case target of
+    Nothing -> failWith "no proposed changes in this buffer (space c l lists them)"
+    Just l -> motion (\b _ -> point (Buffer.clampPos b (Pos (min l (Buffer.lineCount b - 1)) 0)))
+
+-- | Put the editor on a change: focus its window, cursor on its first line.
+showChange :: Review -> Hunk -> EditorM ()
+showChange rv h = do
+  focusEditorWindow
+  modify' (\ed -> maybe ed (`gotoBuffer` ed) (findIndex ((== rvDoc rv) . docId) (allDocuments ed)))
+  modifyDoc (\d -> d {docSelection = single (point (Buffer.clampPos (docBuffer d) (Pos (min (hNewStart h) (Buffer.lineCount (docBuffer d) - 1)) 0)))})
+  setMode Normal
+
+-- | @space c l@: every proposed change, in a picker (with a preview).
+listChanges :: EditorM ()
+listChanges = do
+  refreshReviews
+  reviews <- gets (maybe [] (csReviews . snd) . chatOf)
+  case [pickerItem (hunkLabel (rvPath rv) h) (PickPosition (rvPath rv) (hNewStart h) 0 Nothing) "" | rv <- reviews, h <- rvHunks rv] of
+    [] -> failWith "no proposed changes"
+    items -> do
+      focusEditorWindow
+      modify' (\e -> e {edPicker = Just (newPicker "proposed changes" items), edMode = Picking})

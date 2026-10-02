@@ -8,10 +8,9 @@ module Him.Chat.Tools
   , systemPrompt
   , ToolRequest (..)
   , parseToolCall
-  , proposeEdit
-  , proposeWrite
-  , revertEdit
-  , editSummary
+  , editBuffer
+  , writeBuffer
+  , proposedResult
   , toolResult
   ) where
 
@@ -21,7 +20,6 @@ import Data.Text.Encoding (decodeUtf8Lenient)
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
 import Him.Chat
-import Him.Document (Document (..), clampSelection, replaceBuffer)
 import Him.Json hiding (path)
 
 -- | The tools, in the Messages API's shape.
@@ -86,55 +84,27 @@ parseToolCall call = case tcInput call of
     str k v = T.unpack <$> field k v
     renderText = decodeUtf8Lenient . renderJson
 
--- | Apply an @edit_file@ to a document as a pending edit (an undoable
--- change of whole lines), or say why it cannot be applied.
-proposeEdit :: Int -> Text -> FilePath -> Text -> Text -> Document -> Either Text (PendingEdit, Document)
-proposeEdit number toolId path old new d
+-- | The buffer after an @edit_file@: one exact occurrence of the old text
+-- replaced, or why not.
+editBuffer :: FilePath -> Text -> Text -> Buffer.Buffer -> Either Text Buffer.Buffer
+editBuffer path old new buf
   | T.null old = Left "old_text is empty"
   | otherwise = case T.breakOnAll old text of
       [] -> Left ("old_text was not found in " <> T.pack path)
-      [(before, _)] ->
-        let startLine = T.count "\n" before
-            endLine = startLine + T.count "\n" old
-            oldLines = [Buffer.lineAt l buf | l <- [startLine .. endLine]]
-            lineStart = T.takeWhileEnd (/= '\n') before
-            lineEnd = T.drop (T.length lineStart + T.length old) (T.intercalate "\n" oldLines)
-            newLines = T.splitOn "\n" (lineStart <> new <> lineEnd)
-         in Right (apply startLine oldLines newLines)
+      [(before, _)] -> Right (Buffer.fromText (before <> new <> T.drop (T.length before + T.length old) text))
       _ -> Left ("old_text occurs more than once in " <> T.pack path <> "; include more context")
   where
-    buf = docBuffer d
     text = Buffer.toText buf
-    apply l oldLines newLines =
-      let buf' = Buffer.replaceLines l (l + length oldLines) newLines buf
-       in ( PendingEdit number toolId path (docId d) l oldLines newLines Undecided
-          , replaceBuffer buf' (clampSelection buf' (docSelection d)) d
-          )
 
--- | Apply a @write_file@: the whole content replaced.
-proposeWrite :: Int -> Text -> FilePath -> Text -> Document -> (PendingEdit, Document)
-proposeWrite number toolId path content d =
-  let buf = docBuffer d
-      oldLines = Buffer.toLines buf
-      newLines = T.splitOn "\n" (fromMaybe content (T.stripSuffix "\n" content))
-      buf' = Buffer.replaceLines 0 (length oldLines) newLines buf
-   in (PendingEdit number toolId path (docId d) 0 oldLines newLines Undecided, replaceBuffer buf' (clampSelection buf' (docSelection d)) d)
+-- | The buffer after a @write_file@.
+writeBuffer :: Text -> Buffer.Buffer
+writeBuffer content = Buffer.fromText (fromMaybe content (T.stripSuffix "\n" content))
 
--- | Put the old lines back (a denied edit), as an undoable change.
-revertEdit :: PendingEdit -> Document -> Document
-revertEdit pe d =
-  let buf = docBuffer d
-      buf' = Buffer.replaceLines (peLine pe) (peLine pe + length (peNew pe)) (peOld pe) buf
-   in replaceBuffer buf' (clampSelection buf' (docSelection d)) d
-
--- | How an edit is shown in the chat: a heading and its lines as a diff.
-editSummary :: PendingEdit -> Text
-editSummary pe =
-  T.unlines $
-    [ "[edit #" <> T.pack (show (peNumber pe)) <> " " <> T.pack (pePath pe) <> ":" <> T.pack (show (peLine pe + 1)) <> ", -" <> T.pack (show (length (peOld pe))) <> " +" <> T.pack (show (length (peNew pe))) <> " lines]"
-    ]
-      <> take 12 (["- " <> l | l <- peOld pe] <> ["+ " <> l | l <- peNew pe])
-      <> ["  …" | length (peOld pe) + length (peNew pe) > 12]
+-- | What the model is told when it proposes a change: it may go on as if
+-- the change were made; the user reviews them after the turn.
+proposedResult :: FilePath -> Text
+proposedResult path =
+  "Proposed as a change to " <> T.pack path <> ". The user reviews proposed changes after your turn; until approved, the file on disk is unchanged. Go on as if it were applied (read_file shows it)."
 
 -- | A tool result for the history.
 toolResult :: Text -> Bool -> Text -> Value

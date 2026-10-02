@@ -28,6 +28,10 @@ import System.Posix.Files (createNamedPipe, ownerReadMode, ownerWriteMode, union
 import System.Process (createPipe)
 import System.Timeout (timeout)
 import Him.Chat.Tools
+import Him.Diff (diffLines)
+import Him.Review (DisplayRow (..), approveHunk, denyHunk, displayRows, hunkAtLine, rowOfLine)
+import Him.Selection (primary, rangeHead)
+import Him.Position (Pos (..))
 import Him.Config (Config (..))
 import Him.Config.Default (defaultConfig)
 import Him.Document
@@ -126,15 +130,14 @@ bridgeTests = do
           (parsed >>= key "id", parsed >>= path ["result", "content"] >>= asArray >>= \cs -> case cs of c : _ -> key "text" c >>= asText; [] -> Nothing, parsed >>= path ["result", "isError"] >>= asBool)
     ]
 
--- | The live flow (Claude Code): the model waits for each edit; approving
--- answers it, and the turn ends when the model says so.
+-- | The live flow (Claude Code): a tool call during the turn is answered
+-- at once (an edit as proposed), and the turn goes on.
 liveTests :: IO [Test]
 liveTests = do
   tmp <- getTemporaryDirectory
   original <- getCurrentDirectory
   let dir = tmp <> "/him-chat-live-test"
   createDirectoryIfMissing True dir
-  TIO.writeFile (dir <> "/a.txt") "one\ntwo\n"
   answers <- newIORef []
   emitRef <- newIORef (\_ -> pure ())
   defaults <- either (fail . show) pure defaultConfig
@@ -153,41 +156,26 @@ liveTests = do
         , sessClose = pure ()
         }
       config = defaults {cfgChatProviders = [fake], cfgChat = defaultChatConfig {ccProvider = "live"}}
-      -- A turn that fails while its edit waits (the process died).
-      failing = ChatProvider "failing" . pure $ ChatSession
-        { sessSend = \_ _ emit -> emit (ChatToolCall editCall) >> emit (ChatFailed "claude stopped") >> pure (pure ())
-        , sessAnswer = \_ _ _ -> pure ()
-        , sessClose = pure ()
-        }
-      failConfig = defaults {cfgChatProviders = [failing], cfgChat = defaultChatConfig {ccProvider = "failing"}}
-      fileText ed = maybe "" (B.toText . docBuffer) (find ((== Just "a.txt") . docPath) (allDocuments ed))
       typeKeys ks ed = foldlM (\e k -> execStateT (handleEvent config (EvKey k)) e) ed (fromMaybe (error ("bad keys: " <> show ks)) (parseKeys ks))
       transcript ed = maybe "" (B.toText . docBuffer) (find (\d -> case docKind d of ChatDoc _ -> True; _ -> False) (allDocuments ed))
-  (got, disk, done, modeWhenAsked, failedTurn) <-
+  (got, finished, diskBefore, diskAfter) <-
     ( do
         setCurrentDirectory dir
+        TIO.writeFile "a.txt" "one\ntwo\n"
         rt <- testRuntime config
         let settleLive = settleUntil config rt 3000
         start <- (\t -> newDocument (Just "a.txt") (buf (fromMaybe t (T.stripSuffix "\n" t)))) <$> TIO.readFile "a.txt"
-        asked <- settleLive (T.isInfixOf "[edit #1" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
-        -- The chat leaves insert mode, so the keys work at once (no esc).
-        finished <- settleLive (T.isInfixOf "Thanks." . transcript) =<< typeKeys "space c a" asked
-        approvedDisk <- TIO.readFile "a.txt"
-        TIO.writeFile "a.txt" "one\ntwo\n"
-        rt2 <- testRuntime failConfig
-        let typeFail ks ed = foldlM (\e k -> execStateT (handleEvent failConfig (EvKey k)) e) ed (fromMaybe (error "keys") (parseKeys ks))
-        failed <- settleUntil failConfig rt2 3000 (T.isInfixOf "undone" . transcript) =<< typeFail "space c c h i ret" (newEditor (24, 100) start)
-        (,,,,) <$> readIORef answers <*> pure approvedDisk <*> pure finished <*> pure (edMode asked) <*> pure failed
+        finished <- settleLive (T.isInfixOf "1 proposed change" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
+        before <- TIO.readFile "a.txt"
+        _ <- typeKeys "space c a" finished
+        (,,,) <$> readIORef answers <*> pure finished <*> pure before <*> TIO.readFile "a.txt"
     )
       `finally` setCurrentDirectory original
   removeDirectoryRecursive dir
   pure
-    [ test "a live edit is answered when it is approved, and saved first" $
-        assertEqual ([("c1", False, "The user approved the edit; a.txt is saved.")], "one\nTWO\n") (got, disk)
-    , test "after the decision the model goes on in the same turn" (assertEqual True ("Thanks." `T.isInfixOf` transcript done))
-    , test "an edit that arrives while typing in the chat leaves insert mode (the keys work)" (assertEqual Normal modeWhenAsked)
-    , test "a turn that fails while an edit waits undoes the edit" $
-        assertEqual ("one\ntwo", True) (fileText failedTurn, "1 pending edit(s) undone" `T.isInfixOf` transcript failedTurn)
+    [ test "a live edit is answered at once as proposed, and the turn goes on" $
+        assertEqual ([("c1", False)], True) ([(i, e) | (i, e, _) <- got], "Thanks." `T.isInfixOf` transcript finished)
+    , test "a live change is written only once approved" (assertEqual ("one\ntwo\n", "one\nTWO\n") (diskBefore, diskAfter))
     ]
 
 -- | A recorded stream: thinking (with its signature), text, a tool call
@@ -254,29 +242,41 @@ pureTests =
             , key "fallbacks" body >>= asText
             , firstTool >>= key "eager_input_streaming" >>= asBool
             )
-  , test "an edit replaces whole lines, and denying it puts them back" $
-      let d = newDocument (Just "a.hs") (buf "x = 1\ny = 2\nz = 3")
-       in case proposeEdit 1 "t" "a.hs" "2\nz" "20\nzz" d of
-            Right (pe, d') ->
-              assertEqual
-                ("x = 1\ny = 20\nzz = 3", 1, ["y = 2", "z = 3"], ["y = 20", "zz = 3"], "x = 1\ny = 2\nz = 3")
-                (B.toText (docBuffer d'), peLine pe, peOld pe, peNew pe, B.toText (docBuffer (revertEdit pe d')))
-            Left e -> Left (T.unpack e)
-  , test "an edit needs its text exactly once" $
-      let d = newDocument (Just "a.hs") (buf "a a")
-       in assertEqual [Left "old_text was not found in a.hs", Left "old_text occurs more than once in a.hs; include more context"]
-            [() <$ proposeEdit 1 "t" "a.hs" "b" "c" d, () <$ proposeEdit 1 "t" "a.hs" "a" "c" d]
+  , test "edit_file replaces one exact occurrence; it must occur exactly once" $
+      let b = buf "x = 1\ny = 2\nz = 3"
+       in assertEqual
+            [Right "x = 1\ny = 20\nzz = 3", Left "old_text was not found in a.hs", Left "old_text occurs more than once in a.hs; include more context"]
+            (map (fmap B.toText) [editBuffer "a.hs" "2\nz" "20\nzz" b, editBuffer "a.hs" "w" "v" b, editBuffer "a.hs" " = " "=" b])
+  , test "approving a change puts it in the base; denying puts the base's lines back in the buffer" $
+      let base = ["a", "b", "c", "d"]
+          current = ["a", "B", "c", "D", "e"]
+       in case diffLines base current of
+            h : rest ->
+              assertEqual (1, ["a", "B", "c", "d"], ["a", "b", "c", "D", "e"])
+                (length rest, approveHunk h base current, denyHunk h base current)
+            [] -> Left "expected changes"
+  , test "the change at a line: its added lines, or for a removal the line after it" $
+      let changed = diffLines ["a", "b", "c"] ["a", "X", "c"]
+          removed = diffLines ["a", "b", "c"] ["a", "c"]
+          found hunks l = fst <$> hunkAtLine 3 l hunks
+       in assertEqual [Just 0, Nothing, Just 0, Nothing] [found changed 1, found changed 0, found removed 1, found removed 0]
+  , test "a review shows each change's header and removed lines above its new lines" $
+      case diffLines ["a", "b", "c"] ["a", "X", "c"] of
+        hunks@(h : _) ->
+          let rows = displayRows (Just (Review 1 "a.txt" ["a", "b", "c"] hunks 0)) 3 0 6
+           in assertEqual ([LineRow 0, HeaderRow 1 1 h, RemovedRow "b", LineRow 1, LineRow 2, EmptyRow], Just 3) (rows, rowOfLine rows 1)
+        [] -> Left "expected a change"
   ]
 
 -- | The plugin end to end, with a provider that plays back scripted
--- replies and records the requests.
+-- replies (the API provider's way: tool calls with the reply) and records
+-- the requests.
 flowTests :: IO [Test]
 flowTests = do
   tmp <- getTemporaryDirectory
   original <- getCurrentDirectory
   let dir = tmp <> "/him-chat-test"
   createDirectoryIfMissing True dir
-  TIO.writeFile (dir <> "/a.txt") "one\ntwo\n"
   sent <- newIORef []
   script <- newIORef []
   defaults <- either (fail . show) pure defaultConfig
@@ -292,61 +292,63 @@ flowTests = do
       config = defaults {cfgChatProviders = [fake], cfgChat = defaultChatConfig {ccProvider = "fake"}}
       typeKeys ks ed = foldlM (\e k -> execStateT (handleEvent config (EvKey k)) e) ed (fromMaybe (error ("bad keys: " <> show ks)) (parseKeys ks))
       assistant calls = object [("role", JString "assistant"), ("content", JArray [object [("type", JString "tool_use"), ("id", JString c), ("name", JString "x"), ("input", object [])] | c <- calls])]
-      editCall = ToolCall "t1" "edit_file" (Right (object [("path", JString "a.txt"), ("old_text", JString "two"), ("new_text", JString "TWO")]))
-      readCall = ToolCall "t2" "read_file" (Right (object [("path", JString "a.txt")]))
-      firstReply = [ChatText "Changing it.", ChatFinished "tool_use" (assistant ["t1", "t2"]) [editCall, readCall]]
-      secondReply = [ChatText "Done.", ChatFinished "end_turn" (object [("role", JString "assistant"), ("content", JArray [])]) []]
+      edit c old new = ToolCall c "edit_file" (Right (object [("path", JString "a.txt"), ("old_text", JString old), ("new_text", JString new)]))
+      readCall = ToolCall "r" "read_file" (Right (object [("path", JString "a.txt")]))
+      -- One turn proposes two changes (and reads the file), then ends.
+      proposing = [ChatText "Two changes.", ChatFinished "tool_use" (assistant ["e1", "e2", "r"]) [edit "e1" "two" "TWO", edit "e2" "four" "FOUR", readCall]]
+      done = [ChatText "Done.", ChatFinished "end_turn" (object [("role", JString "assistant"), ("content", JArray [])]) []]
       transcript ed = maybe "" (B.toText . docBuffer) (find isChatDoc (allDocuments ed))
       isChatDoc d = case docKind d of
         ChatDoc _ -> True
         _ -> False
-      fileText ed = maybe "" (B.toText . docBuffer) (find ((== Just "a.txt") . docPath) (allDocuments ed))
-  (approved, approvedRequests, onDisk, pendingShown, deniedText, deniedDisk, deniedResult) <-
+      fileDoc ed = find ((== Just "a.txt") . docPath) (allDocuments ed)
+      fileText ed = maybe "" (B.toText . docBuffer) (fileDoc ed)
+      reviewCount ed = maybe 0 (\d -> maybe 0 (length . rvHunks) (reviewFor ed (docId d))) (fileDoc ed)
+      cursorLine ed = posLine (rangeHead (primary (docSelection (edDoc ed))))
+  results <-
     ( do
         setCurrentDirectory dir
+        TIO.writeFile "a.txt" "one\ntwo\nthree\nfour\n"
         rt <- testRuntime config
         let settleChat = settleUntil config rt 3000
-        start <- either (fail . T.unpack) pure =<< (fmap (\d -> d {docPath = Just "a.txt"}) <$> loadDocumentText "a.txt")
-        -- Approve: the edit is kept and saved; the conversation goes on.
-        modifyIORef' script (const [firstReply, secondReply])
-        asked <- settleChat (T.isInfixOf "[edit #1" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
-        let shown = maybe [] (pendingEditLines asked . docId) (find ((== Just "a.txt") . docPath) (allDocuments asked))
-        done <- settleChat (T.isInfixOf "Done." . transcript) =<< typeKeys "esc space c a" asked
+        start <- (\t -> newDocument (Just "a.txt") (buf (fromMaybe t (T.stripSuffix "\n" t)))) <$> TIO.readFile "a.txt"
+        modifyIORef' script (const [proposing, done, done])
+        -- Both changes come in one turn; the turn ends with them under
+        -- review, and the editor on the first one.
+        proposed <- settleChat (T.isInfixOf "2 proposed changes" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
+        diskAfterProposing <- TIO.readFile "a.txt"
+        -- Out of order: the second first (approve), then the first (deny).
+        secondApproved <- typeKeys "] c space c a" proposed
+        diskAfterApprove <- TIO.readFile "a.txt"
+        firstDenied <- typeKeys "[ c space c d" secondApproved
+        diskAfterDeny <- TIO.readFile "a.txt"
+        -- The next message tells the model what became of them.
+        _ <- settleChat (T.isInfixOf "Done." . T.takeEnd 40 . transcript) =<< typeKeys "space c c o k ret" firstDenied
         requests <- readIORef sent
-        disk <- TIO.readFile "a.txt"
-        -- Deny (a fresh start): the old line comes back, the file stays.
-        TIO.writeFile "a.txt" "one\ntwo\n"
-        modifyIORef' sent (const [])
-        modifyIORef' script (const [firstReply, secondReply])
-        asked2 <- settleChat (T.isInfixOf "[edit #1" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
-        denied <- settleChat (T.isInfixOf "Done." . transcript) =<< typeKeys "esc space c d" asked2
-        disk2 <- TIO.readFile "a.txt"
-        requests2 <- readIORef sent
-        pure (done, requests, disk, shown, fileText denied, disk2, requests2)
+        pure (proposed, diskAfterProposing, secondApproved, diskAfterApprove, firstDenied, diskAfterDeny, requests)
     )
       `finally` setCurrentDirectory original
   removeDirectoryRecursive dir
-  let lastResults reqs = case reverse (concatMap crMessages (drop 1 reqs)) of
-        m : _ -> key "content" m >>= asArray
-        [] -> Nothing
-      resultIds reqs = map (\r -> key "tool_use_id" r >>= asText) (fromMaybe [] (lastResults reqs))
+  let (proposed, diskAfterProposing, secondApproved, diskAfterApprove, firstDenied, diskAfterDeny, requests) = results
+      messageText m = T.concat [t | Just cs <- [key "content" m >>= asArray], c <- cs, Just t <- [key "text" c >>= asText]]
+      lastUser = case requests of
+        [] -> ""
+        _ -> messageText (last (crMessages (last requests)))
+      toolResults = case requests of
+        _ : second : _ -> [(key "tool_use_id" r >>= asText, key "content" r >>= asText) | Just rs <- [key "content" (last (crMessages second)) >>= asArray], r <- rs]
+        _ -> []
   pure
-    [ test "an edit shows in the editor, highlighted, until it is decided" (assertEqual [(1, 2)] pendingShown)
-    , test "approving keeps and saves the edit, and the conversation goes on" $
-        assertEqual ("one\nTWO\n", True, 2) (onDisk, "Done." `T.isInfixOf` transcript approved, length approvedRequests)
-    , test "the tool results go back in the order of the calls, after the decision" $
-        assertEqual [Just "t1", Just "t2"] (resultIds approvedRequests)
-    , test "the history is only appended to" $
-        case approvedRequests of
-          [first, second] -> assertEqual True (crMessages first `isPrefixOfList` crMessages second)
-          _ -> Left "expected two requests"
-    , test "denying puts the old line back and leaves the file alone" $
-        assertEqual ("one\ntwo", "one\ntwo\n") (deniedText, deniedDisk)
-    , test "the model is told an edit was rejected" $
-        assertEqual True (any ("rejected" `T.isInfixOf`) [t | Just rs <- [lastResults deniedResult], r <- rs, Just t <- [key "content" r >>= asText]])
+    [ test "all of a turn's changes are proposed at once, and nothing is written" $
+        assertEqual (2, "one\nTWO\nthree\nFOUR", "one\ntwo\nthree\nfour\n") (reviewCount proposed, fileText proposed, diskAfterProposing)
+    , test "the turn goes on at once: every call is answered, edits as proposed" $
+        assertEqual [Just "e1", Just "e2", Just "r"] (map fst toolResults)
+    , test "after the turn the editor is on the first change, in normal mode" $
+        assertEqual (Just "a.txt", 1, Normal) (docPath (edDoc proposed), cursorLine proposed, edMode proposed)
+    , test "changes are decided in any order with the cursor on them: approving writes only that one" $
+        assertEqual (1, "one\ntwo\nthree\nFOUR\n") (reviewCount secondApproved, diskAfterApprove)
+    , test "denying puts the old lines back in the buffer and leaves the file" $
+        assertEqual (0, "one\ntwo\nthree\nFOUR", "one\ntwo\nthree\nFOUR\n") (reviewCount firstDenied, fileText firstDenied, diskAfterDeny)
+    , test "the next message tells the model what was approved and rejected" $
+        assertEqual (True, True) ("approved a.txt:4" `T.isInfixOf` lastUser, "rejected a.txt:2" `T.isInfixOf` lastUser)
     ]
-  where
-    isPrefixOfList a b = take (length a) b == a
-    loadDocumentText p = do
-      t <- TIO.readFile p
-      pure (Right (newDocument (Just p) (buf (fromMaybe t (T.stripSuffix "\n" t)))))
+

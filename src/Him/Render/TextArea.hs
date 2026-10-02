@@ -12,7 +12,9 @@ import Him.Buffer (lineAt, lineCount)
 import Him.Document (DirEntry (..), DocKind (..), Document (..))
 import Him.Syntax (SyntaxInfo (..))
 import Him.Syntax.Span (LineSpan (..))
-import Him.Editor (Editor (..), pendingEditLines)
+import Him.Editor (Editor (..), reviewFor)
+import Him.Review (DisplayRow (..), addedLines, displayRows, rowOfLine)
+import Him.Diff (Hunk (..))
 import Him.Mode (Mode (..))
 import Him.Options (Options (..))
 import Him.Position (Pos (..))
@@ -28,8 +30,19 @@ import Him.View (View (..))
 -- | Draws the visible lines. Rows whose 'RowKey' is the same as in the
 -- previous frame are copied from it instead of being laid out again.
 drawTextArea :: Theme -> Bool -> Maybe Frame -> Editor -> Rect -> Frame -> Frame
-drawTextArea theme focused prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight rect - 1]
+drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (zip [0 ..] rows)
   where
+    -- A document under review also shows each proposed change's header
+    -- and removed lines (ADR-43).
+    review = reviewFor ed (docId doc)
+    rows = displayRows review (lineCount buf) top (rectHeight rect)
+    drawDisplayRow f (r, row) = case row of
+      LineRow l -> drawRow f r l
+      EmptyRow -> putText (rectRow rect + r) (rectCol rect) (themeTilde theme) "~" f
+      HeaderRow n total h ->
+        band (themeReviewHeader theme) r (" change " <> T.pack (show n) <> "/" <> T.pack (show total) <> " (-" <> T.pack (show (hOldCount h)) <> " +" <> T.pack (show (hNewCount h)) <> ")  space c a/d: approve/deny  ] c: next") f
+      RemovedRow t -> band (themeRemoved theme) r (T.drop left (T.replace "\t" (T.replicate tabWidth " ") t)) f
+    band st r t = putText (rectRow rect + r) (rectCol rect) st (T.take (rectWidth rect) t <> T.replicate (rectWidth rect - T.length t) " ")
     prevFrame = case prev of
       Just p | frameRows p == frameRows frame0 && frameCols p == frameCols frame0 -> Just p
       _ -> Nothing
@@ -64,11 +77,19 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawRow frame0 [0 .. rec
       DirectoryDoc entries
         | line == 0 -> 1
         | (e : _) <- drop (line - 1) entries, deIsDir e -> 2
+      ChatDoc _
+        | "you> " `T.isPrefixOf` lineAt line buf -> 4
+        | "claude> " `T.isPrefixOf` lineAt line buf -> 5
+        | "[" `T.isPrefixOf` lineAt line buf -> 6
       _ | any (\(a, b) -> a <= line && line < b) pending -> 3
       _ -> 0 :: Int
-    -- Lines a chat edit changed that wait for approval (ADR-41).
-    pending = pendingEditLines ed (docId doc)
+    -- Lines a proposed change adds (ADR-43).
+    pending = addedLines review
     pendingStyle = packStyle (themeText theme `patchStyle` themeHighlight theme)
+    -- The chat's prompts, and its notes in brackets.
+    youStyle = packStyle (themeDirectoryHeader theme)
+    claudeStyle = packStyle (themeDirectory theme)
+    noteStyle = packStyle (themeText theme `patchStyle` themePopupDetail theme)
     diagnosticsByLine =
       IntMap.fromListWith (<>) [(sdLine sd, [(sdStart sd, sdEnd sd, sdSeverity sd)]) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) buf top bottom]
     sevRank = \case
@@ -80,8 +101,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawRow frame0 [0 .. rec
     -- text, then a diagnostic's underline, the selection, a cursor.
     over st = packStyle . (`patchStyle` st) . unpackStyle
 
-    drawRow f r
-      | line >= lineCount buf = putText screenRow (rectCol rect) (themeTilde theme) "~" f
+    drawRow f r line
       | Just p <- prevFrame
       , Map.lookup (prevRowOf screenRow, rectCol rect) (frameRowKeys p) == Just key =
           remember (copyCells (prevRowOf screenRow) screenRow (rectCol rect) (rectWidth rect) p f)
@@ -107,9 +127,11 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawRow frame0 [0 .. rec
           1 -> headerStyle
           2 -> dirStyle
           3 -> pendingStyle
+          4 -> youStyle
+          5 -> claudeStyle
+          6 -> noteStyle
           _ -> textStyle
         remember fr = fr {frameRowKeys = Map.insert (screenRow, rectCol rect) key (frameRowKeys fr)}
-        line = top + r
         screenRow = rectRow rect + r
         text = lineAt line buf
         len = T.length text
@@ -160,11 +182,13 @@ cursorDisplayCol ed = displayCol (optTabWidth (edOptions ed)) (lineAt l buf) c
 
 -- | Screen position of the primary cursor, if it is inside the area.
 cursorPosition :: Editor -> Rect -> Maybe (Int, Int)
-cursorPosition ed rect
-  | row >= 0 && row < rectHeight rect && col >= 0 && col < rectWidth rect =
-      Just (rectRow rect + row, rectCol rect + col)
-  | otherwise = Nothing
+cursorPosition ed rect = case rowOfLine rows line of
+  Just row | col >= 0 && col < rectWidth rect -> Just (rectRow rect + row, rectCol rect + col)
+  _ -> Nothing
   where
     View top left = edView ed
-    row = posLine (rangeHead (primary (docSelection (edDoc ed)))) - top
+    doc = edDoc ed
+    line = posLine (rangeHead (primary (docSelection doc)))
+    -- The rows on screen (a review's extra rows included, ADR-43).
+    rows = displayRows (reviewFor ed (docId doc)) (lineCount (docBuffer doc)) top (rectHeight rect)
     col = cursorDisplayCol ed - left

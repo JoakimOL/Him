@@ -11,7 +11,9 @@ module Him.Render
   ) where
 
 import Him.Document (Document (..))
-import Him.Editor (Editor (..), windowBoxes, windowEditor)
+import Him.Editor (Editor (..), reviewFor, windowBoxes, windowEditor)
+import Him.Review (displayRows, rowOfLine)
+import Him.Buffer (lineCount)
 import Him.Window (Box (..))
 import Him.Mode (Mode (..))
 import Him.Options (CursorKind (..), Options (..), cursorKindFor)
@@ -63,10 +65,24 @@ layout ed = case [l | l <- windowLayouts ed, layoutWindow l == edFocus ed] of
 
 -- | Scroll the view so the primary cursor is on screen.
 ensureCursorVisible :: Editor -> Editor
-ensureCursorVisible ed = ed {edView = scrollToCursor (rectHeight r, rectWidth r) (optScrolloff (edOptions ed)) cursor (edView ed)}
+ensureCursorVisible ed = ed {edView = reviewed (scrollToCursor (height, rectWidth r) scrolloff cursor (edView ed))}
   where
     r = layoutText (layout ed)
-    cursor = (posLine (rangeHead (primary (docSelection (edDoc ed)))), cursorDisplayCol ed)
+    height = rectHeight r
+    scrolloff = optScrolloff (edOptions ed)
+    line = posLine (rangeHead (primary (docSelection (edDoc ed))))
+    cursor = (line, cursorDisplayCol ed)
+    -- A review's extra rows (ADR-43) take screen rows too: scroll further
+    -- until the cursor's line is drawn above the margin.
+    reviewed v = case reviewFor ed (docId (edDoc ed)) of
+      Nothing -> v
+      Just rv -> go (100 :: Int) v
+        where
+          go 0 view = view
+          go n view =
+            case rowOfLine (displayRows (Just rv) (lineCount (docBuffer (edDoc ed))) (viewTop view) height) line of
+              Just row | row < max 1 (height - scrolloff) || viewTop view >= line -> view
+              _ -> go (n - 1) view {viewTop = viewTop view + 1}
 
 -- | Render the editor. The previous frame, if given, lets unchanged rows be
 -- reused (see "Him.Render.TextArea").

@@ -964,6 +964,52 @@ of ADR-41.
   the whole flow: the edit is shown, approved straight after sending, saved only then,
   and a second message goes to the same process.
 
+**ADR-43: Proposed changes are reviewed like staged hunks, in any order.**
+This replaces the approve-before-continuing flow of ADR-41/42. The user asked for all
+proposed edits at once, decided in any order with the cursor on one, and for edits
+that are easier to understand.
+
+- **Proposals do not block.** Every tool call is answered at once. An edit is answered
+  "proposed: the user reviews after your turn; go on as if applied". So the model
+  makes all its changes in one turn, with Claude Code (MCP, ADR-42) and the API alike.
+  The `ChatDeciding` state and the per-call bookkeeping are gone.
+- **A review per document** (`Him.Chat.Review`):
+  - **The base** is the document's text before the chat's first change.
+  - **The proposed changes** are the diff from the base to the buffer (`Him.Diff`),
+    recomputed in the plugin's housekeeping when the buffer's version changes. This
+    is the git-signs idea (ADR-25), so changes that touch or follow each other, and
+    edits by hand in between, need no line bookkeeping.
+  - **Approving** one change applies it to the base (`applyHunks`, as staging does)
+    and writes the base to the file.
+  - **Denying** applies the reverse to the buffer.
+  - A review with no changes left is done.
+- **Deciding:** `space c a` / `space c d` act on the change under the cursor
+  (`hunkAtLine`: its new lines, or for a removal the line after it), and `space c A`
+  / `D` act on all of them. `] c` / `[ c` move between changes, and `space c l` lists
+  them in a picker with a preview. When a turn ends with proposals, the editor window
+  takes the focus, in normal mode, with the cursor on the first change.
+- **Telling the model:** decisions are collected and put before the user's next
+  message, with what still waits ("[The user reviewed your proposed changes: approved
+  a.txt:2 (-1 +2) …] [Still waiting for review: …]").
+- **Showing a change** (`Him.Review.displayRows`): the text area and the gutter draw
+  rows, not just buffer lines.
+  - Above each change's new lines there is a header row ("change 1/2 (-1 +2) space
+    c a/d: approve/deny ] c: next") and its removed lines (red, from the base, with
+    `-` in the gutter).
+  - The new lines are highlighted with `+` in the gutter.
+  - These extra rows are never in the buffer. The cursor, `cursorPosition` and the
+    scrolling (`ensureCursorVisible` scrolls further while extra rows push the cursor
+    below the margin) count them.
+  - Row caching is unaffected (a cached row is copied only when its key, its
+    content, matches). The terminal-scroll shortcut stays correct, because the diff
+    compares cells.
+  - The status line shows "N to review".
+- **The chat transcript is easier to read:** `you>` and `claude>` lines are styled, and
+  notes in brackets are dimmed.
+- **Checked with the real binary** and `dev/fake-claude` (which now proposes two
+  changes in one turn): approving the second change wrote only it, denying the first
+  restored it, and the next message carried the review note.
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -1026,6 +1072,7 @@ Pure modules are marked *(pure)*.
 | `Him.Diff`, `Him.GitState`, `Him.Git` | Line diffs, a document's git state and signs *(pure)*; running git (ADR-25). |
 | `Him.Lsp.*` | The LSP client: protocol, state, sync, edits *(pure)*, server processes, the server table (ADR-29). |
 | `Him.Repl`, `Him.Repl.Process` | REPL config and state *(pure)*; the process (ADR-38). |
+| `Him.Review` | Reviewing proposed changes: approve / deny one change, the change at a line, the rows a text area shows (header, removed lines) (ADR-43) *(pure)*. |
 | `Him.Chat`, `Him.Chat.Tools`, `Him.Chat.Anthropic`, `Him.Chat.ClaudeCode`, `Him.Mcp` | The chat provider interface (sessions) and state, the model's tools and pending edits *(pure)*; the Claude API provider over curl (ADR-41); the Claude Code provider and the MCP bridge (`him --mcp-bridge`) that serves him's tools to it (ADR-42). |
 
 ## 5. Development goals / milestones
@@ -1123,6 +1170,8 @@ Each milestone ends with something runnable, and with this file updated.
   approval in the editor (ADR-41).
 - [x] **38. Claude Code provider.** The chat through `claude`, with him's tools served
   over MCP by `him --mcp-bridge` (ADR-42).
+- [x] **39. Reviewing proposed changes.** All of a turn's changes at once, decided in
+  any order with the cursor on one, shown inline with their removed lines (ADR-43).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
@@ -1155,7 +1204,7 @@ them in the editor.
 | git plugin | `] g` / `[ g` (next / previous change); `space g s` / `u` (stage / unstage the selected lines), `S` / `U` (the file), `r` (reset the lines). |
 | lsp plugin | `space k` (hover), `g d` / `g y` / `g i` / `g r` (definition, type definition, implementation, references), `space s` / `space S` (symbols / in the project), `space r` (rename), `space a` (code actions), `space x` / `] d` / `[ d` (diagnostics); insert mode: completion (`C-x`, `tab` / `C-n` / `C-p`, `ret`), signature help. |
 | repl plugin | `space e` (send the selection or line), `space E` (reload); in the REPL buffer (insert): `ret` sends, `C-c` interrupts. |
-| chat plugin | `space c c` (open the chat), `space c s` (put the selection into the message), `space c a` / `space c d` (approve / deny the next pending edit), `space c A` / `space c D` (all of them); in the chat (insert): `ret` sends, `A-ret` a line break, `C-c` stops the answer. |
+| chat plugin | `space c c` (open the chat), `space c s` (put the selection into the message); proposed changes: `space c a` / `space c d` (approve / deny the one under the cursor), `space c A` / `space c D` (all), `] c` / `[ c` (next / previous), `space c l` (list); in the chat (insert): `ret` sends, `A-ret` a line break, `C-c` stops the answer. |
 
 `:` commands (`tab` completes, and the `:` menu lists them as you type):
 - **files and buffers:** `:w [path]`, `:wa`, `:wq` / `:x`, `:wqa`, `:q` (closes the window; quits with the last), `:q!`, `:qa`, `:qa!`, `:o` / `:e path…`, `:reload` (`!`), `:reload-all`, `:new`, `:bc` (`!`), `:cd`, `:pwd`;
@@ -1195,7 +1244,7 @@ work is match mode and `I` / `A` (ADR-40), the AI chat plugin (ADR-41) with Clau
 Code as its default provider over MCP (ADR-42), and a sweep of the repository and the
 documents.
 
-- **State:** milestones 1–38 (§5) and ADR-1…42 (§3). `make test` runs 554 tests (pure
+- **State:** milestones 1–39 (§5) and ADR-1…43 (§3). `make test` runs 554 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).
@@ -1237,8 +1286,8 @@ documents.
     misalign their right border.
   - An unfocused window's selection is not moved by edits made in another window on
     the same document; it is clamped (ADR-37).
-  - A chat edit's lines are tracked by line number; editing above a pending edit by
-    hand before deciding it moves it (ADR-41).
+  - Approving a proposed change writes the review's base with it applied, so unsaved
+    edits made by hand before the chat's first change are written too (ADR-43).
   - The MCP bridge's pipes are opened read-write by the editor, which Linux allows but
     POSIX leaves undefined (ADR-42).
 - **Working rules:**

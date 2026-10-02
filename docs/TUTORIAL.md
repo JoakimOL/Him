@@ -1066,12 +1066,14 @@ no newline, and with output that has two.
 - the provider idea from highlighting (5.9). A `ChatProvider` takes a request and
   streams events back, so the tests drive the whole flow with a scripted provider.
 
-The interesting part is the model's edits. Each one becomes a *pending edit*:
-- It is applied to the file's buffer as an undoable change of whole lines, and drawn
-  with `ui.highlight`.
-- Approving keeps it and saves the file; denying puts the old lines back.
-- Only when every edit of a turn is decided does the conversation go on, with one
-  tool result per call, in order.
+The interesting part is the model's edits. They are *proposed*, all in one turn, and
+reviewed like staged hunks (ADR-43):
+- A document under review keeps its text from before the chat's first change (the
+  base). The proposed changes are simply the diff from the base to the buffer.
+- Approving one applies it to the base, the way `git add -p` stages a hunk, and writes
+  the base to the file. Denying applies the reverse to the buffer.
+- The text area draws extra rows for each change: a header, and the removed lines.
+  These rows are not in the buffer.
 
 The history sent to the model is append-only. The assistant's messages go back exactly
 as they came, thinking blocks included, which the API requires.

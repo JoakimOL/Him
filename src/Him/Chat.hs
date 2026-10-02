@@ -14,12 +14,12 @@ module Him.Chat
     -- * A chat buffer
   , ChatState (..)
   , ChatStatus (..)
-  , PendingEdit (..)
-  , EditDecision (..)
+  , Review (..)
   , newChatState
   ) where
 
 import Data.Text (Text)
+import Him.Diff (Hunk)
 import Him.Json (Value)
 import Him.Position (Pos (..))
 
@@ -90,29 +90,23 @@ defaultChatConfig = ChatConfig "claude-code" "claude-opus-5-5" "high" 64000
 
 data ChatStatus
   = ChatIdle
-  | -- | A request is running.
+  | -- | A turn is running.
     ChatWaiting
-  | -- | Edits wait for the user's decision before the conversation goes on.
-    ChatDeciding
   deriving stock (Eq, Show)
 
--- | What the user decided about an edit.
-data EditDecision = Undecided | Approved | Denied
-  deriving stock (Eq, Show)
-
--- | An edit the model proposed, applied to the file's buffer until the
--- user approves (keep and save) or denies (put the old lines back). It
--- replaces lines @[peLine, peLine + length peOld)@ by 'peNew'.
-data PendingEdit = PendingEdit
-  { peNumber :: !Int
-  -- ^ Shown in the chat (#1, #2, …).
-  , peToolId :: !Text
-  , pePath :: !FilePath
-  , peDoc :: !Int
-  , peLine :: !Int
-  , peOld :: ![Text]
-  , peNew :: ![Text]
-  , peDecision :: !EditDecision
+-- | A document with changes the model proposed (ADR-43): its text before
+-- the first of them (the base, which is also what is on disk for an
+-- approved state), and the proposed changes, the diff from the base to the
+-- buffer. Approving a change applies it to the base and writes the base;
+-- denying puts the base's lines back in the buffer. Edits by hand in
+-- between simply become part of the diff.
+data Review = Review
+  { rvDoc :: !Int
+  , rvPath :: !FilePath
+  , rvBase :: ![Text]
+  , rvHunks :: ![Hunk]
+  -- ^ Base to buffer, for the buffer's version 'rvVersion'.
+  , rvVersion :: !Int
   }
   deriving stock (Eq, Show)
 
@@ -123,14 +117,13 @@ data ChatState = ChatState
   , csStatus :: !ChatStatus
   , csHistory :: ![Value]
   -- ^ The conversation, append-only.
-  , csEdits :: ![PendingEdit]
-  -- ^ The current turn's edits.
-  , csResults :: ![(Text, Maybe Value)]
-  -- ^ The current turn's tool results by call id, in the calls' order; an
-  -- edit's is there once it is decided.
-  , csNextEdit :: !Int
+  , csReviews :: ![Review]
+  -- ^ Documents with proposed changes.
+  , csDecisions :: ![Text]
+  -- ^ What the user decided since the last message (told to the model
+  -- with the next one).
   }
   deriving stock (Eq, Show)
 
 newChatState :: ChatState
-newChatState = ChatState (Pos 0 0) ChatIdle [] [] [] 1
+newChatState = ChatState (Pos 0 0) ChatIdle [] [] []

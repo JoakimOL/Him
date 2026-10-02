@@ -33,7 +33,7 @@ module Him.Editor
   , swapWindow
   , windowEditor
   , windowShowing
-  , pendingEditLines
+  , reviewFor
   , allDocuments
   ) where
 
@@ -53,7 +53,7 @@ import Him.Selection (Selection, primary, rangeHead)
 import Him.Buffer (Buffer)
 import Him.Buffer qualified as Buffer
 import Him.Document (DocKind (..), Document (..), clampSelection, newDocument)
-import Him.Chat (ChatState (..), EditDecision (..), PendingEdit (..))
+import Him.Chat (ChatState (..), Review (..))
 import Him.View (View, initialView)
 import Him.Window
 import Data.IntMap.Strict (IntMap)
@@ -460,14 +460,8 @@ windowShowing i ed
       w : _ -> Just w
       [] -> Nothing
 
--- | The line ranges @[from, to)@ of a document that a chat's edits changed
--- and that wait for the user's decision (ADR-41).
-pendingEditLines :: Editor -> Int -> [(Int, Int)]
-pendingEditLines ed i =
-  [ (peLine pe, peLine pe + max 1 (length (peNew pe)))
-  | d <- allDocuments ed
-  , ChatDoc cs <- [docKind d]
-  , pe <- csEdits cs
-  , peDoc pe == i
-  , peDecision pe == Undecided
-  ]
+-- | A document's review of proposed chat changes, if it has one (ADR-43).
+reviewFor :: Editor -> Int -> Maybe Review
+reviewFor ed i = case [rv | d <- allDocuments ed, ChatDoc cs <- [docKind d], rv <- csReviews cs, rvDoc rv == i] of
+  rv : _ -> Just rv
+  [] -> Nothing
