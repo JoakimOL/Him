@@ -715,7 +715,8 @@ Legend: ✅ exists, ⏳ planned.
 
 | Module | Status | Responsibility |
 |---|---|---|
-| `Him.App` | ✅ | Main loop: event → keymap → command → render. `handleEvent` is exported so tests can drive it. |
+| `Him.App` | ✅ | The terminal frontend: raw mode, input, the loop (batching, rendering, loop-only effects such as suspend, reload, theme, plugins), theme loading. |
+| `Him.Session` | ✅ | The session without a frontend: `handleEvent` (keys through the keymap, job results), effects that need the config, housekeeping, plugin switching, config loading. Tests drive it directly. |
 | `Him.Log` | ✅ | `logMsg`, which appends to the file named by `$HIM_LOG`. It is a no-op when unset. |
 | `Him.Terminal.Size` + `cbits/winsize.c` | ✅ | `getWindowSize :: IO (Maybe (Int, Int))`, returning (rows, cols); `onResize` installs the SIGWINCH handler. |
 | `Him.Terminal.Raw` | ✅ | Raw mode + alternate screen; `withRawTerminal` always restores the terminal. |
