@@ -8,7 +8,7 @@ import Control.Monad.Trans.State.Strict (gets, modify')
 import Data.Text qualified as T
 import Him.Action
 import Him.Command
-import Him.Commands.Search (cancelSearch, executeSearch)
+import Him.Commands.Search (cancelSearch, executeSearch, executeSelect)
 import Him.Editor (Editor (..), PromptKind (..))
 import Him.Ex (ExCommand, runExLine)
 import Him.Mode (Mode (..))
@@ -32,6 +32,7 @@ actions exTable =
       case prompt of
         ExPrompt -> runExLine exTable line
         SearchPrompt dir origin -> executeSearch dir origin line
+        SelectPrompt origin -> executeSelect origin line
   , action "ex" GPrompt "Run a : command, e.g. ex \"w\"" (text "command") (runExLine exTable)
   ]
 
@@ -42,6 +43,7 @@ cancel = do
   setMode Normal
   case prompt of
     SearchPrompt _ origin -> cancelSearch origin
+    SelectPrompt origin -> cancelSearch origin
     ExPrompt -> pure ()
 
 cmdlineInsert :: Char -> EditorM ()
@@ -54,5 +56,6 @@ setCmdLine t = modify' $ \e ->
     { edCmdLine = t
     , edPreviewPending = case edPrompt e of
         SearchPrompt {} -> True
+        SelectPrompt {} -> True
         ExPrompt -> False
     }

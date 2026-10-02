@@ -23,6 +23,7 @@ promptLabel ed = case edPrompt ed of
   ExPrompt -> ":"
   SearchPrompt Forward _ -> "/"
   SearchPrompt Backward _ -> "?"
+  SelectPrompt _ -> "select:"
 
 commandLineCursor :: Editor -> Rect -> (Int, Int)
 commandLineCursor ed rect =

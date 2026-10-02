@@ -86,9 +86,7 @@ in milestone 2. Input is read with `System.Posix.IO.ByteString.fdRead` on `stdIn
 **ADR-5b: Details of the selection model.**
 Ranges are *inclusive* (a cursor covers the character under it), and `col == lineLength`
 addresses the line end (the newline). In insert mode the head is read as a gap: text is
-inserted before the character at the head. Edits apply to the primary range only. Motions
-and rendering already handle every range. Multi-range edits need position mapping and
-will come with multiple selections.
+inserted before the character at the head. Edits apply to every range (ADR-18).
 
 **ADR-6b: Components are `Theme -> Editor -> Rect -> Frame -> Frame`.**
 This replaces the `[DrawOp]` lists in the original plan: composing frame transformers is
@@ -199,6 +197,26 @@ Other bindings ignore it, as does a binding that already gives arguments
 keeps its binding. The count is capped at 1,000,000.
 *Later:* `:` could gain a command that runs any action by its invocation text.
 
+**ADR-18: Multi-range edits are applied from the bottom up, and positions are kept
+relative to the end.**
+`Him.Edit.applyEdits` runs an ordinary single-range `Edit` on each range, from the last
+range to the first. An edit only changes text around its own range, which lies before
+every range already edited. So each result is kept as (lines from the last line,
+characters from the end of its line). Those two numbers are unaffected by any change
+earlier in the buffer, and they turn back into positions at the end. That avoids
+change sets and position mapping, and every existing `Edit` works with many cursors
+unchanged. A single range takes a direct path, so typing costs what it did before.
+- **Normalizing:** `Selection.fromRanges` sorts the ranges and merges overlapping ones.
+  It runs before edits and after motions, so the bottom-up order is well defined.
+- **Registers:** a register holds one value per range. Pasting with as many values
+  as ranges gives each range its own value; otherwise every range gets all of them,
+  joined.
+- **Known limit:** two cursors next to each other (e.g. `ab` with cursors on `a` and on
+  `b`) can interact. A backspace at the second deletes the first one's character. Helix
+  merges such cursors; him does not yet.
+*Alternative:* change sets with position mapping (as in Helix). They are more general,
+and needed for an undo tree or collaboration, but they are much more code.
+
 **ADR-8: No test framework.**
 `test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
 `runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
@@ -223,9 +241,9 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Search` | ✅ | `compileNeedle` (smart case) and `findMatch` (direction, wrap-around), on top of `Him.Buffer.findForwardFrom` / `findBackwardBefore`. |
 | `Him.Commands.Search` | ✅ | `/ ? n N *`, the search prompt, and `refreshSearchPreview`. |
 | `Him.Buffer` | ✅ | Abstract text storage (`Seq Text`), path, dirty flag. |
-| `Him.Position`, `Him.Selection` | ✅ | `Pos`, `Range {anchor, head}`, `Selection` (NonEmpty ranges + primary). |
+| `Him.Position`, `Him.Selection` | ✅ | `Pos`, `Range {anchor, head}`, `Selection` (sorted, merged NonEmpty ranges + primary; `fromRanges`, `normalize`, primary operations). |
 | `Him.Motion` | ✅ | Pure motions: char, line (desired column), word, line/file start/end. |
-| `Him.Edit` | ✅ | Pure edits over all selections. |
+| `Him.Edit` | ✅ | Pure single-range edits, and `applyEdits`, which applies one to every range (ADR-18). |
 | `Him.Editor`, `Him.Mode`, `Him.View` | ✅ | Editor state, modes, viewport + scrolloff. |
 | `Him.Action` | ✅ | Actions (name, group, doc, typed parameters), the registry, invocation parsing (`name arg "quoted arg"`), and binding to a runnable `Bound` (ADR-17). |
 | `Him.Command`, `Him.Keymap` | ✅ | `EditorM` and helpers for writing actions; per-mode keymap tries, generic in what they bind (`Keymap a`). |
@@ -281,13 +299,14 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **16. Action layer.** Keys bind to actions with typed arguments, validated at
   startup; user bindings override the defaults (ADR-17). Count prefixes fill an
   action's `count` parameter.
+- [x] **17. Multiple selections.** `C`, `s` (with preview), `%`, `,`, `A-,`, `(`, `)`,
+  `A-s`. Edits, yank and paste work on every range (ADR-18).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
 - [ ] Highlight all matches
 - [ ] Undo tree / change sets instead of snapshots
 - [ ] Named registers and the system clipboard
-- [ ] Multiple selections (`C`, `s` split)
 - [ ] Multiple buffers, `:e`
 - [ ] User config file for keymaps (only the file parser is left: it produces `Bindings`)
 - [ ] Syntax highlighting (a styling pass at render time)
@@ -302,6 +321,7 @@ Implemented (defined in `Him.Config.Default`):
 | Normal | counts (`5 j`, `3 w`, `2 x`) on `h j k l`, arrows, `w b e`, `x`; `h j k l`, arrows, `home`/`end`; `w b e` (select words), `x` (select line, repeat to extend), `;` (collapse), `v` (select mode), `d` (delete), `c` (change); `y` (yank), `p` / `P` (paste after / before); `u` / `U` (undo / redo); `g g` / `g e` (first / last line), `g h` / `g l` (line start / end); `i a o`; `:` |
 | Select | same as normal, but motions extend; `v` / `esc` → normal |
 | Insert | printable chars, `ret` (keeps indent), `tab`, `backspace`, `del`, arrows, `esc` |
+| Normal (selections) | `%` (select all), `s` (select matches in the selection, with preview), `C` (copy the selection onto the next line), `,` (keep the primary), `A-,` (remove the primary), `(` / `)` (rotate the primary), `A-s` (split into lines). The status line shows `i/n sels`. |
 | Normal (search) | `/` / `?` (search forward / backward, with preview), `n` / `N` (next / previous match), `*` (selection becomes the pattern) |
 | Command line | printable chars, `backspace` (leaves when empty), `ret`, `esc` (a search restores the selection) |
 | `:` commands | `:w [path]`, `:q` (refuses when dirty), `:q!`, `:wq` / `:x` |
@@ -364,23 +384,28 @@ numbers are provisional.*
 - **The action layer is done (ADR-17).** The config-file parser is still to do. It only
   has to produce `Bindings` (`Map Mode [(keys, invocation)]`) and call
   `Him.Config.Default.configWith`, which reports every bad binding.
+- **Done this session:** count prefixes (`5 j`) and multiple selections (milestone 17,
+  ADR-18).
 - **Next suggestions:**
-  1. **Multiple selections** (`C`, `s`, `,`). `edit` must map positions across ranges
-     (ADR-5b).
-  2. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
-     matcher.
+  1. **Regex search.** It plugs into `Him.Search`, which only needs a block-level
+     matcher. `s` would get regexes for free.
+  2. **Merge adjacent cursors** in insert mode (see ADR-18's known limit). Also `S` (split
+     the selection on a pattern) and `A-;` (flip the selections).
   3. Multiple buffers / `:e`, and a config file for keymaps (the parser only).
 - **Known issues:**
   - Zero-width combining characters are treated as width 1.
   - Case-insensitive search folds ASCII letters only.
-  - `edit` changes only the primary range.
+  - Adjacent cursors can interact on backspace (ADR-18).
+  - `s` searches from each range's start, and a range without a match can scan on to
+    the next match beyond it. With many ranges and few matches, that is slow.
+  - Search (`/`, `n`) moves only the primary range.
 - **Working rule:** revert temporary instrumentation by editing it out (or with
   `git checkout` on a clean tree only). A `git checkout` once threw away uncommitted
   work (the search preview hook).
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (213 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (234 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

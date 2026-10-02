@@ -40,8 +40,12 @@ drawTextArea theme prev ed rect frame0 = foldl' drawRow frame0 [0 .. rectHeight 
     prim = primary sel
     -- In insert mode the cursor is a bar between characters, so a collapsed
     -- range is not shown as a one-character selection.
-    shown = [(rangeStart r, rangeEnd r) | r <- ranges sel, edMode ed /= Insert || not (isCollapsed r)]
-    secondaryHeads = [rangeHead r | r <- ranges sel, r /= prim]
+    -- Only ranges touching the visible lines, filtered once per frame (there
+    -- may be thousands of ranges after @% s@).
+    bottom = top + rectHeight rect
+    onScreen = [r | r <- ranges sel, posLine (rangeEnd r) >= top, posLine (rangeStart r) < bottom]
+    shown = [(rangeStart r, rangeEnd r) | r <- onScreen, edMode ed /= Insert || not (isCollapsed r)]
+    secondaryHeads = [rangeHead r | r <- onScreen, r /= prim]
     -- Packed once per frame, not per cell.
     textStyle = packStyle (themeText theme)
     cursorStyle = packStyle (themeCursor theme)

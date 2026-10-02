@@ -3,6 +3,7 @@
 -- (insertion point) before the character it covers.
 module Him.Edit
   ( Edit
+  , applyEdits
   , insertAtHead
   , insertNewline
   , deleteBackward
@@ -15,6 +16,7 @@ module Him.Edit
   ) where
 
 import Data.Char (isSpace)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer
@@ -22,6 +24,32 @@ import Him.Position (Pos (..))
 import Him.Selection
 
 type Edit = Buffer -> Range -> (Buffer, Range)
+
+-- | Apply an edit to every range of a selection; the edit is told the
+-- range's index (e.g. to paste the matching register value).
+--
+-- The ranges are applied from the last to the first. An edit only changes
+-- text around its own range, which lies before every range already
+-- edited, so the results so far are kept as distances from the end of the
+-- buffer (lines from the last line, characters from the end of their line),
+-- which an edit further up does not change. That avoids mapping positions
+-- through each change. Overlapping ranges are merged first.
+applyEdits :: (Int -> Edit) -> Buffer -> Selection -> (Buffer, Selection)
+applyEdits f b0 sel0 = case ranges sel of
+  [r] -> let (b, r') = f 0 b0 r in (b, modifyPrimary (const r') sel)
+  rs ->
+    let step (b, done) (i, r) = let (b', r') = f i b r in (b', fromEnd b' r' : done)
+        (b1, results) = foldl step (b0, []) (reverse (zip [0 ..] rs))
+        rs' = map (toEnd b1) results
+     in (b1, fromMaybe sel (fromRanges rs' (primaryIndex sel)))
+  where
+    sel = normalize sel0
+    fromEnd b (Range a h w) = (distance b a, distance b h, w)
+    toEnd b (a, h, w) = Range (position b a) (position b h) w
+    distance b (Pos l c) = (lineCount b - 1 - l, lineLength l b - c)
+    position b (dl, dc) =
+      let l = max 0 (lineCount b - 1 - dl)
+       in Pos l (max 0 (lineLength l b - dc))
 
 insertAtHead :: Text -> Edit
 insertAtHead t b r = let (b', p) = insertText (rangeHead r) t b in (b', point p)

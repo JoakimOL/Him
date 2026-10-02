@@ -19,10 +19,14 @@ module Him.Motion
   , nextWordEnd
   , prevWordStart
   , selectLine
+    -- * Whole selections
+  , selectAll
+  , copySelectionBelow
+  , splitOnNewlines
   ) where
 
 import Data.Char (isAlphaNum, isSpace)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import Him.Buffer
 import Him.Position (Pos (..))
 import Him.Selection
@@ -150,3 +154,47 @@ selectLine b r
     e@(Pos el _) = rangeEnd r
     lineEndOf l = Pos l (lineLength l b)
     coversLines = sc == 0 && e == lineEndOf el
+
+-- | One range over the whole buffer.
+selectAll :: Buffer -> Selection
+selectAll b = single (Range (Pos 0 0) (endPos b) Nothing)
+
+-- | Helix @C@: copy every range onto the next lines where it fits (the
+-- same columns, as many lines down as the range is tall). The copy of the
+-- primary range becomes primary.
+copySelectionBelow :: Buffer -> Selection -> Selection
+copySelectionBelow b sel = fromMaybe sel (fromRanges (rs <> map snd copies) prim)
+  where
+    rs = ranges sel
+    copies = mapMaybe (\(i, r) -> (i,) <$> copyBelow b r) (zip [0 ..] rs)
+    prim = maybe (primaryIndex sel) (length rs +) (lookup (primaryIndex sel) (zip (map fst copies) [0 ..]))
+
+copyBelow :: Buffer -> Range -> Maybe Range
+copyBelow b r = listToMaybe [moved d | d <- [height .. lineCount b - 1 - posLine (rangeEnd r)], fits d]
+  where
+    height = posLine (rangeEnd r) - posLine (rangeStart r) + 1
+    shift d (Pos l c) = Pos (l + d) c
+    moved d = Range (shift d (rangeAnchor r)) (shift d (rangeHead r)) Nothing
+    -- Each end must land on a character (or on an empty line's start).
+    fits d = all (\(Pos l c) -> c < max 1 (lineLength (l + d) b)) [rangeAnchor r, rangeHead r]
+
+-- | Helix @A-s@: split every range into one range per line, without the
+-- line breaks. Empty pieces are dropped (a range with only empty pieces
+-- stays as it was).
+splitOnNewlines :: Buffer -> Selection -> Selection
+splitOnNewlines b sel = fromMaybe sel (fromRanges (concat pieces) prim)
+  where
+    pieces = [orSelf r (split r) | r <- ranges sel]
+    orSelf r [] = [r]
+    orSelf _ ps = ps
+    split r =
+      let Pos sl sc = rangeStart r
+          Pos el ec = rangeEnd r
+       in [ Range (Pos l s) (Pos l e) Nothing
+          | l <- [sl .. el]
+          , let s = if l == sl then sc else 0
+                e = min (if l == el then ec else maxBound) (lineLength l b - 1)
+          , e >= s
+          ]
+    -- The first piece of the old primary range becomes primary.
+    prim = sum (map length (take (primaryIndex sel) pieces))

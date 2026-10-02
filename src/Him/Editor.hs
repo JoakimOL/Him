@@ -31,6 +31,9 @@ data PromptKind
   | -- | A search, with the selection to search from and to restore when
     -- the search is cancelled.
     SearchPrompt !Direction !Selection
+  | -- | Select the matches of a pattern inside the selection (Helix @s@),
+    -- with the selection to restore when cancelled.
+    SelectPrompt !Selection
   deriving stock (Eq, Show)
 
 -- | Only one document for now; this becomes a list of documents plus a
@@ -52,8 +55,9 @@ data Editor = Editor
   , edPreviewPending :: !Bool
   -- ^ The search text changed; the incremental search preview is computed
   -- once before the next render, not for every key of a burst.
-  , edRegisters :: !(Map Char Text)
-  -- ^ Yanked text. Only the default register @\"@ is used so far.
+  , edRegisters :: !(Map Char [Text])
+  -- ^ Registers: @\"@ (yanked text, one value per range) and @/@ (the
+  -- last search).
   , edQuit :: !Bool
   }
   deriving stock (Eq, Show)

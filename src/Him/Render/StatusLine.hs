@@ -11,7 +11,7 @@ import Him.Mode (modeLabel)
 import Him.Position (Pos (..))
 import Him.Render.Frame
 import Him.Render.Theme
-import Him.Selection (primary, rangeHead)
+import Him.Selection (primary, primaryIndex, rangeCount, rangeHead)
 
 drawStatusLine :: Theme -> Editor -> Rect -> Frame -> Frame
 drawStatusLine theme ed rect =
@@ -34,5 +34,9 @@ drawStatusLine theme ed rect =
       | room <= 1 = ""
       | otherwise = "…" <> T.takeEnd (room - 1) name
     file = " " <> shortName <> dirty
-    Pos l c = rangeHead (primary (docSelection doc))
-    right = maybe "" (T.pack . show) (edCount ed) <> showKeys (edPending ed) <> "  " <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "
+    sel = docSelection doc
+    Pos l c = rangeHead (primary sel)
+    sels
+      | rangeCount sel > 1 = T.pack (show (primaryIndex sel + 1) <> "/" <> show (rangeCount sel) <> " sels  ")
+      | otherwise = ""
+    right = maybe "" (T.pack . show) (edCount ed) <> showKeys (edPending ed) <> "  " <> sels <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "

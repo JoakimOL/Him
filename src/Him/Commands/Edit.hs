@@ -4,8 +4,7 @@ module Him.Commands.Edit
   , insertChar
   ) where
 
-import Control.Monad.Trans.State.Strict (gets, modify')
-import Data.Map.Strict qualified as Map
+import Control.Monad.Trans.State.Strict (gets)
 import Data.Text qualified as T
 import Him.Action
 import Him.Buffer (nextPos)
@@ -45,10 +44,12 @@ actions =
       setMode Insert
   , simple "yank" GClipboard "Copy the selection into the register" $ do
       yank
-      n <- T.length <$> register
-      info ("yanked " <> T.pack (show n) <> " characters")
-  , simple "paste_after" GClipboard "Paste after the selection" (register >>= edit . pasteAfter)
-  , simple "paste_before" GClipboard "Paste before the selection" (register >>= edit . pasteBefore)
+      vs <- getRegister defaultRegister
+      info $ case vs of
+        [v] -> "yanked " <> T.pack (show (T.length v)) <> " characters"
+        _ -> "yanked " <> T.pack (show (length vs)) <> " selections"
+  , simple "paste_after" GClipboard "Paste after each selection" (paste pasteAfter)
+  , simple "paste_before" GClipboard "Paste before each selection" (paste pasteBefore)
   , simple "undo" GHistory "Undo the last change" (history "nothing to undo" undo)
   , simple "redo" GHistory "Redo the last undone change" (history "nothing to redo" redo)
   , action "insert_text" GEditing "Insert text before the selection" (text "text") (edit . insertAtHead)
@@ -59,14 +60,22 @@ actions =
 defaultRegister :: Char
 defaultRegister = '"'
 
-register :: EditorM T.Text
-register = gets (Map.findWithDefault "" defaultRegister . edRegisters)
-
+-- | Copy every range into the default register, one value per range.
 yank :: EditorM ()
 yank = do
   d <- getDoc
-  let t = selectionText (docBuffer d) (primary (docSelection d))
-  modify' (\e -> e {edRegisters = Map.insert defaultRegister t (edRegisters e)})
+  setRegister defaultRegister (map (selectionText (docBuffer d)) (ranges (docSelection d)))
+
+-- | Paste the register at every range. With as many values as ranges, each
+-- range gets its own; otherwise every range gets all of them, joined.
+paste :: (T.Text -> Edit) -> EditorM ()
+paste at = do
+  vs <- getRegister defaultRegister
+  n <- rangeCount . docSelection <$> getDoc
+  let value i
+        | length vs == n = vs !! i
+        | otherwise = T.concat vs
+  editEach (at . value)
 
 -- | Undo or redo: swap the current state with one from the history.
 history :: T.Text -> (Snapshot -> History -> Maybe (Snapshot, History)) -> EditorM ()

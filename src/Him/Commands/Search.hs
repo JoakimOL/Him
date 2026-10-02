@@ -4,13 +4,13 @@ module Him.Commands.Search
   ( actions
   , startSearch
   , executeSearch
+  , executeSelect
   , cancelSearch
   , refreshSearchPreview
   ) where
 
 import Control.Monad.Trans.State.Strict (gets, modify')
-import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Action
@@ -36,6 +36,10 @@ actions =
         else do
           setSearchRegister t
           info ("search: " <> t)
+  , simple "select_matches" GSelection "Select the matches of a pattern inside the selection (s)" $ do
+      sel <- docSelection <$> getDoc
+      modify' (\e -> e {edCmdLine = "", edPrompt = SelectPrompt sel, edPreviewPending = False})
+      setMode CmdLine
   , action "search_text" GSearch "Search forward for the given text" (text "pattern") $ \pattern -> do
       setSearchRegister pattern
       repeatSearch Forward
@@ -45,7 +49,10 @@ searchRegister :: Char
 searchRegister = '/'
 
 setSearchRegister :: Text -> EditorM ()
-setSearchRegister t = modify' (\e -> e {edRegisters = Map.insert searchRegister t (edRegisters e)})
+setSearchRegister t = setRegister searchRegister [t]
+
+lastSearch :: EditorM (Maybe Text)
+lastSearch = listToMaybe <$> getRegister searchRegister
 
 startSearch :: Direction -> EditorM ()
 startSearch dir = do
@@ -58,7 +65,7 @@ executeSearch :: Direction -> Selection -> Text -> EditorM ()
 executeSearch dir origin typed = do
   pattern <-
     if T.null typed
-      then gets (Map.findWithDefault "" searchRegister . edRegisters)
+      then fromMaybe "" <$> lastSearch
       else pure typed
   modify' (\e -> e {edPreviewPending = False})
   setSelection origin
@@ -68,6 +75,18 @@ executeSearch dir origin typed = do
       setSearchRegister pattern
       jump dir needle origin
 
+-- | Enter on the @s@ prompt.
+executeSelect :: Selection -> Text -> EditorM ()
+executeSelect origin typed = do
+  modify' (\e -> e {edPreviewPending = False})
+  setSelection origin
+  d <- getDoc
+  case compileNeedle typed of
+    Nothing -> failWith "no pattern"
+    Just needle -> case selectMatches needle (docBuffer d) origin of
+      Nothing -> failWith ("no matches: " <> typed)
+      Just sel -> setSelection sel
+
 cancelSearch :: Selection -> EditorM ()
 cancelSearch origin = do
   modify' (\e -> e {edPreviewPending = False})
@@ -75,7 +94,7 @@ cancelSearch origin = do
 
 repeatSearch :: Direction -> EditorM ()
 repeatSearch dir =
-  gets (Map.lookup searchRegister . edRegisters) >>= \case
+  lastSearch >>= \case
     Nothing -> failWith "no previous search (use / first)"
     Just pattern -> case compileNeedle pattern of
       Nothing -> failWith "no previous search (use / first)"
@@ -105,14 +124,17 @@ setSelection sel = modifyDoc (\d -> d {docSelection = sel})
 -- so a burst of typed keys searches once.
 refreshSearchPreview :: Editor -> Editor
 refreshSearchPreview ed = case (edPreviewPending ed, edMode ed, edPrompt ed) of
-  (True, CmdLine, SearchPrompt dir origin) ->
-    let doc = edDoc ed
-        preview = do
-          needle <- compileNeedle (edCmdLine ed)
-          m <- findMatch dir needle (docBuffer doc) (rangeStart (primary origin))
-          pure (selectMatch Normal m origin)
-     in ed
-          { edPreviewPending = False
-          , edDoc = doc {docSelection = fromMaybe origin preview}
-          }
+  (True, CmdLine, SearchPrompt dir origin) -> preview origin $ \needle buf -> do
+    m <- findMatch dir needle buf (rangeStart (primary origin))
+    pure (selectMatch Normal m origin)
+  (True, CmdLine, SelectPrompt origin) -> preview origin $ \needle buf ->
+    selectMatches needle buf origin
   _ -> ed {edPreviewPending = False}
+  where
+    preview origin f =
+      let doc = edDoc ed
+          shown = compileNeedle (edCmdLine ed) >>= \needle -> f needle (docBuffer doc)
+       in ed
+            { edPreviewPending = False
+            , edDoc = doc {docSelection = fromMaybe origin shown}
+            }

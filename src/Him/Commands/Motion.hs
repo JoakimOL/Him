@@ -9,7 +9,8 @@ import Him.Action
 import Him.Command
 import Him.Document (Document (..))
 import Him.Motion
-import Him.Selection (collapse, mapRanges)
+import Him.Buffer (Buffer)
+import Him.Selection (Selection, collapse, keepPrimary, mapRanges, removePrimary, rotatePrimary)
 
 actions :: [Action]
 actions =
@@ -28,7 +29,19 @@ actions =
   , repeated "select_line" GSelection "Select the whole line (repeat to extend)" selectLine
   , simple "collapse_selection" GSelection "Reduce the selection to the cursor" $
       modifyDoc (\d -> d {docSelection = mapRanges collapse (docSelection d)})
+  , simple "select_all" GSelection "Select the whole file" (withBuffer (const . selectAll))
+  , simple "keep_primary_selection" GSelection "Keep only the primary selection" (withBuffer (const keepPrimary))
+  , simple "remove_primary_selection" GSelection "Remove the primary selection" (withBuffer (const removePrimary))
+  , simple "rotate_selections_forward" GSelection "Make the next selection primary" (withBuffer (const (rotatePrimary 1)))
+  , simple "rotate_selections_backward" GSelection "Make the previous selection primary" (withBuffer (const (rotatePrimary (-1))))
+  , action "copy_selection_on_next_line" GSelection "Copy each selection onto the next line" count $ \n ->
+      replicateM_ n (withBuffer copySelectionBelow)
+  , simple "split_selection_on_newline" GSelection "Split each selection into its lines" (withBuffer splitOnNewlines)
   ]
+
+-- | Reshape the whole selection, given the buffer.
+withBuffer :: (Buffer -> Selection -> Selection) -> EditorM ()
+withBuffer f = modifyDoc (\d -> d {docSelection = f (docBuffer d) (docSelection d)})
 
 -- | An optional repeat count, at least 1. A count typed before the key
 -- (@5 j@) fills it.

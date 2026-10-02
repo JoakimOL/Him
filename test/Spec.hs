@@ -6,6 +6,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Builder (toLazyByteString)
 import Data.ByteString.Lazy qualified as BL
 import Data.Foldable (foldlM)
+import Data.List (nub, sort)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Him.Action
@@ -19,7 +20,7 @@ import Him.Edit
 import Him.Editor
 import Him.Event (Event (..))
 import Him.Ex (parseExLine)
-import Him.Search (Direction (..), Match (..), compileNeedle, findMatch)
+import Him.Search (Direction (..), Match (..), compileNeedle, findMatch, selectMatches)
 import Him.Commands.Search (refreshSearchPreview)
 import Him.History qualified as H
 import Him.File (decodeChunks, decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
@@ -117,6 +118,7 @@ main = do
     , group "Him.History" historyTests
     , group "Him.Keymap" keymapTests
     , group "Him.Action" actionTests
+    , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests
     , group "Him.Ex" exTests
     , group "Him.View" viewTests
@@ -382,6 +384,81 @@ keymapTests =
   where
     km = either (error . show) id (fromBindings [("a", "one" :: Text), ("g g", "top")])
     keys = fromMaybe [] . parseKeys
+
+multiSelectionTests :: [Test]
+multiSelectionTests =
+  [ test "fromRanges sorts and keeps the primary" $
+      assertEqual (Just ([r 0 4 0 5, r 1 0 1 0], 1)) (shape <$> fromRanges [r 1 0 1 0, r 0 4 0 5] 0)
+  , test "fromRanges merges overlaps" $
+      assertEqual (Just ([r 0 0 0 6], 0)) (shape <$> fromRanges [r 0 0 0 3, r 0 2 0 6] 1)
+  , test "fromRanges merges equal cursors" $
+      assertEqual (Just ([r 0 2 0 2], 0)) (shape <$> fromRanges [r 0 2 0 2, r 0 2 0 2] 1)
+  , test "remove and rotate the primary" $
+      let sel = sel_ [r 0 0 0 0, r 1 0 1 0, r 2 0 2 0] 1
+       in assertEqual ([r 0 0 0 0, r 2 0 2 0], 1, 2, 0) (ranges (removePrimary sel), primaryIndex (removePrimary sel), primaryIndex (rotatePrimary 1 sel), primaryIndex (rotatePrimary (-1) sel))
+  , test "inserting at several cursors" $
+      let sel = sel_ [r 0 1 0 1, r 1 0 1 0, r 0 3 0 3] 0
+          (b, sel') = applyEdits (const (insertAtHead "X")) (buf "abcd\nef") sel
+       in assertEqual ("aXbcXd\nXef", [r 0 2 0 2, r 0 5 0 5, r 1 1 1 1]) (B.toText b, ranges sel')
+  , test "newlines at several cursors" $
+      let sel = sel_ [r 0 1 0 1, r 0 2 0 2] 0
+          (b, sel') = applyEdits (const insertNewline) (buf "abc") sel
+       in assertEqual ("a\nb\nc", [r 1 0 1 0, r 2 0 2 0]) (B.toText b, ranges sel')
+  , test "deleting several selections" $
+      let sel = sel_ [r 0 0 0 1, r 0 4 0 5, r 1 1 1 2] 0
+          (b, _) = applyEdits (const deleteSelection) (buf "one two\nthree") sel
+       in assertEqual "e o\ntee" (B.toText b)
+  , test "random multi-cursor inserts match a model" (multiModel 300 11 True)
+  , test "random multi-cursor backspaces match a model" (multiModel 300 13 False)
+  , test "copy_selection_on_next_line skips short lines" $
+      let sel = copySelectionBelow (buf "abcd\nx\nabcd") (single (r 0 2 0 3))
+       in assertEqual ([r 0 2 0 3, r 2 2 2 3], 1) (shape sel)
+  , test "split on newlines drops the line breaks" $
+      assertEqual ([r 0 1 0 2, r 1 0 1 2, r 3 0 3 1], 0) (shape (splitOnNewlines (buf "abc\ndef\n\nghi") (single (r 0 1 3 1))))
+  , test "select matches inside the selection" $
+      let needle = needle_ "ab"
+       in assertEqual (Just ([r 0 0 0 1, r 0 3 0 4, r 1 2 1 3], 0)) (shape <$> selectMatches needle (buf "ab ab\nxxab ab") (single (r 0 0 1 4)))
+  , test "no matches" $
+      let needle = needle_ "zz"
+       in assertEqual Nothing (shape <$> selectMatches needle (buf "ab") (single (r 0 0 0 1)))
+  ]
+  where
+    r l1 c1 l2 c2 = Range (Pos l1 c1) (Pos l2 c2) Nothing
+    sel_ rs i = fromMaybe (error "no ranges") (fromRanges rs i)
+    needle_ t = fromMaybe (error "bad needle") (compileNeedle t)
+    shape sel = (ranges sel, primaryIndex sel)
+    -- Point cursors at random offsets (at least 2 apart), one random edit
+    -- applied to all of them, compared with the same edit on a string.
+    multiModel :: Int -> Int -> Bool -> Either String ()
+    multiModel n seed inserting = mapM_ (one inserting) (take n (chunks (randoms seed)))
+    chunks xs = let (a, b) = splitAt 8 xs in a : chunks b
+    one inserting rs = case rs of
+      (r1 : r2 : r3 : more) ->
+        let txt = T.intercalate "\n" (take (2 + r1 `mod` 4) ["hello", "", "a b c", "xyz", "q"])
+            len = T.length txt
+            offs = spread (map (`mod` (len + 1)) (take (1 + r2 `mod` 4) more))
+            ins = ["X", "\n", "ab\ncd", ""] !! (r3 `mod` 3)
+            sel = sel_ [let p = posOf txt o in Range p p Nothing | o <- offs] 0
+            edit1 = if inserting then insertAtHead ins else deleteBackward
+            (b, sel') = applyEdits (const edit1) (buf txt) sel
+            (expectText, expectOffs)
+              | inserting = (insertAll txt offs ins, [o + i * T.length ins + T.length ins | (i, o) <- zip [0 ..] offs])
+              | otherwise = deleteAll txt offs
+            got = (B.toText b, map (offOf (B.toText b) . rangeHead) (ranges sel'))
+         in if got == (expectText, expectOffs) then Right () else Left (show (txt, offs, ins, got, (expectText, expectOffs)))
+      _ -> Right ()
+    -- Sorted, at least 2 apart.
+    spread = foldr keep [] . nub . sort
+    keep o acc = case acc of
+      (x : _) | x - o < 2 -> acc
+      _ -> o : acc
+    posOf t o = let before = T.take o t in Pos (T.count "\n" before) (T.length (T.takeWhileEnd (/= '\n') before))
+    offOf t (Pos l c) = sum [T.length x + 1 | x <- take l (T.splitOn "\n" t)] + c
+    insertAll t offs ins = foldr (\o acc -> T.take o acc <> ins <> T.drop o acc) t offs
+    deleteAll t offs =
+      let dels = [o | o <- offs, o > 0]
+          t' = foldr (\o acc -> T.take (o - 1) acc <> T.drop o acc) t dels
+       in (t', [o - length [d | d <- dels, d <= o] | o <- offs])
 
 actionTests :: [Test]
 actionTests =
@@ -699,6 +776,14 @@ integrationTests = do
   starSearch <- selectionAfter "one two\none" "e * n"
   notFound <- typeKeys "/ z z ret" (start "abc")
   deleteMatch <- textAfter "one two three" "/ t w o ret d"
+  multiInsert <- textAfter "ab\nab\nab" "C C i X esc"
+  multiPaste <- textAfter "one two" "% s o ret y ; p"
+  multiCount <- typeKeys "% s a ret" (start "a b a b a")
+  keepOne <- typeKeys "% s a ret ," (start "a b a b a")
+  splitLines <- textAfter "ab\ncd" "% A-s d"
+  selectEsc <- typeKeys "l % s a esc" (start "a b a")
+  selectNone <- typeKeys "% s z z ret" (start "a b a")
+  multiUndo <- textAfter "ab\nab" "C i X Y esc u"
   countDown <- selectionAfter "a\nb\nc\nd\ne" "3 j"
   countTwelve <- selectionAfter (T.intercalate "\n" (replicate 20 "x")) "1 2 j"
   countWords <- textAfter "one two three four" "2 w d"
@@ -748,6 +833,14 @@ integrationTests = do
     , test "* then n searches for the selection" (assertEqual (Pos 1 0, Pos 1 2) starSearch)
     , test "a missing pattern is reported" (assertEqual (Just (Status Error "pattern not found: zz")) (edStatus notFound))
     , test "d deletes the match" (assertEqual "one  three" deleteMatch)
+    , test "C then insert types at every cursor" (assertEqual "Xab\nXab\nXab" multiInsert)
+    , test "yank and paste per selection" (assertEqual "oone twoo" multiPaste)
+    , test "% s selects every match" (assertEqual 3 (rangeCount (docSelection (edDoc multiCount))))
+    , test ", keeps the primary" (assertEqual 1 (rangeCount (docSelection (edDoc keepOne))))
+    , test "A-s d deletes each line's text" (assertEqual "\n" splitLines)
+    , test "esc on the s prompt restores the selection" (assertEqual [Range (Pos 0 0) (Pos 0 5) Nothing] (ranges (docSelection (edDoc selectEsc))))
+    , test "s without matches is reported" (assertEqual (Just (Status Error "no matches: zz")) (edStatus selectNone))
+    , test "u undoes a multi-cursor insert at once" (assertEqual "ab\nab" multiUndo)
     , test "a count repeats a motion" (assertEqual (Pos 3 0, Pos 3 0) countDown)
     , test "counts have several digits" (assertEqual (Pos 12 0, Pos 12 0) countTwelve)
     , test "2 w d deletes the second word's selection" (assertEqual "one three four" countWords)

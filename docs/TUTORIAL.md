@@ -715,6 +715,32 @@ from several blocks plus edits.
 
 ---
 
+### 5.4 Many cursors (ADR-18)
+
+Every motion already worked on all ranges, so multiple selections only needed edits to
+do the same. The usual approach maps every position through every change. Instead, him
+applies the edit to the *last* range first and walks upwards. An edit only touches text
+near its own range, so the ranges already done lie entirely after the change. If each
+finished result is stored as "this many lines from the end, this many characters from
+the end of its line", no edit further up can disturb it:
+
+```haskell
+applyEdits :: (Int -> Edit) -> Buffer -> Selection -> (Buffer, Selection)
+-- for each range, last first:
+--   (b', r') = f i b r
+--   remember (lineCount b' - 1 - line, lineLength line b' - col) for both ends of r'
+-- finally turn the distances back into positions in the final buffer
+```
+
+All the single-range edits (`insertAtHead`, `deleteSelection`, `pasteAfter`, …) work
+with many cursors unchanged. A randomized test compares inserts and backspaces at
+random cursors with the same operations on a plain string.
+
+On top of that, the Helix selection tools are small pure functions. `s` (select the
+matches inside the selection) reuses the search's block scanner and its incremental
+preview. `C` copies each range onto the next line where it fits, and `A-s` splits ranges
+into lines.
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with
@@ -1053,8 +1079,6 @@ The editor is deliberately unfinished. Good next exercises, in increasing diffic
 - **Multiple buffers** and `:e`: turn `edDoc` into a list plus an index.
 - **Highlight all matches:** a render pass over the visible rows. Remember to add the
   highlight to `RowKey`.
-- **Multiple selections** (`C`, `s`): `edit` must map positions through each change so
-  the later ranges stay valid.
 - **Regex search:** write a small backtracking or Thompson-NFA engine. `Him.Search` only
   needs a block-level matcher, so the rest stays as it is.
 

@@ -11,6 +11,7 @@ module Him.Search
   , compileNeedle
   , Match (..)
   , findMatch
+  , selectMatches
   ) where
 
 import Data.Char (isAlpha, isAscii, isUpper)
@@ -20,6 +21,7 @@ import Data.Text.Unsafe (lengthWord8)
 import Him.Buffer
 import Him.Native qualified as Native
 import Him.Position (Pos (..))
+import Him.Selection
 
 data Direction = Forward | Backward
   deriving stock (Eq, Show)
@@ -66,3 +68,25 @@ findMatch dir n buf (Pos l c) = case dir of
     bwd = Native.findBackward (needleFold n) (needleText n)
     bytes = lengthWord8 (needleText n)
     match wrapped p@(Pos ml mc) = Match p (Pos ml (mc + needleChars n - 1)) wrapped
+
+-- | Helix @s@: replace every range by the matches inside it (each match
+-- wholly inside). 'Nothing' when no range contains a match. The first
+-- match in the old primary range becomes primary.
+selectMatches :: Needle -> Buffer -> Selection -> Maybe Selection
+selectMatches n buf sel = fromRanges (concat found) prim
+  where
+    found = map (matchesIn n buf) (ranges sel)
+    prim = sum (map length (take (primaryIndex sel) found))
+
+matchesIn :: Needle -> Buffer -> Range -> [Range]
+matchesIn n buf r = go (before (rangeStart r))
+  where
+    end = rangeEnd r
+    -- findMatch searches after a position, so start one column earlier.
+    before (Pos l c) = Pos l (c - 1)
+    go p = case findMatch Forward n buf p of
+      Just m
+        | not (matchWrapped m)
+        , matchEnd m <= end ->
+            Range (matchStart m) (matchEnd m) Nothing : go (matchEnd m)
+      _ -> []
