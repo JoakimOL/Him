@@ -761,6 +761,56 @@ Helix's model, without Vim's tabs (the buffer list stays as it was):
   one, as in Helix. `:qa` quits everything.
 - **Paging** (`C-f`, `C-d`, …) moves by the focused window's height.
 
+**ADR-38: A REPL is a buffer with a process behind it (the `repl` plugin).**
+`:repl` opens the REPL of the file's language in a window beside it.
+- **Typing:** in the REPL buffer you type as anywhere, and `ret` in insert mode sends
+  the line. This is the `Repl` keymap layer, `[keys.repl]`, which inherits insert
+  mode; `C-c` interrupts.
+- **From a file:** `space e` sends the selection, or the line when only one character
+  is selected. Code of several lines is wrapped in the REPL's markers (ghci's
+  `:{ … :}`; a blank line for Python). The focus stays in the file.
+- **Reloading:** `space E` reloads the project (`:reload`). It also happens by itself
+  after a file of the language is saved, when `reload-on-save` is set (the ghci
+  default).
+- **Commands:** `:repl-send <text>`, `:repl-reload`, `:repl-interrupt`, `:repl-stop`,
+  `:repl-restart`.
+
+How it is built:
+- **The transcript (`Him.Repl.Transcript`, pure).** A REPL buffer is a document of
+  kind `ReplDoc ReplState`, whose `rsInput` is where the next input starts.
+  - Output is inserted just before the input, and cursors at or after that point move
+    with it. Output arriving while you type never splits your line.
+  - Output is not an edit: no undo step, never dirty.
+  - `ret` takes the text after `rsInput` and closes it with a line break.
+  - REPLs reading a pipe do not echo, so the editor shows sent code itself, as if
+    typed.
+  - Escape sequences and carriage returns are removed from output.
+- **The process (`Him.Repl.Process`).** stdout and stderr share one pipe. The process
+  runs with `TERM=dumb` and in its own process group, so `C-c` interrupts the REPL,
+  not the editor. A streaming UTF-8 decoder handles characters split across reads.
+  - The pipe's ends are close-on-exec. A language server started at the same time
+    inherited the write end, so a REPL's exit was never seen. A test caught this:
+    with pylsp starting for `t.py`.
+- **Starting.** The runtime starts the REPL as soon as it performs the effect, not as
+  a job, so text sent straight after reaches it. It runs in the project root, found
+  from `roots` markers (like language servers), so `stack ghci` loads the project.
+  The runtime holds the REPL table (`setReplTable` on `:config-reload`) and the
+  processes by buffer id.
+- **Windows.** If the REPL buffer is not shown, a split opens beside the current
+  window. Unfocused windows on a REPL buffer follow its end as output arrives.
+- **Highlighting.** The transcript is highlighted as its language.
+- **Config:** `[repl.<language>]` sets `command`, `args`, `roots`,
+  `multiline = [start, end]` (or `[]`), `reload`, `reload-on-save` and `enabled`.
+  Built in:
+  - haskell: `stack ghci`, `:{ :}`, `:reload` on save;
+  - python: `python3 -i -q -u`;
+  - javascript: `node -i`.
+
+*Testing while developing:* point the Haskell REPL at the library and the test suite
+(`args = ["ghci", "him:lib", "him:test:him-test"]`). Then `:repl-send main` runs the
+suite. Selecting an expression (a test, or a call into the module being written) and
+pressing `space e` evaluates it. Saving reloads. See the tutorial, §5.11.
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -820,6 +870,7 @@ Legend: ✅ exists, ⏳ planned.
 | `Him.Actions.*` | ✅ | Action lists: `Motion`, `Edit` (modes and text), `Search`, `CommandLine`; `File` holds the ex commands. |
 | `Him.TextWidth` | ✅ | Tab expansion (width 4), `charWidth` (a compact East-Asian-wide/emoji table; control chars are 2 wide and shown as `^X`), char↔display-column mapping. |
 | `Him.Toml`, `Him.UserConfig` | ✅ | The TOML subset reader; the user's config file: checking, applying, the dumped defaults (ADR-32). |
+| `Him.Repl`, `Him.Repl.Transcript`, `Him.Repl.Process`, `Him.Actions.Repl` | ✅ | The REPL plugin: config and state (pure), the transcript (pure), the process, the plugin's actions and commands (ADR-38). |
 | `Him.Window`, `Him.Actions.Window` | ✅ | Splits: the layout tree, boxes and neighbours (pure); window actions, keys and `:vsplit`/`:hsplit` (ADR-37). The editor's window operations (`focusWindow`, `splitWindow`, `closeWindow`, `windowEditor`, …) are in `Him.Editor`. |
 | `Him.Options` | ✅ | The settings (`Options`, `edOptions`) and the table that checks, applies and dumps them (ADR-34). |
 | `Him.Paths` | ✅ | Where things are: the config file, the runtime directories, the theme directories. |
@@ -914,6 +965,8 @@ Each milestone ends with something runnable, and with this file updated.
   and the test modules (ADR-36).
 - [x] **34. Splits.** Windows side by side and stacked, Helix's `C-w` / `space w`
   keys, `:vsplit`, `:hsplit` (ADR-37).
+- [x] **35. REPL plugin.** `:repl`, `space e` (send the selection), `space E`
+  (reload), reload on save, typing in the REPL buffer (ADR-38).
 
 Later (the architecture already has room for these):
 - [ ] Regex search (a small engine of our own, since there is none in the boot libraries)
@@ -942,6 +995,7 @@ Implemented (defined in `Him.Config.Default`):
 | Git | Gutter signs (green added, yellow changed, red removed; dimmer when staged). `] g` / `[ g` next/previous change; `space g s` / `space g u` stage/unstage the selected lines, `space g S` / `space g U` the whole file, `space g r` reset the selected lines to the index. |
 | Picker preview | Items that are places (files, buffers, symbols, references, diagnostics) show the file around their line beside the list. |
 | Windows | `C-w` or `space w`, then: `v` / `s` split side by side / stacked, `w` next, `h j k l` focus, `H J K L` swap, `q` close, `o` only, `n v` / `n s` split with a scratch buffer. `:vsplit` / `:vs [files]`, `:hsplit` / `:hs [files]`, `:vnew`, `:hnew`; `:q` closes the window (quits with the last). |
+| REPL | `:repl [language]` opens it beside the file; in it, type and `ret` (insert mode) sends, `C-c` interrupts. From a file: `space e` sends the selection (or the line), `space E` reloads (also after saving, for ghci). `:repl-send <text>`, `:repl-reload`, `:repl-interrupt`, `:repl-stop`, `:repl-restart`. |
 | Buffers and pickers | `g n` / `g p` (next / previous buffer), `space f` (file picker), `space b` (buffer picker), `space ?` (command palette: every action, its keys and doc; one with arguments opens `:action <name> `). `:action <invocation>` runs any action. In a picker: type to filter, `up`/`down`/`C-p`/`C-n`/`tab`/`S-tab` move, `ret` opens, `esc` closes. |
 
 Actions that take arguments, and have no default key yet: `move_char_left/right`,
@@ -980,7 +1034,7 @@ Actions that take arguments, and have no default key yet: `move_char_left/right`
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-02. Themes, settings, plugins, modules and splits (milestones 30–34, ADR-33–37) are done; next is the REPL plugin, then benchmarking. Benchmarking
+*Last updated 2026-10-02. Themes, settings, plugins, modules, splits and the REPL (milestones 30–35, ADR-33–38) are done; next is benchmarking (queue item 7). Benchmarking
 is **on hold**: the user was using the machine during the runs, so this session's
 numbers are provisional.*
 
@@ -1023,7 +1077,7 @@ numbers are provisional.*
        `Runtime.runJob`;
      - rename `Him.EditorM` → `Him.EditorM` and `Him.Actions.*` → `Him.Actions.*`;
      - split `test/Spec.hs` into `test/Test/*`.
-  6. [ ] **A REPL plugin** (the user's request, 2026-10-02): it opens a split with a
+  6. [x] **A REPL plugin** (ADR-38, milestone 35). The request (2026-10-02): it opens a split with a
      REPL (a process: `ghci`, `python3`, … per language, configurable). You can type
      into it by hand, and a key sends the selection from the file to it. Set it up so
      it is useful for testing while developing, e.g. `stack ghci` in a Haskell project
@@ -1130,7 +1184,7 @@ numbers are provisional.*
 - **Benchmark:** `bench/bench.py` uses the Python standard library only (it is a dev
   tool; the editor itself stays Haskell). Record new results in `docs/BENCHMARK.md` with
   the date and commit.
-- **How to verify:** `make test` (507 tests: pure modules, plus key sequences through the
+- **How to verify:** `make test` (518 tests: pure modules, plus key sequences through the
   real keymap). For a manual check, `tmux new-session -d -s t -x 60 -y 10 "<him binary> file"`
   plus `tmux send-keys` / `tmux capture-pane -p`. The binary path is
   `$(stack path --local-install-root)/bin/him`.

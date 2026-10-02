@@ -10,6 +10,7 @@ import Test.Syntax
 import Test.Render
 import Test.Integration
 import Test.Windows
+import Test.Repl
 
 main :: IO ()
 main = do
@@ -24,6 +25,7 @@ main = do
   bufferIO <- openBufferTests
   loading <- loadingTests
   windows <- windowTests
+  repl <- replTests
   runTests
     [ group "Him.Key" keyTests
     , group "Him.Terminal.Input.decodeKeys" decodeTests
@@ -65,6 +67,7 @@ main = do
     , group "Him.Render" renderTests
     , group "Him.Render.Diff" diffTests
     , group "windows (splits)" windows
+    , group "REPL" repl
     , group "keys through the default config" integration
     , group "rebinding keys to actions" rebinding
     , group "buffers" bufferIO

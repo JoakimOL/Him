@@ -1003,6 +1003,56 @@ are too many. So a picker can have a *source*. A `ServerQuery` picker sends each
 change of its query to the server, keeps showing the last answer, and drops answers to
 older queries, the same staleness rule as everywhere else.
 
+### 5.11 Splits and a REPL beside the code (ADR-37, ADR-38)
+
+**Splits** keep the old state for the focused window: `edDoc` and `edView` are still
+"what you are editing". The other windows are only `Window { winDoc, winView,
+winSelection }`, and the screen is a tree:
+
+```haskell
+data Layout = Leaf Int | Split Axis [Layout]   -- Axis: Beside (:vsplit) | Stacked (:hsplit)
+```
+
+- **Focusing** a window swaps it with the focused one: the focused window is put
+  away as a `Window`, and the other one's document becomes current, with its view and
+  selection. No action had to change.
+- **Drawing** an unfocused window uses the same components: `windowEditor` builds the
+  editor *as that window shows it*, and the gutter, text area and status line draw it
+  as usual.
+
+**The REPL plugin** turns a buffer into a terminal-like transcript:
+- The document remembers where the input starts.
+- Output from the process is inserted *before* that point, so it never interrupts
+  what you type. `ret` sends what follows it.
+- Code sent from a file (`space e`) is echoed into the transcript, because a REPL
+  reading a pipe does not echo.
+
+**Using it for testing while developing** (him itself is the example):
+
+```toml
+# ~/.config/him/config.toml
+[repl.haskell]
+args = ["ghci", "him:lib", "him:test:him-test"]   # the library and the tests
+```
+
+1. Open `src/Him/Window.hs`, then `:repl`. `stack ghci` starts in the project root
+   and loads everything.
+2. Write a function, select a call to it (`x`, or `v` and a motion), and press
+   `space e`. The result appears in the REPL window. Several lines are wrapped in
+   `:{ … :}` for you.
+3. Save (`:w`). The REPL runs `:reload` by itself, so the next `space e` uses the new
+   code.
+4. `:repl-send main` runs the whole test suite. To run one group, select an
+   expression such as `runTests [group "w" windowTestsPure]` and press `space e`.
+5. `C-c` (in the REPL buffer) or `:repl-interrupt` stops a runaway evaluation.
+
+**▶ Task 7b.** Write `insertOutput` for a transcript. Given the input start `p` and
+some output text, insert the text at `p`. Then move every cursor at or after `p`, so
+that one at the end of the typed input stays at the end. Test it with output that has
+no newline, and with output that has two.
+
+---
+
 ## Part 6: Benchmarking against Vim and Helix
 
 You can't optimize what you don't measure, and you can't compare editors with

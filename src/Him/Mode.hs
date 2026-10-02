@@ -22,6 +22,8 @@ data Mode
     -- itself: it names the keymap layer used there (see
     -- 'Him.Editor.keymapMode').
     Directory
+  | -- | Insert mode in a REPL buffer: a keymap layer (@ret@ sends the input).
+    Repl
   deriving stock (Eq, Ord, Show, Enum, Bounded)
 
 -- | Short label for the status line.
@@ -34,3 +36,4 @@ modeLabel = \case
   Picking -> "PIK"
   Directory -> "DIR"
   Completing -> "INS"
+  Repl -> "INS"

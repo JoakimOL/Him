@@ -15,6 +15,8 @@ import Him.Document (DocKind (..), Document (..))
 import Him.Effect (Effect (..), Job (..), JobResult (..))
 import Him.Editor
 import Him.Language (detectLanguage, langName, languages)
+import Him.Repl (ReplState (..))
+import Data.List (find)
 import Him.Syntax
 import Him.View (View (..))
 import Him.Window (Window (..))
@@ -39,6 +41,11 @@ syntaxHousekeeping = do
     SyntaxUnknown -> case (docKind d, docPath d) of
       (TextDoc, Just path)
         | Just language <- detectLanguage languages path (Buffer.lineAt 0 (docBuffer d)) -> do
+            setSyntax si {siStatus = SyntaxStarting, siLanguage = Just (langName language)}
+            request (StartJob (SyntaxStart (docId d) language))
+      -- A REPL's transcript is highlighted as its language.
+      (ReplDoc rs, _)
+        | Just language <- find ((== rsLanguage rs) . langName) languages -> do
             setSyntax si {siStatus = SyntaxStarting, siLanguage = Just (langName language)}
             request (StartJob (SyntaxStart (docId d) language))
       _ -> setSyntax si {siStatus = SyntaxNone}

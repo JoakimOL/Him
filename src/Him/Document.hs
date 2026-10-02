@@ -19,6 +19,7 @@ import Him.Buffer (Buffer, clampPos)
 import Him.GitState (GitInfo (..))
 import Him.History (History, Snapshot (..), beginChange, emptyHistory)
 import Him.Lsp.State (DocLsp (..))
+import Him.Repl (ReplState (..))
 import Him.Syntax (SyntaxInfo, noSyntax)
 import Him.Position (Pos (..))
 import Him.Selection (Range (..), Selection, mapRanges, point, single)
@@ -32,6 +33,8 @@ data DocKind
   | -- | A directory listing (see "Him.Directory"): the entry shown on each
     -- line, starting at line 1 (line 0 is the header).
     DirectoryDoc ![DirEntry]
+  | -- | A REPL's transcript and input (see "Him.Repl").
+    ReplDoc !ReplState
   deriving stock (Eq, Show)
 
 data DirEntry = DirEntry
@@ -45,6 +48,7 @@ isReadOnly :: Document -> Bool
 isReadOnly d = case docKind d of
   DirectoryDoc _ -> True
   TextDoc -> False
+  ReplDoc _ -> False
 
 data Document = Document
   { docId :: !Int
@@ -97,7 +101,9 @@ newDocument path buf =
     }
 
 displayName :: Document -> Text
-displayName = maybe "[scratch]" T.pack . docPath
+displayName d = case docKind d of
+  ReplDoc rs -> "[repl: " <> rsLanguage rs <> "]"
+  _ -> maybe "[scratch]" T.pack (docPath d)
 
 -- | A new text and selection as one undoable change: the old ones are kept
 -- for undo, and the version goes up (so highlighting, git and the language

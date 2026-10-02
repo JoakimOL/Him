@@ -27,6 +27,7 @@ import Him.Json (Value)
 import Him.Lsp.State (ServerInfo)
 import Him.Picker (PickerItem)
 import Him.FileTree (WalkOptions)
+import Him.Repl (ReplConfig)
 
 data Effect
   = -- | Run another action, e.g. the one chosen in the command palette.
@@ -55,6 +56,13 @@ data Effect
     PluginCommand !(Maybe (Text, Bool))
   | -- | Stop every language server (the LSP plugin was switched off).
     LspStopAll
+  | -- | Start the REPL of a language for a REPL buffer (by document id),
+    -- in the project of a file.
+    ReplStart !Int !Text !FilePath
+  | -- | Send text to a REPL; 'True' wraps code of several lines first.
+    ReplSend !Int !Bool !Text
+  | ReplInterrupt !Int
+  | ReplStop !Int
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were
@@ -121,6 +129,11 @@ data JobResult
   | -- | A message from a server (a reply or a notification).
     LspMessage !Text !Value
   | LspExited !Text
+  | -- | A REPL runs: buffer id, how it was started, where.
+    ReplStarted !Int !ReplConfig !FilePath
+  | ReplOutput !Int !Text
+  | -- | It stopped (or could not start), and why.
+    ReplExited !Int !Text
   | -- | A file read for the preview, or why not.
     PreviewLoaded !FilePath !(Either Text Buffer)
   deriving stock (Eq, Show)

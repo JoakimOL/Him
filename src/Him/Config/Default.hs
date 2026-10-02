@@ -34,6 +34,7 @@ import Him.Actions.Motion qualified as Motion
 import Him.Actions.Picker qualified as Picker
 import Him.Actions.Search qualified as Search
 import Him.Actions.Window qualified as Window
+import Him.Actions.Repl qualified as Repl
 import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))
@@ -42,7 +43,7 @@ import Him.Syntax.TreeSitter (treeSitter)
 
 -- | Every plugin there is (ADR-35), in the order their hooks run.
 plugins :: [Plugin]
-plugins = [Git.gitPlugin, Lsp.lspPlugin]
+plugins = [Git.gitPlugin, Lsp.lspPlugin, Repl.replPlugin]
 
 -- | All of them switched on (the default).
 allPlugins :: Set.Set Text

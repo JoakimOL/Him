@@ -125,6 +125,7 @@ fromScopes name scopes =
             Picking -> ("picker", "normal")
             Directory -> ("directory", "normal")
             Completing -> ("completion", "insert")
+            Repl -> ("repl", "insert")
        in statusLine `patchStyle` fromMaybe (get ("ui.statusline." <> base)) (exact ("ui.statusline." <> own))
     gitSign kind staged =
       let scope = case kind of

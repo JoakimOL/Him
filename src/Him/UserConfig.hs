@@ -54,6 +54,7 @@ import Him.Lsp.Config (ServerConfig (..), ServerTable, defaultServers)
 import Him.Mode (Mode (..))
 import Him.Options
 import Him.Paths (configPath)
+import Him.Repl (ReplConfig (..), ReplTable, defaultRepls)
 import Him.Toml (parseToml, quoteKey, quoteString)
 import System.Directory (doesFileExist)
 
@@ -65,6 +66,7 @@ data UserConfig = UserConfig
   , ucPlugins :: !(Map Text Bool)
   -- ^ Plugins switched on or off (@[plugins]@); the rest are on.
   , ucServers :: !(Map Text ServerOverride)
+  , ucRepls :: !(Map Text ReplOverride)
   }
   deriving stock (Eq, Show)
 
@@ -80,7 +82,7 @@ data ServerOverride = ServerOverride
   deriving stock (Eq, Show)
 
 emptyUserConfig :: UserConfig
-emptyUserConfig = UserConfig Map.empty [] Nothing Map.empty Map.empty
+emptyUserConfig = UserConfig Map.empty [] Nothing Map.empty Map.empty Map.empty
 
 -- | The sections of @[keys]@, by mode.
 modeSections :: [(Text, Mode)]
@@ -92,6 +94,7 @@ modeSections =
   , ("picker", Picking)
   , ("directory", Directory)
   , ("completion", Completing)
+  , ("repl", Repl)
   ]
 
 -- | Read the config file; a missing file is an empty config.
@@ -120,7 +123,26 @@ parseUserConfig src = do
       ("keys", v) -> keys v
       ("language-server", v) -> servers v
       ("plugins", v) -> pluginSection v
-      (other, _) -> Left ["unknown section [" <> other <> "] (known: editor, keys, language-server, plugins)"]
+      ("repl", v) -> repls v
+      (other, _) -> Left ["unknown section [" <> other <> "] (known: editor, keys, language-server, repl, plugins)"]
+    repls v = do
+      langs <- table "[repl]" v
+      overrides <- collect (map repl langs)
+      Right (\c -> c {ucRepls = Map.fromList overrides})
+    repl (lang, v) = do
+      kvs <- table ("[repl." <> lang <> "]") v
+      fs <- collect (map (replKey lang) kvs)
+      Right (lang, foldr ($) (ReplOverride Nothing Nothing Nothing Nothing Nothing Nothing True) fs)
+    replKey lang = \case
+      ("command", JString t) -> Right (\o -> o {roCommand = Just (T.unpack t)})
+      ("args", JArray xs) | Just ss <- traverse asText xs -> Right (\o -> o {roArgs = Just (map T.unpack ss)})
+      ("roots", JArray xs) | Just ss <- traverse asText xs -> Right (\o -> o {roRoots = Just (map T.unpack ss)})
+      ("multiline", JArray [JString a, JString b]) -> Right (\o -> o {roMultiline = Just (Just (a, b))})
+      ("multiline", JArray []) -> Right (\o -> o {roMultiline = Just Nothing})
+      ("reload", JString t) -> Right (\o -> o {roReload = Just (if T.null t then Nothing else Just t)})
+      ("reload-on-save", JBool b) -> Right (\o -> o {roReloadOnSave = Just b})
+      ("enabled", JBool b) -> Right (\o -> o {roEnabled = b})
+      (k, _) -> Left ["repl." <> lang <> "." <> k <> ": unknown setting or wrong type (command: string, args/roots: list of strings, multiline: [start, end] or [], reload: string, reload-on-save/enabled: true/false)"]
     pluginSection v = do
       kvs <- table "[plugins]" v
       ps <- collect (map pluginKey kvs)
@@ -190,7 +212,45 @@ applyUserConfigWith :: Set.Set Text -> UserConfig -> Either Text Config
 applyUserConfigWith enabled uc = do
   config <- configWith enabled (ucBindings uc)
   servers <- applyServers (ucServers uc) defaultServers
-  pure config {cfgServers = servers}
+  repls <- applyRepls (ucRepls uc) defaultRepls
+  pure config {cfgServers = servers, cfgRepls = repls}
+
+-- | Changes to a language's REPL; a language without a built-in one needs
+-- a command.
+data ReplOverride = ReplOverride
+  { roCommand :: !(Maybe FilePath)
+  , roArgs :: !(Maybe [String])
+  , roRoots :: !(Maybe [FilePath])
+  , roMultiline :: !(Maybe (Maybe (Text, Text)))
+  , roReload :: !(Maybe (Maybe Text))
+  , roReloadOnSave :: !(Maybe Bool)
+  , roEnabled :: !Bool
+  }
+  deriving stock (Eq, Show)
+
+applyRepls :: Map Text ReplOverride -> ReplTable -> Either Text ReplTable
+applyRepls overrides table0 = foldr step (Right table0) (Map.toList overrides)
+  where
+    step (lang, o) acc = do
+      table <- acc
+      if not (roEnabled o)
+        then Right (Map.delete lang table)
+        else case (Map.lookup lang table, roCommand o) of
+          (Nothing, Nothing) -> Left ("repl." <> lang <> ": no built-in REPL, so a command is needed")
+          (base, cmd) ->
+            let b = fromMaybe (ReplConfig "" [] [] Nothing Nothing False) base
+             in Right $
+                  Map.insert
+                    lang
+                    ReplConfig
+                      { rcCommand = fromMaybe (rcCommand b) cmd
+                      , rcArgs = fromMaybe (rcArgs b) (roArgs o)
+                      , rcRoots = fromMaybe (rcRoots b) (roRoots o)
+                      , rcMultiline = fromMaybe (rcMultiline b) (roMultiline o)
+                      , rcReload = fromMaybe (rcReload b) (roReload o)
+                      , rcReloadOnSave = fromMaybe (rcReloadOnSave b) (roReloadOnSave o)
+                      }
+                    table
 
 applyServers :: Map Text ServerOverride -> ServerTable -> Either Text ServerTable
 applyServers overrides table0 = foldr step (Right table0) (Map.toList overrides)
@@ -248,6 +308,7 @@ defaultConfigText =
       <> [T.justifyLeft 34 ' ' (plName p <> " = true") <> " # " <> plDoc p | p <- plugins]
       <> concatMap modeBlock modeSections
       <> concatMap serverBlock (Map.toList defaultServers)
+      <> concatMap replBlock (Map.toList defaultRepls)
       <> [ ""
          , "# Every action, by group (<required> and [optional] arguments):"
          ]
@@ -275,6 +336,7 @@ defaultConfigText =
     modeNote = \case
       Select -> "   # select mode also has every normal-mode key"
       Directory -> "   # in a directory listing; also every normal-mode key"
+      Repl -> "   # insert mode in a REPL buffer; also every insert-mode key"
       Completing -> "   # insert mode with the completion menu open; also every insert-mode key"
       _ -> ""
     describe inv = case parseInvocation inv >>= \i -> maybe (Left "") Right (lookupAction (invAction i) registry) of
@@ -292,5 +354,15 @@ defaultConfigText =
       , "args = " <> list (scArgs sc)
       , "roots = " <> list (scRoots sc) <> "   # files that mark a project's root"
       , "language-id = " <> quoteString (scLanguageId sc)
+      ]
+    replBlock (lang, rc) =
+      [ ""
+      , "[repl." <> quoteKey lang <> "]   # :repl, space e (send the selection), space E (reload)"
+      , "command = " <> quoteString (T.pack (rcCommand rc))
+      , "args = " <> list (rcArgs rc)
+      , "roots = " <> list (rcRoots rc) <> "   # where it runs: the project's root"
+      , "multiline = " <> maybe "[]" (\(a, b) -> "[" <> quoteString a <> ", " <> quoteString b <> "]") (rcMultiline rc) <> "   # put around code of several lines"
+      , "reload = " <> quoteString (fromMaybe "" (rcReload rc))
+      , "reload-on-save = " <> (if rcReloadOnSave rc then "true" else "false")
       ]
     list xs = "[" <> T.intercalate ", " (map (quoteString . T.pack) xs) <> "]"

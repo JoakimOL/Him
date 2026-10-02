@@ -8,6 +8,7 @@ module Him.Runtime
   , perform
   , shutdown
   , setServerTable
+  , setReplTable
   ) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
@@ -17,12 +18,14 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Lsp.Config (ServerConfig (..), ServerTable, serverFor)
 import Him.Lsp.Server (Server, findRoot, sendMessage, startServer, stopServer)
+import Him.Repl (ReplConfig (..), ReplTable)
+import Him.Repl.Process (ReplProcess, interruptRepl, sendRepl, startRepl, stopRepl)
 import Him.Lsp.State (ServerInfo)
 import Control.Exception (IOException, try)
 import Data.ByteString qualified as BS
 import Him.Document (Document (..))
 import Him.File (loadDocument)
-import System.Directory (getFileSize, makeAbsolute)
+import System.Directory (getCurrentDirectory, getFileSize, makeAbsolute)
 import System.IO (IOMode (..), withBinaryFile)
 import Control.Exception (evaluate)
 import Data.Foldable (toList)
@@ -50,23 +53,31 @@ data Runtime = Runtime
   -- ^ Highlighters by document id. The editor only sees their results.
   , rtServerTable :: IORef ServerTable
   -- ^ Which server serves which language (from the config).
+  , rtReplTable :: IORef ReplTable
+  , rtRepls :: MVar (Map Int ReplProcess)
+  -- ^ Running REPLs, by the id of their buffer.
   , rtServers :: MVar (Map Text (MVar (Either Text (Server, ServerInfo))))
   -- ^ Language servers by key; the inner variable is filled once the
   -- server has started (or failed to).
   }
 
-newRuntime :: [SyntaxProvider] -> ServerTable -> (Event -> IO ()) -> IO Runtime
-newRuntime providers table post = do
+newRuntime :: [SyntaxProvider] -> ServerTable -> ReplTable -> (Event -> IO ()) -> IO Runtime
+newRuntime providers table repls post = do
   jobs <- newMVar Map.empty
   sessions <- newMVar Map.empty
   tableRef <- newIORef table
+  replTable <- newIORef repls
+  replProcesses <- newMVar Map.empty
   servers <- newMVar Map.empty
-  pure (Runtime post jobs providers sessions tableRef servers)
+  pure (Runtime post jobs providers sessions tableRef replTable replProcesses servers)
 
 -- | Use another server table from now on (after the config is reloaded;
 -- running servers keep running).
 setServerTable :: Runtime -> ServerTable -> IO ()
 setServerTable rt = writeIORef (rtServerTable rt)
+
+setReplTable :: Runtime -> ReplTable -> IO ()
+setReplTable rt = writeIORef (rtReplTable rt)
 
 -- | Carry out an effect that needs the runtime; others are ignored (the
 -- main loop handles them before).
@@ -91,14 +102,38 @@ perform rt = \case
     -- Forget it first, so a restart starts a new one.
     stopped <- modifyMVar (rtServers rt) (\servers -> pure (Map.delete key servers, Map.lookup key servers))
     mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) stopped
+  ReplStart doc language file -> do
+    -- Started at once (not as a job), so text sent right after reaches it.
+    table <- readIORef (rtReplTable rt)
+    case Map.lookup language table of
+      Nothing -> rtPost rt (EvJob (ReplExited doc ("no REPL for " <> language <> " (add [repl." <> language <> "] to the config)")))
+      Just config -> do
+        absolute <- if null file then getCurrentDirectory else makeAbsolute file
+        root <- if null file then pure absolute else findRoot (rcRoots config) absolute
+        stopped <- modifyMVar (rtRepls rt) (\m -> pure (Map.delete doc m, Map.lookup doc m))
+        mapM_ stopRepl stopped
+        let post = rtPost rt . EvJob
+        startRepl config root (post . ReplOutput doc) (\why -> modifyMVar_ (rtRepls rt) (pure . Map.delete doc) >> post (ReplExited doc why)) >>= \case
+          Left e -> post (ReplExited doc e)
+          Right rp -> do
+            modifyMVar_ (rtRepls rt) (pure . Map.insert doc rp)
+            post (ReplStarted doc config root)
+  ReplSend doc asCode text -> withRepl rt doc (\rp -> sendRepl rp asCode text)
+  ReplInterrupt doc -> withRepl rt doc interruptRepl
+  ReplStop doc -> modifyMVar (rtRepls rt) (\m -> pure (Map.delete doc m, Map.lookup doc m)) >>= mapM_ stopRepl
   LspStopAll -> do
     stopped <- modifyMVar (rtServers rt) (\servers -> pure (Map.empty, Map.elems servers))
     mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) stopped
   _ -> pure ()
 
--- | Stop every language server (when the editor quits).
+-- | Run something with a REPL, if it is running.
+withRepl :: Runtime -> Int -> (ReplProcess -> IO ()) -> IO ()
+withRepl rt doc k = Map.lookup doc <$> readMVar (rtRepls rt) >>= mapM_ k
+
+-- | Stop every language server and REPL (when the editor quits).
 shutdown :: Runtime -> IO ()
 shutdown rt = do
+  readMVar (rtRepls rt) >>= mapM_ stopRepl
   servers <- readMVar (rtServers rt)
   mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) (Map.elems servers)
 

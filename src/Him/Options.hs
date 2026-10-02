@@ -96,6 +96,7 @@ cursorKindFor o = \case
   Directory -> optCursorNormal o
   Insert -> optCursorInsert o
   Completing -> optCursorInsert o
+  Repl -> optCursorInsert o
   Select -> optCursorSelect o
   CmdLine -> optCursorCommand o
   Picking -> optCursorCommand o

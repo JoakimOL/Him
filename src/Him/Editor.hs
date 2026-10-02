@@ -55,7 +55,7 @@ import Him.View (View, initialView)
 import Him.Window
 import Data.IntMap.Strict (IntMap)
 import Data.IntMap.Strict qualified as IntMap
-import Data.List (find, findIndex)
+import Data.List (findIndex)
 import Data.Maybe (fromMaybe)
 
 data Severity = Info | Error
@@ -230,6 +230,7 @@ keymapMode :: Editor -> Mode
 keymapMode ed = case (edMode ed, docKind (edDoc ed)) of
   (Normal, DirectoryDoc _) -> Directory
   (Insert, _) | Just _ <- edCompletion ed -> Completing
+  (Insert, ReplDoc _) -> Repl
   (m, _) -> m
 
 -- | A document that is open but not shown, with its scroll position.
@@ -423,8 +424,9 @@ windowEditor :: Editor -> Int -> Editor
 windowEditor ed w = case IntMap.lookup w (edWindows ed) of
   Nothing -> ed
   Just win ->
-    let d = fromMaybe (edDoc ed) (find ((== winDoc win) . docId) (allDocuments ed))
-     in ed
+    let shown = maybe ed (`gotoBuffer` ed) (findIndex ((== winDoc win) . docId) (allDocuments ed))
+        d = edDoc shown
+     in shown
           { edDoc = d {docSelection = clampSelection (docBuffer d) (winSelection win)}
           , edView = winView win
           , edMode = Normal

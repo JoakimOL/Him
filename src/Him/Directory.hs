@@ -74,7 +74,7 @@ listingDocument dir hidden entries =
 listingDir :: Document -> Maybe FilePath
 listingDir d = case docKind d of
   DirectoryDoc _ -> docPath d
-  TextDoc -> Nothing
+  _ -> Nothing
 
 -- | The entry on a line of a listing.
 entryAt :: Int -> Document -> Maybe DirEntry
@@ -100,4 +100,4 @@ entriesIn a b d = [e | l <- [max 2 a .. b], Just e <- [entryAt l d]]
 selectLine :: Int -> Document -> Document
 selectLine l d = case docKind d of
   DirectoryDoc es -> d {docSelection = single (point (Pos (max 1 (min (length es) l)) 0))}
-  TextDoc -> d
+  _ -> d

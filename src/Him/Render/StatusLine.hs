@@ -6,7 +6,8 @@ module Him.Render.StatusLine
 
 import Data.Text qualified as T
 import Him.Document (Document (..), displayName)
-import Him.Editor (Editor (..), bufferIndex, keymapMode)
+import Him.Editor (Editor (..), allDocuments, keymapMode)
+import Data.List (findIndex)
 import Him.Key (showKeys)
 import Him.Mode (modeLabel)
 import Him.Position (Pos (..))
@@ -26,9 +27,12 @@ drawStatusLine theme focused ed rect =
     doc = edDoc ed
     mode = if focused then " " <> modeLabel (keymapMode ed) <> " " else " "
     dirty = if docDirty doc then " [+]" else ""
-    bufs = case bufferIndex ed of
+    -- The shown document's place in the buffer list (an unfocused window
+    -- shows one that need not be the current buffer).
+    docs = allDocuments ed
+    bufs = case (findIndex ((== docId doc) . docId) docs, length docs) of
       (_, 1) -> ""
-      (i, n) -> "[" <> T.pack (show (i + 1)) <> "/" <> T.pack (show n) <> "] "
+      (i, n) -> "[" <> maybe "?" (T.pack . show . (+ 1)) i <> "/" <> T.pack (show n) <> "] "
     -- Shorten the file name from the left so the dirty marker and the right
     -- section always fit.
     room = rectWidth rect - T.length mode - T.length right - T.length dirty - T.length bufs - 2
