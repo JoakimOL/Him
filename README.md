@@ -1,5 +1,7 @@
 # him
 
+*This is just ai slop, but i kinda like the product*
+
 A modal, selection-first (Helix-style) text editor for the terminal, written in Haskell
 using only GHC boot libraries.
 
