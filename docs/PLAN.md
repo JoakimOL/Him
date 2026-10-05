@@ -1320,6 +1320,10 @@ xmonad. Releases include a contrib collection that is off until switched on.
     settings (TOML has no room for both). Unknown settings are errors.
   - `defaultConfig` has the built-in plugins on.
   - The dumped config lists every plugin and the settings it takes.
+- **Switching on while running:** a plugin switched on while the editor runs gets
+  `BufferOpened` for every open buffer, then `BufferEntered` for the focused one, as
+  it would have at startup. Without this, `wordcount` ignored buffers that were
+  already open.
 - **`:plugins`** opens a picker of every plugin, on or off, with its doc. `ret`
   (`plugin_toggle`) switches the chosen ones; `tab` marks several.
 - **Contrib** (`Him.Contrib`): plugins import only `Him.Plugin`. There are two so far.
@@ -1645,7 +1649,7 @@ registers and the system clipboard (ADR-49), cycling the `:` line's completions 
 `tab` / `S-tab`, previewing themes as `:theme <name>` is typed, picker actions and
 marks (ADR-48) and the jumplist (ADR-47).
 
-- **State:** milestones 1–48 (§5) and ADR-1…52 (§3). `make test` runs 648 tests (pure
+- **State:** milestones 1–48 (§5) and ADR-1…52 (§3). `make test` runs 649 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).

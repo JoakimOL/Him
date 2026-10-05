@@ -27,7 +27,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Him.App (handleEvent)
-import Him.Session (housekeeping)
+import Him.Session (housekeeping, switchPlugins)
 import Him.Config (Config (..), Plugin (..), plugin)
 import Him.Config.Default (defaultConfig)
 import Him.Document
@@ -86,6 +86,8 @@ pluginApiTests = do
   forgot <- keysWith contrib "del" picked
   remembered <- readFile (stateDir <> "/plugins/recent-files/files")
   pluginsPicker <- ex contrib "plugins" start
+  -- Switched on while running: the open buffers are counted at once.
+  switchedOn <- execStateT (switchPlugins config0 contrib) =<< execStateT (housekeeping config0) contribStart
   toggled <- keysWith contrib "ret" pluginsPicker
   -- The API on its own, for a plugin named t.
   let ctx = Ctx "t" (0 :: Int)
@@ -145,6 +147,8 @@ pluginApiTests = do
     , test "wordcount: the count follows edits; too long a buffer is not counted" $
         let segs e = map segText (segmentsFor (docId (edDoc e)) (edPluginUI e))
          in assertEqual (["3 words"], ["4 words"], []) (segs started, segs typed, segs long)
+    , test "a plugin switched on while running hears about the open buffers" $
+        assertEqual ["3 words"] (map segText (segmentsFor (docId (edDoc switchedOn)) (edPluginUI switchedOn)))
     , test "recent-files: space o lists the others, del forgets them, the list is kept in a file" $
         assertEqual
           (Just ["him-test-recent-a.txt"], ["him-test-recent-b.txt"], Nothing)

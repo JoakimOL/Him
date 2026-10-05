@@ -218,6 +218,11 @@ switchPlugins old new = do
     modify' (\e -> e {edPluginUI = Map.delete (plName p) (edPluginUI e)})
     request (ProcessStopAll (plName p))
   mapM_ plEnable added
+  -- A plugin switched on hears about what is open already, as it would
+  -- have at startup (ADR-51).
+  ed <- get
+  let greeting = map (PE.BufferOpened . docId) (allDocuments ed) <> [PE.BufferEntered (docId (edDoc ed))]
+  sequence_ [plEvent p ev | p <- added, ev <- greeting]
   modify' (withPlugins new)
   housekeeping new
 
