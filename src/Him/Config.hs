@@ -74,6 +74,10 @@ data Plugin = Plugin
   -- ^ Default keys, added to the core's (the user's go on top of both).
   , plExCommands :: [ExCommand]
   , plPrefixNames :: [([Key], Text)]
+  , plOptions :: [(Text, Text)]
+  -- ^ Its settings under @[plugins.<name>]@: key and what it does (ADR-51).
+  , plDefaultOn :: Bool
+  -- ^ On unless the config says otherwise (contrib plugins are off, ADR-51).
   , plSigns :: Bool
   -- ^ It draws in the gutter's sign lane (the lane is left out when no
   -- enabled plugin does).
@@ -94,7 +98,7 @@ data Plugin = Plugin
 
 -- | A plugin that adds nothing yet; fill in what it has.
 plugin :: Text -> Text -> Plugin
-plugin name doc = Plugin name doc [] Map.empty [] [] False (pure ()) (pure ()) (const (pure ())) (const (pure ())) (pure ()) (pure ())
+plugin name doc = Plugin name doc [] Map.empty [] [] [] True False (pure ()) (pure ()) (const (pure ())) (const (pure ())) (pure ()) (pure ())
 
 -- | Per mode, @(keys, action invocation)@ pairs such as
 -- @("g g", "goto_file_start")@ or @("C-d", "move_line_down 20")@. Within a

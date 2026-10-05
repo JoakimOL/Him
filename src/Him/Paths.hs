@@ -4,6 +4,7 @@ module Him.Paths
   ( configPath
   , runtimeDirs
   , themeDirs
+  , stateDir
   ) where
 
 import Control.Exception (IOException, try)
@@ -21,6 +22,17 @@ configPath =
       lookupEnv "XDG_CONFIG_HOME" >>= \case
         Just xdg | not (null xdg) -> pure (xdg </> "him" </> "config.toml")
         _ -> (</> ".config/him/config.toml") <$> getHomeDirectory
+
+-- | Where him keeps what it remembers between runs (plugins' files):
+-- @$HIM_STATE@, @$XDG_STATE_HOME/him@ or @~/.local/state/him@.
+stateDir :: IO FilePath
+stateDir =
+  lookupEnv "HIM_STATE" >>= \case
+    Just p | not (null p) -> pure p
+    _ ->
+      lookupEnv "XDG_STATE_HOME" >>= \case
+        Just xdg | not (null xdg) -> pure (xdg </> "him")
+        _ -> (</> ".local/state/him") <$> getHomeDirectory
 
 -- | The runtime directories, in order: @$HIM_RUNTIME@, him's own, then
 -- Helix's.

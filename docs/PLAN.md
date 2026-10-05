@@ -1258,7 +1258,8 @@ pure where they can be, and they are meant to be what `Him.Plugin` exposes.
   - **Clean-up:** a closed document's entries are dropped, and a plugin that is
     switched off loses its `PluginUI`.
 - **Events** (`Him.PluginEvent`) cover a buffer being opened, closed, entered,
-  changed or saved, and a mode change. Housekeeping compares the documents (version,
+  changed or saved, a mode change, and the cursor moving (`CursorMoved`, added with
+  ADR-51). Housekeeping compares the documents (version,
   saves), the mode and the focused document with `edSeen`, instead of each code path
   raising them. They reach `plEvent` of every enabled plugin, then the effects those
   handlers ask for run. At startup, every document is "opened".
@@ -1278,6 +1279,63 @@ pure where they can be, and they are meant to be what `Him.Plugin` exposes.
 paths, easy to miss one); a plugin drawing into the frame itself (impure, and plugins
 could overwrite each other); signs per line instead of spans (a long untracked file
 would mean a map entry per line on every diff).
+
+**ADR-51: `Him.Plugin`, the public plugin API, and the contrib collection.**
+These are phases 2 and 3 of `docs/PLUGIN-API.md`. Plugins are compiled in, as in
+xmonad. Releases include a contrib collection that is off until switched on.
+- **`PluginSpec s`** describes a plugin. It has:
+  - its name, doc and `psInitial` state;
+  - `psDefaultOn`;
+  - actions (`action`, `actionWith` with the `ArgSpec` combinators);
+  - `:` commands (`command`);
+  - default keys and prefix names;
+  - `psOptions` (its settings);
+  - `psSigns`;
+  - `psOnEvent`, `psStart` and `psStop`.
+
+  `Him.Plugin.Host.hostPlugin` turns it into the `Plugin` record. Switching a plugin
+  off also drops its state.
+- **`PluginM s`** is `ReaderT (Ctx s) EditorM`, with `MonadIO`. Its operations:
+  - **Queries:** `BufferInfo`/`WindowInfo` views, `bufferText`, `bufferLine`, `cursor`,
+    `selections`, `mode`, `options`, `diagnostics`.
+  - **Changes:** `openFile` (a jump), `focusBuffer`, `setCursor`, `replaceRange` (one
+    undoable change; the selections move through it with `mapThroughChange`),
+    `runAction`, `notify`/`warn`.
+  - **Processes** (ADR-50): `spawn`, `sendInput`, `stopProcess`.
+  - **UI:** `setSegments`, `setSigns`, `setAnnotations`, `showPopup`, `openScratch`
+    (a new read-only `ScratchDoc`, made once and then replaced), `openPicker` with
+    `Item`s whose `Target` is a value, a file or a position (files and positions get a
+    preview and work with `picker_open`), `chosenItems`, `closePicker`.
+  - **Settings:** `option`, `optionText`/`Int`/`Bool`, read from `[plugins.<name>]`.
+  - **Files kept between runs:** `stateFile`, under `Him.Paths.stateDir`
+    (`$HIM_STATE`, `$XDG_STATE_HOME/him`, `~/.local/state/him`).
+  - **Escape hatch:** `Him.Plugin.Internal.liftEditor`, for built-in code only.
+- **State** of any type lives in the editor as a `Dynamic` per plugin
+  (`Him.PluginState`). Its `Eq`/`Show` instances look only at which plugins have
+  state, which keeps `Editor`'s instances. Keeping state in the editor rather than in
+  a global `IORef` means each editor, and each test, has its own.
+- **Config:**
+  - A plugin is on by default if its `plDefaultOn` says so. `[plugins]` takes
+    `name = true|false`, or a `[plugins.name]` table with `enabled` and the plugin's
+    settings (TOML has no room for both). Unknown settings are errors.
+  - `defaultConfig` has the built-in plugins on.
+  - The dumped config lists every plugin and the settings it takes.
+- **`:plugins`** opens a picker of every plugin, on or off, with its doc. `ret`
+  (`plugin_toggle`) switches the chosen ones; `tab` marks several.
+- **Contrib** (`Him.Contrib`): plugins import only `Him.Plugin`. There are two so far.
+  - **`wordcount`:** a segment per buffer, recounted on change, with `max-lines`
+    (default 10000) because counting follows every change.
+  - **`recent-files`:** `space o` / `:recent` opens a picker of the files entered
+    lately, kept in its state file, with `max` (default 100). `ret` opens the chosen
+    files and `del` forgets them.
+- **Not done:** no built-in plugin moved onto the API. git, LSP, REPL and chat depend
+  on their own jobs and document fields, so a port would mostly be `liftEditor`. The
+  contrib plugins exercised the API instead, and the missing `CursorMoved` event came
+  out of writing the tutorial's task.
+
+*Alternatives:* a global `IORef` per plugin (state shared between editors and tests);
+`.so` loading or plugin processes (ruled out in `docs/PLUGIN-API.md`); a typed options
+record per plugin (more machinery than reading `Value`s with defaults).
 
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
@@ -1321,6 +1379,7 @@ Pure modules are marked *(pure)*.
 | `Him.EditorM` | The monad actions run in and its helpers (`edit`, `motion`, `request`, `info`). |
 | `Him.Action`, `Him.Invocation` | Named actions with typed parameters; invocations as text (ADR-17). |
 | `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`, `Jump` (the jumplist and `jumping`); the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
+| `Him.Plugin` (+ `.Types`, `.Host`, `.Internal`), `Him.PluginState`, `Him.Contrib` (+ `.WordCount`, `.RecentFiles`) | The public plugin API, plugins' state, the contrib collection (ADR-51). |
 | `Him.PluginUI`, `Him.PluginEvent`, `Him.Spawn` | What plugins show (segments, signs, annotations); events found by comparing with what was seen; plugin processes (ADR-50) *(the first two pure)*. |
 | `Him.Ex`, `Him.Info`, `Him.Palette`, `Him.Picker` | `:` commands; the info box after a prefix; the command palette; pickers and fuzzy ranking. |
 | `Him.Config`, `Him.Config.Default` | `Config` and the `Plugin` record (ADR-35); the default bindings, actions and plugins; `configWith`. |
@@ -1463,6 +1522,9 @@ Each milestone ends with something runnable, and with this file updated.
   `C-r` in insert mode, `:registers`, `:clear-register` (ADR-49).
 - [x] **46. Plugin building blocks.** Events, plugin processes, status line segments,
   gutter signs and annotations; git's signs and a branch segment on them (ADR-50).
+- [x] **47. `Him.Plugin` and contrib.** The public plugin API, settings under
+  `[plugins.<name>]`, the `:plugins` picker; contrib `wordcount` and `recent-files`
+  (ADR-51).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
@@ -1531,12 +1593,13 @@ them in the editor.
 ## 8. Where to pick up
 
 *Last updated 2026-10-06.* Everything the user asked for so far is done; the latest
-work, on the `plugin-api` branch, is the plugin building blocks (ADR-50), and before it
+work, on the `plugin-api` branch, is the plugin API: building blocks (ADR-50) and `Him.Plugin` with
+contrib (ADR-51); before it
 registers and the system clipboard (ADR-49), cycling the `:` line's completions with
 `tab` / `S-tab`, previewing themes as `:theme <name>` is typed, picker actions and
 marks (ADR-48) and the jumplist (ADR-47).
 
-- **State:** milestones 1–46 (§5) and ADR-1…50 (§3). `make test` runs 639 tests (pure
+- **State:** milestones 1–47 (§5) and ADR-1…51 (§3). `make test` runs 644 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).

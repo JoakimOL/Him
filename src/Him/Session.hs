@@ -22,6 +22,7 @@ import Data.IntSet qualified as IntSet
 import Him.PluginEvent (detectEvents)
 import Him.PluginEvent qualified as PE
 import Him.PluginUI (dropDocuments)
+import Him.Selection (primary, rangeHead)
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
 import Him.Action (Bound (..), bindInvocation)
@@ -43,7 +44,7 @@ import Him.UserConfig (UserConfig (..), applyUserConfig, configPath, defaultConf
 import Control.Monad.IO.Class (liftIO)
 import System.Directory (doesFileExist)
 import Him.Palette (paletteItems)
-import Him.Picker (newPicker)
+import Him.Picker (PickTarget (..), Picker (..), newPicker, pickerItem)
 import Him.Mode (Mode (..))
 import Him.Editor
 import Him.Event (Event (..))
@@ -181,7 +182,7 @@ pluginEvents :: Config -> Command.EditorM ()
 pluginEvents config = do
   ed <- get
   let docs = allDocuments ed
-      (events, seen) = detectEvents docs (docId (edDoc ed)) (edMode ed) (edSeen ed)
+      (events, seen) = detectEvents docs (docId (edDoc ed)) (rangeHead (primary (docSelection (edDoc ed)))) (edMode ed) (edSeen ed)
   modify' (\e -> e {edSeen = seen})
   if null events
     then pure ()
@@ -262,10 +263,13 @@ runEffects config = go (8 :: Int)
       PluginCommand (Just _) -> pure ()
       ClipboardSet c vs -> Register.clipboardSet (cfgClipboardProviders config) c vs
       ClipboardGet c use -> Register.clipboardGet (cfgClipboardProviders config) c use
+      -- Every plugin, on or off; ret switches the chosen ones (ADR-51).
       PluginCommand Nothing ->
         let on = map plName (cfgPlugins config)
-            describe p = plName p <> (if plName p `elem` on then " (on)" else " (off)")
-         in Command.info ("plugins: " <> T.intercalate ", " (map describe plugins))
+            item p
+              | plName p `elem` on = pickerItem (plName p) (PickValue ("-" <> plName p)) ("on   " <> plDoc p)
+              | otherwise = pickerItem (plName p) (PickValue ("+" <> plName p)) ("off  " <> plDoc p)
+         in Command.openPicker (newPicker "plugins (ret switches on / off)" (map item plugins)) {pkPrimary = "plugin_toggle"}
       OpenConfig -> do
         path <- liftIO configPath
         exists <- liftIO (doesFileExist path)

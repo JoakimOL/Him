@@ -60,6 +60,7 @@ data ActionGroup
   | GGit
   | GLsp
   | GPrompt
+  | GPlugins
   | GMisc
   deriving stock (Eq, Ord, Show, Enum, Bounded)
 
@@ -77,6 +78,7 @@ groupName = \case
   GGit -> "git"
   GLsp -> "language server"
   GPrompt -> "prompt"
+  GPlugins -> "plugins"
   GMisc -> "misc"
 
 data Action = Action

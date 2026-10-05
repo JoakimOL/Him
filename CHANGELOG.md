@@ -8,6 +8,10 @@ and this project adheres to the
 
 ## Unreleased
 
+- Plugin API (`Him.Plugin`): plugins see buffers and events, run programs, and show status line segments, gutter signs, annotations, pickers and scratch buffers. Settings go under `[plugins.<name>]`.
+- Contrib plugins, off until switched on: `wordcount` (words in the status line) and `recent-files` (`space o`, files opened lately).
+- `:plugins` is a picker: `ret` switches the chosen plugins on or off.
+- The git branch shows in the status line.
 - Pickers: `tab` marks items, `ret` acts on all marked (the file picker opens them all), `del` is the picker's second action (the jumplist removes all marked).
 - Jumplist, as in Helix: `C-o` / `C-i` (`tab`) go back and forward, `C-s` saves the selection, `space j` lists the jumps (`del` removes one); jumps follow edits.
 - Global search (`space /`): search the project's files as you type, with hits streaming into a picker with a preview.

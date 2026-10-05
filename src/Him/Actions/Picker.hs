@@ -76,6 +76,10 @@ actions =
               PickJump i -> goToEntry i
               _ -> pure ()
         _ -> close
+  , simple "plugin_toggle" GPlugins "Switch the chosen plugins on or off (in the :plugins picker)" $ do
+      chosen <- gets (maybe [] chosenItems . edPicker)
+      close
+      sequence_ [request (PluginCommand (Just (name, sign == '+'))) | PickValue v <- map piTarget chosen, Just (sign, name) <- [T.uncons v]]
   , simple "picker_mark" GPrompt "Mark the selected item (or unmark it) and select the next" (onPicker (moveSelection 1 . toggleMark))
   , simple "picker_next" GPrompt "Select the next item" (onPicker (moveSelection 1))
   , simple "picker_previous" GPrompt "Select the previous item" (onPicker (moveSelection (-1)))

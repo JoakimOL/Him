@@ -1095,6 +1095,62 @@ pauses until then.
 of characters of the same kind (word, punctuation, blank) around it. Then make `m a w`
 include the blanks after the word, or before it at the end of a line.
 
+### 5.13 A plugin API, and writing a plugin (ADR-48, ADR-50–51)
+
+Everything so far was compiled in, and so are plugins: like xmonad, him has no plugin
+loader. Instead, `Him.Plugin` is one module that a plugin imports, and the **contrib
+collection** (`src/Him/Contrib/`) is compiled into every release, off until you switch
+a plugin on:
+
+```toml
+[plugins]
+recent-files = true          # space o: the files opened lately
+
+[plugins.wordcount]          # a table instead, for settings
+enabled = true
+max-lines = 20000
+```
+
+`:plugins` lists every plugin in a picker; `ret` switches the chosen ones on or off.
+
+A plugin is a `PluginSpec s`, where `s` is its own state:
+
+```haskell
+wordCount :: PluginSpec (IntMap Int)
+wordCount =
+  (pluginSpec "wordcount" "The number of words in the buffer" IntMap.empty)
+    { psDefaultOn = False
+    , psOnEvent = \case
+        BufferChanged i _ -> recount i
+        _ -> pure ()
+    }
+
+recount :: BufferId -> PluginM (IntMap Int) ()
+recount i = do
+  n <- maybe 0 (length . T.words) <$> bufferText i
+  modifyState (IntMap.insert i n)
+  counts <- getState
+  setSegments [(segment (T.pack (show c) <> " words")) {segDoc = Just b} | (b, c) <- IntMap.toList counts]
+```
+
+The design keeps the editor's state pure:
+- **What a plugin shows is data.** Status line segments, gutter signs and end-of-line
+  annotations live in the `Editor`, and the renderer draws them. A plugin can't draw
+  into the frame, so plugins can't break each other's layout.
+- **Events are found, not raised.** After every key or job result, housekeeping
+  compares the documents' versions and saves, the mode and the focused buffer with what
+  it saw last time. No code path that edits or saves has to remember to tell the
+  plugins.
+- **Actions are named.** A picker names its primary (`ret`) and secondary (`del`)
+  actions, and `tab` marks items for both to act on. A plugin's picker names its own
+  actions, which read `chosenItems`.
+- **State lives in the editor.** It is a `Dynamic` per plugin, so two editors (or two
+  tests) never share it.
+
+**▶ Task 7d.** Write a plugin that shows, as an annotation on the cursor's line, how
+many times the word under the cursor occurs in the buffer. Which event do you need,
+and what happens to your annotation when the cursor moves to another buffer?
+
 ---
 
 ## Part 6: Benchmarking against Vim and Helix

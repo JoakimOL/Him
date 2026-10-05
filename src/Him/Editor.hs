@@ -52,6 +52,8 @@ import Him.Position (Pos (..))
 import Him.Picker (PickTarget (..), Picker)
 import Him.PluginEvent (Seen, unseen)
 import Him.PluginUI (PluginUI, emptyPluginUI)
+import Him.PluginState (PluginStates, noStates)
+import Him.Json (Value)
 import Him.Jumplist (Jump (..), Jumplist (..))
 import Data.Sequence qualified as Seq
 import Him.Search (Direction)
@@ -231,6 +233,10 @@ data Editor = Editor
   -- refer to, so they can follow later edits.
   , edPluginUI :: !(Map Text PluginUI)
   -- ^ What each plugin shows, by plugin name (ADR-50).
+  , edPluginOptions :: !(Map Text (Map Text Value))
+  -- ^ Plugins' settings (@[plugins.<name>]@), by plugin (ADR-51).
+  , edPluginStates :: !PluginStates
+  -- ^ Each plugin's own state ("Him.PluginState", ADR-51).
   , edSeen :: !Seen
   -- ^ What plugin events have been raised for ("Him.PluginEvent").
   , edQuit :: !Bool
@@ -274,6 +280,8 @@ newEditor size doc =
     , edJumps = IntMap.empty
     , edJumpTexts = IntMap.empty
     , edPluginUI = Map.empty
+    , edPluginOptions = Map.empty
+    , edPluginStates = noStates
     , edSeen = unseen
     , edQuit = False
     }

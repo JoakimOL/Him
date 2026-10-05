@@ -42,6 +42,8 @@ data DocKind
     ReplDoc !ReplState
   | -- | An AI chat's transcript and input (see "Him.Chat").
     ChatDoc !ChatState
+  | -- | Read-only text a plugin shows, by name (ADR-51).
+    ScratchDoc !Text
   deriving stock (Eq, Show)
 
 data DirEntry = DirEntry
@@ -50,10 +52,12 @@ data DirEntry = DirEntry
   }
   deriving stock (Eq, Show)
 
--- | Directory listings cannot be edited or written.
+-- | Directory listings and plugins' scratch buffers cannot be edited or
+-- written.
 isReadOnly :: Document -> Bool
 isReadOnly d = case docKind d of
   DirectoryDoc _ -> True
+  ScratchDoc _ -> True
   TextDoc -> False
   ReplDoc _ -> False
   ChatDoc _ -> False
@@ -112,6 +116,7 @@ displayName :: Document -> Text
 displayName d = case docKind d of
   ReplDoc rs -> "[repl: " <> rsLanguage rs <> "]"
   ChatDoc _ -> "[chat]"
+  ScratchDoc name -> "[" <> name <> "]"
   _ -> maybe "[scratch]" T.pack (docPath d)
 
 -- | A new text and selection as one undoable change: the old ones are kept

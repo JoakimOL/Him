@@ -11,6 +11,7 @@ module Him.Config.Default
   , allActions
   , plugins
   , allPlugins
+  , defaultPlugins
   , pluginOf
   , fallback
   ) where
@@ -42,15 +43,17 @@ import Him.Actions.Chat qualified as Chat
 import Him.Chat (ChatProvider)
 import Him.Chat.Anthropic (anthropicProvider)
 import Him.Chat.ClaudeCode (claudeCodeProvider)
+import Him.Contrib (contribPlugins)
 import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))
 import Him.Syntax (SyntaxProvider)
 import Him.Syntax.TreeSitter (treeSitter)
 
--- | Every plugin there is (ADR-35), in the order their hooks run.
+-- | Every plugin there is (ADR-35): the built-in ones, then the contrib
+-- collection (ADR-51), in the order their hooks run.
 plugins :: [Plugin]
-plugins = [Git.gitPlugin, Lsp.lspPlugin, Repl.replPlugin, Chat.chatPlugin]
+plugins = [Git.gitPlugin, Lsp.lspPlugin, Repl.replPlugin, Chat.chatPlugin] <> contribPlugins
 
 -- | All of them switched on (the default).
 allPlugins :: Set.Set Text
@@ -271,10 +274,14 @@ coreBindings =
     , (Directory, directoryBindings)
     ]
 
--- | The default configuration: every plugin on. Every binding is checked
--- against the actions; an error lists each bad binding.
+-- | The default configuration: the plugins that are on by default. Every
+-- binding is checked against the actions; an error lists each bad binding.
 defaultConfig :: Either Text Config
-defaultConfig = configWith allPlugins Map.empty
+defaultConfig = configWith defaultPlugins Map.empty
+
+-- | The plugins on by default (the built-in ones; contrib plugins are off).
+defaultPlugins :: Set.Set Text
+defaultPlugins = Set.fromList [plName p | p <- plugins, plDefaultOn p]
 
 -- | The configuration with these plugins on, and the user's bindings over
 -- the defaults. User bindings to a switched-off plugin's actions are left

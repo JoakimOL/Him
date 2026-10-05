@@ -37,10 +37,10 @@ module Him.UserConfig
 
 import Control.Exception (IOException, try)
 import Data.Either (partitionEithers)
-import Data.List (sortOn)
+import Data.List (find, sortOn)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -65,7 +65,10 @@ data UserConfig = UserConfig
   -- ^ Settings by key ('Him.Options.optionSpecs'), already checked.
   , ucTheme :: !(Maybe Text)
   , ucPlugins :: !(Map Text Bool)
-  -- ^ Plugins switched on or off (@[plugins]@); the rest are on.
+  -- ^ Plugins switched on or off (@[plugins]@); the rest are as their
+  -- 'plDefaultOn' says.
+  , ucPluginOptions :: !(Map Text (Map Text Value))
+  -- ^ Plugins' settings (@[plugins.<name>]@), checked against 'plOptions'.
   , ucServers :: !(Map Text ServerOverride)
   , ucRepls :: !(Map Text ReplOverride)
   , ucChat :: !ChatConfig
@@ -84,7 +87,7 @@ data ServerOverride = ServerOverride
   deriving stock (Eq, Show)
 
 emptyUserConfig :: UserConfig
-emptyUserConfig = UserConfig Map.empty [] Nothing Map.empty Map.empty Map.empty defaultChatConfig
+emptyUserConfig = UserConfig Map.empty [] Nothing Map.empty Map.empty Map.empty Map.empty defaultChatConfig
 
 -- | The sections of @[keys]@, by mode.
 modeSections :: [(Text, Mode)]
@@ -160,11 +163,25 @@ parseUserConfig src = do
     pluginSection v = do
       kvs <- table "[plugins]" v
       ps <- collect (map pluginKey kvs)
-      Right (\c -> c {ucPlugins = Map.fromList ps})
+      Right (\c -> c {ucPlugins = Map.fromList [(n, b) | (n, Just b, _) <- ps], ucPluginOptions = Map.fromList [(n, o) | (n, _, o) <- ps, not (Map.null o)]})
+    -- @name = true@, or a table of the plugin's settings (@enabled@ among
+    -- them): TOML has no room for both.
     pluginKey = \case
-      (name, JBool b) | Set.member name allPlugins -> Right (name, b)
-      (name, _) | Set.member name allPlugins -> Left ["plugins." <> name <> " must be true or false"]
+      (name, JBool b) | Set.member name allPlugins -> Right (name, Just b, Map.empty)
+      (name, JObject kvs) | Just p <- find ((== name) . plName) plugins -> do
+        let known = map fst (plOptions p)
+            enabled = [b | ("enabled", JBool b) <- kvs]
+            bad = [k | (k, _) <- kvs, k /= "enabled", k `notElem` known]
+            wrongEnabled = [() | ("enabled", x) <- kvs, not (isBool x)]
+        case (bad, wrongEnabled) of
+          ([], []) -> Right (name, listToMaybe enabled, Map.fromList [(k, x) | (k, x) <- kvs, k /= "enabled"])
+          ([], _) -> Left ["plugins." <> name <> ".enabled must be true or false"]
+          (k : _, _) -> Left ["plugins." <> name <> "." <> k <> ": unknown setting (known: " <> T.intercalate ", " ("enabled" : known) <> ")"]
+      (name, _) | Set.member name allPlugins -> Left ["plugins." <> name <> " must be true or false, or a table of its settings"]
       (name, _) -> Left ["unknown plugin " <> name <> " (known: " <> T.intercalate ", " (Set.toList allPlugins) <> ")"]
+    isBool = \case
+      JBool _ -> True
+      _ -> False
     editor v = do
       kvs <- table "[editor]" v
       fs <- collect (concatMap editorKey kvs)
@@ -217,9 +234,10 @@ parseUserConfig src = do
 applyUserConfig :: UserConfig -> Either Text Config
 applyUserConfig uc = applyUserConfigWith (enabledPlugins uc) uc
 
--- | The plugins a config switches on: all but those it turns off.
+-- | The plugins a config switches on: those it turns on, and those on by
+-- default that it does not turn off.
 enabledPlugins :: UserConfig -> Set.Set Text
-enabledPlugins uc = Set.filter (\name -> Map.findWithDefault True name (ucPlugins uc)) allPlugins
+enabledPlugins uc = Set.fromList [plName p | p <- plugins, Map.findWithDefault (plDefaultOn p) (plName p) (ucPlugins uc)]
 
 -- | The same with other plugins on (switching them while running).
 applyUserConfigWith :: Set.Set Text -> UserConfig -> Either Text Config
@@ -293,6 +311,7 @@ applyEditorOptions :: UserConfig -> Editor -> Editor
 applyEditorOptions uc ed =
   ed
     { edOptions = userOptions uc
+    , edPluginOptions = ucPluginOptions uc
     }
 
 -- | The settings a config file makes (the rest are the defaults).
@@ -317,9 +336,15 @@ defaultConfigText =
     ]
       <> concatMap optionBlock optionSections
       <> [ ""
-         , "[plugins]   # features that can be switched off (also :plugin-disable, :plugin-enable)"
+         , "[plugins]   # features that can be switched on and off (also :plugin-enable, :plugin-disable)"
          ]
-      <> [T.justifyLeft 34 ' ' (plName p <> " = true") <> " # " <> plDoc p | p <- plugins]
+      <> [T.justifyLeft 34 ' ' (plName p <> " = " <> (if plDefaultOn p then "true" else "false")) <> " # " <> plDoc p | p <- plugins]
+      <> concat
+        [ ["", "# [plugins." <> plName p <> "]   # instead of " <> plName p <> " = …: its settings, and enabled = true / false"]
+            <> ["# " <> k <> " = …   # " <> d | (k, d) <- plOptions p]
+        | p <- plugins
+        , not (null (plOptions p))
+        ]
       <> concatMap modeBlock modeSections
       <> concatMap serverBlock (Map.toList defaultServers)
       <> concatMap replBlock (Map.toList defaultRepls)

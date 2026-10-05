@@ -5,7 +5,17 @@ module Test.PluginApi
   ) where
 
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.State.Strict (execStateT)
+import Control.Monad.Trans.State.Strict (execStateT, runStateT)
+import Him.Buffer qualified as B
+import Him.Key (KeyCode (..), plain)
+import Him.Picker (Picker (..), PickerItem (..))
+import Him.Plugin (getState, modifyState, openScratch, putState, replaceRange)
+import Him.Plugin.Types (Ctx (..), runPluginM)
+import Him.Position (Pos (..))
+import Him.UserConfig (UserConfig (..), applyEditorOptions, applyUserConfig, parseUserConfig)
+import System.Directory (doesDirectoryExist, getTemporaryDirectory, removeDirectoryRecursive)
+import System.Environment (setEnv)
+import System.FilePath (takeFileName)
 import Data.Foldable (foldlM)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.IntMap.Strict qualified as IntMap
@@ -51,6 +61,43 @@ pluginApiTests = do
   -- As the editor starts: housekeeping before the first key.
   _ <- settle config =<< typeKeys "i x esc" =<< execStateT (housekeeping config) start
   events <- readIORef seen
+  -- The contrib plugins, switched on by a config file (ADR-51).
+  uc <- either (fail . T.unpack . T.unlines) pure (parseUserConfig "[plugins]\nrecent-files = true\n[plugins.wordcount]\nenabled = true\nmax-lines = 3\n")
+  contrib <- either (fail . T.unpack) pure (applyUserConfig uc)
+  dir <- getTemporaryDirectory
+  let stateDir = dir <> "/him-test-plugin-state"
+      fileA = dir <> "/him-test-recent-a.txt"
+      fileB = dir <> "/him-test-recent-b.txt"
+  removeIfThere stateDir
+  setEnv "HIM_STATE" stateDir
+  writeFile fileA "alpha beta\n"
+  writeFile fileB "gamma\n"
+  let keysWith c ks ed = foldlM (\e k -> execStateT (handleEvent c (Ev.EvKey k)) e) ed (fromMaybe (error ks) (parseKeys (T.pack ks)))
+      ex c line ed = foldlM (\e k -> execStateT (handleEvent c (Ev.EvKey k)) e) ed ([plain (KChar ':')] <> [plain (KChar ch) | ch <- T.unpack line] <> [plain KEnter])
+      contribStart = applyEditorOptions uc (newEditor (10, 60) (newDocument Nothing (buf "one two three")))
+  started <- execStateT (housekeeping contrib) contribStart
+  typed <- keysWith contrib "i x space esc" started
+  long <- keysWith contrib "o a ret b ret c esc" typed
+  opened <- ex contrib ("o " <> T.pack fileB) =<< ex contrib ("o " <> T.pack fileA) started
+  picked <- keysWith contrib "space o" opened
+  forgot <- keysWith contrib "del" picked
+  remembered <- readFile (stateDir <> "/plugins/recent-files/files")
+  pluginsPicker <- ex contrib "plugins" start
+  toggled <- keysWith contrib "ret" pluginsPicker
+  -- The API on its own, for a plugin named t.
+  let ctx = Ctx "t" (0 :: Int)
+  (count, afterApi) <-
+    runStateT
+      ( runPluginM ctx $ do
+          putState 5
+          modifyState (+ 1)
+          replaceRange 1 (Pos 0 0) (Pos 0 5) "bye"
+          _ <- openScratch "out" "results"
+          _ <- openScratch "out" "again"
+          getState
+      )
+      (newEditor (10, 40) (newDocument Nothing (buf "hello world")))
+  removeIfThere stateDir
   pure
     [ test "signs: the higher priority wins where they overlap; only the asked lines" $
         let ui n spans = (n, emptyPluginUI {puSigns = IntMap.singleton 1 spans})
@@ -67,24 +114,57 @@ pluginApiTests = do
          in assertEqual (Map.singleton "a" emptyPluginUI {puSigns = IntMap.singleton 1 []}) (dropDocuments (IntSet.singleton 1) uis)
     , test "events: opened and entered at first, then changes, saves, closes, modes" $
         let d v s i = (newDocument Nothing (buf "")) {docId = i, docVersion = v, docSaves = s}
-            (first, s1) = detectEvents [d 0 0 1] 1 Normal unseen
-            (second, s2) = detectEvents [d 1 0 1, d 0 0 2] 2 Insert s1
-            (third, _) = detectEvents [d 1 1 1] 1 Insert s2
+            (first, s1) = detectEvents [d 0 0 1] 1 (Pos 0 0) Normal unseen
+            (second, s2) = detectEvents [d 1 0 1, d 0 0 2] 2 (Pos 0 0) Insert s1
+            (third, s3) = detectEvents [d 1 1 1] 1 (Pos 0 0) Insert s2
+            (fourth, _) = detectEvents [d 1 1 1] 1 (Pos 0 3) Insert s3
          in assertEqual
-              ([BufferOpened 1, BufferEntered 1], [BufferOpened 2, BufferChanged 1 1, BufferEntered 2, ModeChanged Normal Insert], [BufferClosed 2, BufferSaved 1, BufferEntered 1])
-              (first, second, third)
+              ( [BufferOpened 1, BufferEntered 1]
+              , [BufferOpened 2, BufferChanged 1 1, BufferEntered 2, ModeChanged Normal Insert, CursorMoved 2 (Pos 0 0)]
+              , [BufferClosed 2, BufferSaved 1, BufferEntered 1, CursorMoved 1 (Pos 0 0)]
+              , [CursorMoved 1 (Pos 0 3)]
+              )
+              (first, second, third, fourth)
     , test "a plugin hears what happens, and its process's lines" $
         assertEqual
           [ BufferOpened 1
           , BufferEntered 1
           , ModeChanged Normal Insert
           , BufferChanged 1 1
+          , CursorMoved 1 (Pos 0 1)
           , ModeChanged Insert Normal
           , ProcessOutput "p" "a"
           , ProcessOutput "p" "b"
           , ProcessExited "p" 0
           ]
           events
+    , test "wordcount: the count follows edits; too long a buffer is not counted" $
+        let segs e = map segText (segmentsFor (docId (edDoc e)) (edPluginUI e))
+         in assertEqual (["3 words"], ["4 words"], []) (segs started, segs typed, segs long)
+    , test "recent-files: space o lists the others, del forgets them, the list is kept in a file" $
+        assertEqual
+          (Just ["him-test-recent-a.txt"], ["him-test-recent-b.txt"], Nothing)
+          ( map (T.pack . takeFileName . T.unpack . piLabel) . pkMatches <$> edPicker picked
+          , map takeFileName (lines remembered)
+          , map piLabel . pkMatches <$> edPicker forgot
+          )
+    , test "the :plugins picker lists them all; ret switches the chosen one" $
+        assertEqual
+          (Just ["git", "lsp", "repl", "chat", "wordcount", "recent-files"], [PluginCommand (Just ("git", False))])
+          (map piLabel . pkMatches <$> edPicker pluginsPicker, [e | e@(PluginCommand _) <- edEffects toggled])
+    , test "[plugins.<name>]: enabled and settings; unknown settings are errors" $
+        assertEqual
+          (Right (Map.singleton "wordcount" True), Left ["plugins.wordcount.colour: unknown setting (known: enabled, max-lines)"])
+          (ucPlugins <$> parseUserConfig "[plugins.wordcount]\nenabled = true\n", parseUserConfig "[plugins.wordcount]\ncolour = 1\n")
+    , test "the API: state, an edit as one change, a scratch buffer made once" $
+        assertEqual
+          (6, "bye world", ["[scratch]", "[out]"], "again", True)
+          ( count
+          , B.toText (docBuffer (head' (allDocuments afterApi)))
+          , map displayName (allDocuments afterApi)
+          , B.toText (docBuffer (edDoc afterApi))
+          , isReadOnly (edDoc afterApi)
+          )
     , test "a segment, a sign and an annotation are drawn" $
         let ed0 = newEditor (6, 40) (newDocument Nothing (buf "hello\nworld"))
             ui =
@@ -99,3 +179,7 @@ pluginApiTests = do
     ]
   where
     sign t p = GutterSign t (face "diff.plus") p
+    head' = \case
+      x : _ -> x
+      [] -> error "no documents"
+    removeIfThere d = doesDirectoryExist d >>= \e -> if e then removeDirectoryRecursive d else pure ()
