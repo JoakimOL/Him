@@ -15,6 +15,7 @@ module Him.EditorM
   , getRegister
   , setRegister
   , request
+  , openPicker
   , replaceText
   , transcriptKept
   , transcriptMessage
@@ -31,6 +32,7 @@ import Him.Effect (Effect)
 import Him.Editor
 import Him.Mode (Mode (..))
 import Him.Motion (Motion, Movement (..), applyMotion)
+import Him.Picker (Picker)
 import Him.Selection (Range (..), mapRanges, normalize, point)
 
 -- | Actions run with access to the editor state and IO (for files etc.).
@@ -77,6 +79,11 @@ setRegister :: Char -> [Text] -> EditorM ()
 setRegister c vs = modify' (\e -> e {edRegisters = Map.insert c vs (edRegisters e)})
 
 -- | Queue an effect for the main loop (see "Him.Effect").
+-- | Show a picker; its keys take over until it closes (ADR-48: what
+-- choosing does is the picker's 'Him.Picker.pkPrimary' and 'Him.Picker.pkSecondary').
+openPicker :: Picker -> EditorM ()
+openPicker p = modify' (\e -> e {edPicker = Just p, edMode = Picking})
+
 request :: Effect -> EditorM ()
 request eff = modify' (\e -> e {edEffects = edEffects e <> [eff]})
 

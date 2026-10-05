@@ -11,8 +11,13 @@ module Him.Picker
   , matches
   , selectedItem
   , moveSelection
+  , toggleMark
+  , chosenItems
+  , isMarked
+  , markCount
   , setQuery
   , addItems
+  , numbered
   , matchLimit
   , rank
   , syncLimit
@@ -22,6 +27,8 @@ module Him.Picker
 
 import Data.Foldable (toList)
 import Data.IntMap.Strict qualified as IntMap
+import Data.IntSet (IntSet)
+import Data.IntSet qualified as IntSet
 import Data.List (tails)
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
@@ -45,6 +52,9 @@ data PickTarget
     PickCodeAction !Value
   | -- | An entry of the focused window's jumplist, by index (ADR-47).
     PickJump !Int
+  | -- | Data for the picker's own actions to read (ADR-48); choosing it
+    -- with the built-in @picker_open@ does nothing.
+    PickValue !Text
   deriving stock (Eq, Show)
 
 -- | Where a picker's items come from.
@@ -71,11 +81,14 @@ data PickerItem = PickerItem
   -- ^ The key's last path component (a file's name).
   , piLength :: !Int
   -- ^ The label's length in characters.
+  , piId :: !Int
+  -- ^ Its position among the picker's items (set when it is added), so a
+  -- mark stays on it while the query changes.
   }
   deriving stock (Eq, Show)
 
 pickerItem :: Text -> PickTarget -> Text -> PickerItem
-pickerItem label target detail = PickerItem label target detail key (T.takeWhileEnd (/= '/') key) (T.length label)
+pickerItem label target detail = PickerItem label target detail key (T.takeWhileEnd (/= '/') key) (T.length label) 0
   where
     key = T.toLower label
 
@@ -102,11 +115,22 @@ data Picker = Picker
   , pkLabelWidth :: !Int
   -- ^ The longest label of all items, so the detail column stays put while
   -- scrolling and filtering.
+  , pkMarked :: !IntSet
+  -- ^ The marked items, by 'piId' (ADR-48).
+  , pkPrimary :: !Text
+  -- ^ The action @ret@ runs (by name), on the 'chosenItems'.
+  , pkSecondary :: !(Maybe Text)
+  -- ^ The action @del@ runs, if the picker has one.
   }
   deriving stock (Eq, Show)
 
 newPicker :: Text -> [PickerItem] -> Picker
-newPicker title items = refilter (Picker title (Seq.fromList items) "" [] 0 0 0 False False StaticItems (labelWidth items))
+newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty "picker_open" Nothing)
+
+-- | Items with their ids, counting from n: the ids are their positions
+-- in 'pkItems', so a picker that replaces its items clears 'pkMarked'.
+numbered :: Int -> [PickerItem] -> Seq PickerItem
+numbered n items = Seq.fromList (zipWith (\i item -> item {piId = i}) [n ..] items)
 
 -- | The longest label among items.
 labelWidth :: [PickerItem] -> Int
@@ -119,7 +143,7 @@ setQuery q p = refilter p {pkQuery = q, pkSelected = 0}
 -- | Items that arrived (from a background scan): filter again, keeping the
 -- selection where it is when possible.
 addItems :: [PickerItem] -> Picker -> Picker
-addItems new p = refilter p {pkItems = pkItems p <> Seq.fromList new, pkLabelWidth = max (pkLabelWidth p) (labelWidth new)}
+addItems new p = refilter p {pkItems = pkItems p <> numbered (Seq.length (pkItems p)) new, pkLabelWidth = max (pkLabelWidth p) (labelWidth new)}
 
 refilter :: Picker -> Picker
 refilter p =
@@ -219,3 +243,24 @@ moveSelection :: Int -> Picker -> Picker
 moveSelection n p = case length (pkMatches p) of
   0 -> p
   len -> p {pkSelected = (pkSelected p + n) `mod` len}
+
+-- | Mark the selected item, or unmark it.
+toggleMark :: Picker -> Picker
+toggleMark p = case selectedItem p of
+  Just item
+    | isMarked p item -> p {pkMarked = IntSet.delete (piId item) (pkMarked p)}
+    | otherwise -> p {pkMarked = IntSet.insert (piId item) (pkMarked p)}
+  Nothing -> p
+
+isMarked :: Picker -> PickerItem -> Bool
+isMarked p item = IntSet.member (piId item) (pkMarked p)
+
+markCount :: Picker -> Int
+markCount = IntSet.size . pkMarked
+
+-- | What the picker's actions act on: the marked items in the order they
+-- were listed, or else the selected one.
+chosenItems :: Picker -> [PickerItem]
+chosenItems p
+  | IntSet.null (pkMarked p) = maybe [] pure (selectedItem p)
+  | otherwise = [item | i <- IntSet.toAscList (pkMarked p), Just item <- [Seq.lookup i (pkItems p)]]

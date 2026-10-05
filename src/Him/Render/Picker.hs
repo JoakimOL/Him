@@ -44,7 +44,7 @@ drawPicker theme ed area f = case edPicker ed of
           visible = zip [first ..] (take listRows (drop first ms))
           -- A search shows the matching lines it found (it keeps only the
           -- first ones); other pickers, matches out of all items.
-          count = T.pack (if pkSource p == GrepQuery then show (pkMatchCount p) else show (pkMatchCount p) <> "/" <> show (length (pkItems p))) <> if pkLoading p || pkStale p then "…" else ""
+          count = T.pack (if pkSource p == GrepQuery then show (pkMatchCount p) else show (pkMatchCount p) <> "/" <> show (length (pkItems p))) <> (if pkLoading p || pkStale p then "…" else "") <> (if markCount p > 0 then " · " <> T.pack (show (markCount p)) <> " marked" else "")
           titled = T.take inner (" " <> pkTitle p <> " ")
           fit t = T.take inner t <> T.replicate (inner - T.length t) " "
           queryLine = fit (T.take (inner - T.length count - 1) ("> " <> pkQuery p) `padTo` (inner - T.length count) <> count)
@@ -52,7 +52,8 @@ drawPicker theme ed area f = case edPicker ed of
           -- Labels are padded to a common width so details line up.
           labelW = min (inner `div` 2) (pkLabelWidth p)
           rowStyle i = if i == sel then themePopupSelected theme else themePopup theme
-          row i item = (rowStyle i, fit (" " <> clip item))
+          -- A marked item (ADR-48) has a dot before it.
+          row i item = (rowStyle i, fit ((if isMarked p item then "●" else " ") <> clip item))
           -- A label too long for its column, when a detail follows, is cut
           -- so the detail does not cover it: a search hit's path from the
           -- left (the file name and line matter most), others from the right.

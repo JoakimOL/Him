@@ -155,6 +155,12 @@ pickerTests =
       assertEqual ["goto_line <line>", "x/b.hs"] (map (piLabel . head' . matches' (items ["goto_line_end", "goto_line <line>", "goto_line_start"])) ["goto_line"] <> map (piLabel . head' . matches' (items ["x/ab.hs", "x/b.hs.bak", "x/b.hs"])) ["b.hs"])
   , test "a label match beats a detail match" $
       assertEqual ["xy", "other"] (map piLabel (matches "xy" [pickerItem "other" (PickFile "") "xy here", pickerItem "xy" (PickFile "") ""]))
+  , test "marks stay through a new query and are chosen in item order" $
+      let marked = toggleMark (setQuery "a" (toggleMark (moveSelection 2 (newPicker "t" (items ["a", "b", "c"])))))
+       in assertEqual (["a", "c"], 2) (map piLabel (chosenItems marked), markCount marked)
+  , test "with nothing marked the selected item is chosen; marking twice unmarks" $
+      let p = moveSelection 1 (newPicker "t" (items ["a", "b"]))
+       in assertEqual (["b"], ["b"]) (map piLabel (chosenItems p), map piLabel (chosenItems (toggleMark (toggleMark p))))
   , test "a new query selects the best match" $
       assertEqual (Just "b") (piLabel <$> selectedItem (setQuery "b" (moveSelection 2 (newPicker "t" (items ["a", "b", "c"])))))
   ]

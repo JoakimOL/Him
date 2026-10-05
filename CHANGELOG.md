@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- Pickers: `tab` marks items, `ret` acts on all marked (the file picker opens them all), `del` is the picker's second action (the jumplist removes all marked).
 - Jumplist, as in Helix: `C-o` / `C-i` (`tab`) go back and forward, `C-s` saves the selection, `space j` lists the jumps (`del` removes one); jumps follow edits.
 - Global search (`space /`): search the project's files as you type, with hits streaming into a picker with a preview.
 - The chat looks and works like VS Code's: message blocks, an input box with history, wrapped answers, code blocks (`space c y` copies one), tool and change lines, a review summary; changes are kept or discarded.

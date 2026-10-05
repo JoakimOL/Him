@@ -151,7 +151,7 @@ actions =
             ]
       if null items
         then info "no diagnostics"
-        else modify' (\e -> e {edPicker = Just (newPicker "diagnostics" items), edMode = Picking})
+        else openPicker (newPicker "diagnostics" items)
   , simple "completion" GLsp "Ask the language server to complete the word at the cursor" requestCompletion
   , simple "completion_next" GLsp "Select the next completion" (moveCompletion 1)
   , simple "completion_previous" GLsp "Select the previous completion" (moveCompletion (-1))

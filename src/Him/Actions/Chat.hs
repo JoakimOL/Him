@@ -662,7 +662,7 @@ listChanges = do
     [] -> failWith "no proposed changes"
     items -> do
       focusEditorWindow
-      modify' (\e -> e {edPicker = Just (newPicker "proposed changes" items), edMode = Picking})
+      openPicker (newPicker "proposed changes" items)
 
 -- * The input
 

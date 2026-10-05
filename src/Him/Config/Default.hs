@@ -233,7 +233,7 @@ pickerBindings =
   , ("ret", "picker_accept")
   , ("down", "picker_next")
   , ("C-n", "picker_next")
-  , ("tab", "picker_next")
+  , ("tab", "picker_mark")
   , ("up", "picker_previous")
   , ("C-p", "picker_previous")
   , ("S-tab", "picker_previous")

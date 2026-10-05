@@ -26,8 +26,9 @@ import Him.Json hiding (path)
 import Him.Lsp.Protocol hiding (request)
 import Him.Lsp.State
 import Him.Mode (Mode (..))
-import Data.Sequence qualified as Seq
-import Him.Picker (PickTarget (..), Picker (..), PickerSource (..), labelWidth, matchLimit, newPicker, pickerItem)
+import Data.Foldable (toList)
+import Data.IntSet qualified as IntSet
+import Him.Picker (PickTarget (..), Picker (..), PickerSource (..), labelWidth, matchLimit, newPicker, numbered, pickerItem)
 import System.FilePath (makeRelative)
 import Him.Position (Pos (..))
 import Him.Selection (Range (..), point, primary, rangeHead, single)
@@ -141,9 +142,10 @@ workspaceSymbolsArrived gen query value = do
               { edPicker =
                   Just
                     p
-                      { pkItems = Seq.fromList items
+                      { pkItems = numbered 0 items
                       , pkLabelWidth = labelWidth items
-                      , pkMatches = take matchLimit items
+                      , pkMatches = take matchLimit (toList (numbered 0 items))
+                      , pkMarked = IntSet.empty
                       , pkMatchCount = length items
                       , pkSelected = 0
                       , pkStale = False

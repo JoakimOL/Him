@@ -39,6 +39,7 @@ jumpTests = do
   listed <- typeKeys "5 g g g e space j" start
   deleted <- typeKeys "del" listed
   picked <- typeKeys "ret" listed
+  deletedMarked <- typeKeys "tab tab del" listed
   other <- typeKeys "space b del" start
   pure
     [ test "push drops the jumps after the current one and repeats" $
@@ -68,6 +69,8 @@ jumpTests = do
         assertEqual (Just ["[scratch]:5", "[scratch]:1"], Picking) (map piLabel . pkMatches <$> edPicker listed, edMode listed)
     , test "del removes the selected entry" $
         assertEqual (Just ["[scratch]:1"], [0]) (map piLabel . pkMatches <$> edPicker deleted, jumpLines deleted)
+    , test "tab marks entries and del removes them all" $
+        assertEqual (Just [], []) (map piLabel . pkMatches <$> edPicker deletedMarked, jumpLines deletedMarked)
     , test "ret jumps to it, and where the cursor was is pushed" $
         assertEqual (4, Nothing, [0, 4, 49]) (cursorLine picked, edPicker picked, jumpLines picked)
     , test "pickers without a second action say so" $

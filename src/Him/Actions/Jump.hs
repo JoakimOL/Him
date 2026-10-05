@@ -15,7 +15,8 @@ import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.Foldable (toList)
 import Data.IntMap.Strict qualified as IntMap
 import Data.IntSet qualified as IntSet
-import Data.List (find, findIndex)
+import Data.List (find, findIndex, sortOn)
+import Data.Ord (Down (..))
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
 import Him.Action
@@ -24,8 +25,7 @@ import Him.Document (Document (..), clampSelection, displayName)
 import Him.Editor
 import Him.EditorM
 import Him.Jumplist
-import Him.Mode (Mode (..))
-import Him.Picker (PickTarget (..), Picker (..), newPicker, pickerItem)
+import Him.Picker (PickTarget (..), Picker (..), PickerItem (..), chosenItems, newPicker, pickerItem, setQuery)
 import Him.Position (Pos (..))
 import Him.Selection (primary, rangeHead)
 
@@ -46,10 +46,18 @@ actions =
   , simple "save_selection" GSelection "Save the selection to the jumplist" $ do
       gets here >>= pushJump
       info "selection saved to the jumplist"
-  , simple "jumplist_picker" GBuffers "List the jumplist: ret jumps, del removes an entry" $ do
+  , simple "jumplist_picker" GBuffers "List the jumplist: ret jumps, del removes the entry (or the marked ones)" $ do
       modify' syncJumps
-      p <- gets jumplistPicker
-      modify' (\e -> e {edPicker = Just p, edMode = Picking})
+      gets jumplistPicker >>= openPicker
+  , simple "jumplist_remove" GBuffers "Remove the chosen entries from the jumplist (del in its picker)" $
+      gets edPicker >>= \case
+        Just p | is@(_ : _) <- [i | PickJump i <- map piTarget (chosenItems p)] -> do
+          -- The last first, so the indices of the others stay right.
+          mapM_ deleteJump (sortOn Down is)
+          -- The entries after them moved up: list them again.
+          fresh <- gets (setQuery (pkQuery p) . jumplistPicker)
+          modify' (\e -> e {edPicker = Just fresh {pkSelected = min (pkSelected p) (max 0 (pkMatchCount fresh - 1))}})
+        _ -> failWith "no jumplist entry chosen"
   ]
 
 -- | Run something that may jump: if it moved the cursor (or went to
@@ -104,7 +112,7 @@ deleteJump i = gets (remove i . jumplist) >>= setJumplist
 
 -- | The @space j@ picker: the focused window's jumps, newest first.
 jumplistPicker :: Editor -> Picker
-jumplistPicker ed = newPicker "jumplist (del removes)" items
+jumplistPicker ed = (newPicker "jumplist (del removes)" items) {pkSecondary = Just "jumplist_remove"}
   where
     docs = IntMap.fromList [(docId d, d) | d <- allDocuments ed]
     items =

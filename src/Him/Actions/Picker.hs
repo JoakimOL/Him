@@ -17,7 +17,8 @@ import Him.Action
 import Him.Effect (Effect (..), Job (..), JobKey (..), JobResult (..))
 import Him.EditorM
 import Him.Actions.File (openFile)
-import Him.Actions.Jump (deleteJump, goToEntry, jumping, jumplistPicker)
+import Him.Actions.Jump (goToEntry, jumping)
+import Data.IntSet qualified as IntSet
 import Him.Actions.Lsp qualified as Lsp
 import Him.Lsp.Protocol (Encoding (..), fromLspColumn)
 import Him.Buffer qualified as Buffer
@@ -50,50 +51,39 @@ actions =
       open ((newPicker "buffers" [pickerItem (label i b) (PickBuffer i) "" | (i, b) <- zip [0 ..] bs]) {pkSelected = cur})
   , simple "command_palette" GPrompt "List every action with its keys, and run one" (request OpenPalette)
   , simple "picker_close" GPrompt "Close the picker" close
-  , simple "picker_accept" GPrompt "Open the selected item" $
-      gets (fmap selectedItem . edPicker) >>= \case
-        Just (Just item) -> do
-          close
-          case piTarget item of
-            PickFile path -> jumping (openFile path)
-            PickBuffer i -> jumping (modify' (gotoBuffer i))
-            PickAction name needsArgs
-              | needsArgs -> do
-                  modify' (\e -> e {edPrompt = ExPrompt, edCmdLine = "action " <> name <> " ", edCompletions = []})
-                  setMode CmdLine
-              | otherwise -> request (RunAction (Invocation name []))
-            PickPosition path line col encoding -> jumping $ do
-              openFile path
-              modifyDoc $ \d ->
-                let l = max 0 (min line (Buffer.lineCount (docBuffer d) - 1))
-                    lineText = Buffer.lineAt l (docBuffer d)
-                    -- A language server's column, converted on the line.
-                    c = case encoding of
-                      Just "utf-8" -> fromLspColumn Utf8 lineText col
-                      Just "utf-16" -> fromLspColumn Utf16 lineText col
-                      Just "utf-32" -> fromLspColumn Utf32 lineText col
-                      _ -> max 0 (min col (Buffer.lineLength l (docBuffer d)))
-                 in d {docSelection = single (point (Pos l c))}
-            PickCodeAction act -> Lsp.runCodeAction act
-            PickJump i -> goToEntry i
-        _ -> close
-  , simple "picker_secondary" GPrompt "The picker's second action on the selected item (the jumplist: remove the entry)" $
+  , simple "picker_accept" GPrompt "The picker's main action on the chosen items (most pickers: open the selected item, or the marked ones)" $
       gets edPicker >>= \case
-        Just p | Just item <- selectedItem p -> case piTarget item of
-          PickJump i -> do
-            deleteJump i
-            -- The entries after it moved up: list them again.
-            fresh <- gets jumplistPicker
-            modify' (\e -> e {edPicker = Just (setQuery (pkQuery p) fresh) {pkSelected = min (pkSelected p) (max 0 (pkMatchCount (setQuery (pkQuery p) fresh) - 1))}})
-          _ -> failWith "this picker has no second action"
-        _ -> pure ()
+        Just p -> request (RunAction (Invocation (pkPrimary p) []))
+        Nothing -> pure ()
+  , simple "picker_secondary" GPrompt "The picker's second action on the chosen items (the jumplist: remove the entries)" $
+      gets edPicker >>= \case
+        Just p | Just name <- pkSecondary p -> request (RunAction (Invocation name []))
+        Just _ -> failWith "this picker has no second action"
+        Nothing -> pure ()
+  , simple "picker_open" GPrompt "Open the chosen items: files and places all (ending on the last), anything else the selected one" $
+      gets (fmap chosenItems . edPicker) >>= \case
+        Just items@(item : _) -> do
+          close
+          case traverse (place . piTarget) items of
+            Just goes -> jumping (sequence_ goes)
+            Nothing -> case piTarget item of
+              PickAction name needsArgs
+                | needsArgs -> do
+                    modify' (\e -> e {edPrompt = ExPrompt, edCmdLine = "action " <> name <> " ", edCompletions = []})
+                    setMode CmdLine
+                | otherwise -> request (RunAction (Invocation name []))
+              PickCodeAction act -> Lsp.runCodeAction act
+              PickJump i -> goToEntry i
+              _ -> pure ()
+        _ -> close
+  , simple "picker_mark" GPrompt "Mark the selected item (or unmark it) and select the next" (onPicker (moveSelection 1 . toggleMark))
   , simple "picker_next" GPrompt "Select the next item" (onPicker (moveSelection 1))
   , simple "picker_previous" GPrompt "Select the previous item" (onPicker (moveSelection (-1)))
   , simple "picker_backspace" GPrompt "Delete the last character of the query" $
       changeQuery (T.dropEnd 1)
   ]
   where
-    open p = modify' (\e -> e {edPicker = Just p, edMode = Picking})
+    open = openPicker
     close = do
       modify' (\e -> e {edPicker = Nothing, edMode = Normal, edPreviews = Map.empty})
       request (CancelJob ScanJob)
@@ -101,6 +91,26 @@ actions =
       request (CancelJob GrepJob)
 
 -- | What the file picker and the global search walk.
+-- | Going to a place a picker lists (a file, a buffer, a position in a
+-- file), or 'Nothing' for other items.
+place :: PickTarget -> Maybe (EditorM ())
+place = \case
+  PickFile path -> Just (openFile path)
+  PickBuffer i -> Just (modify' (gotoBuffer i))
+  PickPosition path line col encoding -> Just $ do
+    openFile path
+    modifyDoc $ \d ->
+      let l = max 0 (min line (Buffer.lineCount (docBuffer d) - 1))
+          lineText = Buffer.lineAt l (docBuffer d)
+          -- A language server's column, converted on the line.
+          c = case encoding of
+            Just "utf-8" -> fromLspColumn Utf8 lineText col
+            Just "utf-16" -> fromLspColumn Utf16 lineText col
+            Just "utf-32" -> fromLspColumn Utf32 lineText col
+            _ -> max 0 (min col (Buffer.lineLength l (docBuffer d)))
+       in d {docSelection = single (point (Pos l c))}
+  _ -> Nothing
+
 walkOptions :: Options -> WalkOptions
 walkOptions o = WalkOptions (optPickerHidden o) (optPickerGitIgnore o) (optPickerIgnore o) (optPickerFollowSymlinks o) (optPickerMaxFiles o)
 
@@ -126,7 +136,7 @@ changeQuery f =
       -- Search again; the last hits stay (stale) until new ones arrive.
       GrepQuery
         | T.null query -> do
-            modify' (\e -> e {edPicker = Just p {pkQuery = query, pkItems = Seq.empty, pkMatches = [], pkMatchCount = 0, pkSelected = 0, pkLoading = False, pkStale = False, pkLabelWidth = 0}})
+            modify' (\e -> e {edPicker = Just p {pkQuery = query, pkItems = Seq.empty, pkMatches = [], pkMatchCount = 0, pkSelected = 0, pkLoading = False, pkStale = False, pkLabelWidth = 0, pkMarked = IntSet.empty}})
             request (CancelJob GrepJob)
         | otherwise -> do
             modify' (\e -> e {edPicker = Just p {pkQuery = query, pkLoading = True, pkStale = True}})
@@ -158,7 +168,7 @@ applyJobResult result =
       FilesFound gen files
         | gen == pkGeneration p ->
             let new = [pickerItem (T.pack f) (PickFile f) "" | f <- files]
-             in Just (refresh p {pkItems = pkItems p <> Seq.fromList new, pkLabelWidth = max (pkLabelWidth p) (labelWidth new)})
+             in Just (refresh p {pkItems = pkItems p <> numbered (Seq.length (pkItems p)) new, pkLabelWidth = max (pkLabelWidth p) (labelWidth new)})
       ScanFinished gen
         | gen == pkGeneration p -> Just (modify' (\e -> e {edPicker = Just p {pkLoading = False}}))
       PreviewLoaded file loaded ->
@@ -167,14 +177,14 @@ applyJobResult result =
       GrepFound gen query new n
         | gen == pkGeneration p && query == pkQuery p ->
             -- The first hits for a new query replace the last query's.
-            let (old, oldCount, sel) = if pkStale p then (Seq.empty, 0, 0) else (pkItems p, pkMatchCount p, pkSelected p)
-                items = old <> Seq.fromList new
+            let (old, oldCount, sel, marked) = if pkStale p then (Seq.empty, 0, 0, IntSet.empty) else (pkItems p, pkMatchCount p, pkSelected p, pkMarked p)
+                items = old <> numbered (Seq.length old) new
              in Just $ modify' $ \e ->
-                  e {edPicker = Just p {pkItems = items, pkMatches = toList items, pkMatchCount = oldCount + n, pkSelected = sel, pkStale = False, pkLabelWidth = (if pkStale p then 0 else pkLabelWidth p) `max` labelWidth new}}
+                  e {edPicker = Just p {pkItems = items, pkMatches = toList items, pkMatchCount = oldCount + n, pkSelected = sel, pkMarked = marked, pkStale = False, pkLabelWidth = (if pkStale p then 0 else pkLabelWidth p) `max` labelWidth new}}
       GrepFinished gen query
         | gen == pkGeneration p && query == pkQuery p ->
             Just $ modify' $ \e ->
-              e {edPicker = Just (if pkStale p then p {pkItems = Seq.empty, pkMatches = [], pkMatchCount = 0, pkSelected = 0, pkLabelWidth = 0} else p) {pkLoading = False, pkStale = False}}
+              e {edPicker = Just (if pkStale p then p {pkItems = Seq.empty, pkMatches = [], pkMatchCount = 0, pkSelected = 0, pkLabelWidth = 0, pkMarked = IntSet.empty} else p) {pkLoading = False, pkStale = False}}
       PickerFiltered gen query best total
         | gen == pkGeneration p && query == pkQuery p ->
             Just $ modify' $ \e ->

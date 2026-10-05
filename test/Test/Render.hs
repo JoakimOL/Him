@@ -44,6 +44,11 @@ renderTests =
             ( fmap (\(t, c) -> (t, either (const False) ((== 29) . snd) c)) (previewFor ed (PickPosition "a.txt" 29 0 Nothing))
             , any (T.isInfixOf "30 line 30") [rowText f r | r <- [0 .. 23]]
             )
+  , test "a marked item has a dot, and the count says how many" $
+      let ed0 = newEditor (24, 80) (newDocument Nothing (buf ""))
+          ed = ed0 {edPicker = Just (toggleMark (newPicker "t" [pickerItem "x" (PickValue "") "", pickerItem "y" (PickValue "") ""])), edMode = Picking}
+          rows = [rowText (render defaultTheme Nothing ed) r | r <- [0 .. 23]]
+       in assertEqual (True, True) (any (T.isInfixOf "│●x") rows, any (T.isInfixOf "2/2 · 1 marked") rows)
   , test "a file that is not open is read for the preview" $
       let ed0 = newEditor (24, 100) (newDocument Nothing (buf ""))
           ed = ed0 {edPicker = Just (newPicker "t" [pickerItem "b.txt" (PickFile "b.txt") ""]), edMode = Picking}

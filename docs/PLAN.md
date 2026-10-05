@@ -1156,13 +1156,40 @@ picker and adding entries by hand.
   without each edit path knowing about jumps. Jumps into closed documents are
   dropped.
 - **`picker_secondary`** (`del` in pickers) is a picker's second action on the
-  selected item. Only the jumplist has one so far (remove the entry). It is the first
-  step towards the common picker API in §8.
+  selected item. For the jumplist it removes the entry. ADR-48 makes it part of every
+  picker.
 
 *Alternatives:* keeping the positions in each document and mapping them inside every
 edit path (more exact for several edits in one event, but every path would have to
 take part); clamping only, as unfocused windows' selections do (ADR-37), which sends
 `C-o` to the wrong line after edits above it.
+
+**ADR-48: Every picker has a primary and a secondary action, and items can be marked.**
+The user asked for a common picker API: two actions on two keys, so the file picker can
+open several files and the jumplist can jump or remove. The longer aim is for the picker
+to be a component of a public plugin API.
+- **Named actions.** A picker names its actions: `pkPrimary` (default `picker_open`)
+  and `pkSecondary` (`Maybe`). `ret` (`picker_accept`) and `del` (`picker_secondary`)
+  run them as `RunAction` invocations. The named action reads the chosen items with
+  `chosenItems` and closes the picker itself. A plugin gets picker actions by adding
+  ordinary actions to `plActions`, nothing more. Pickers can't hold functions because
+  `Editor` derives `Eq`/`Show` and `EditorM` can't see the `Config`.
+- **Marks are generic.** `tab` (`picker_mark`) marks or unmarks the selected item and
+  selects the next. The actions act on the marked items in list order, or on the
+  selected one if none are marked. A mark is kept by the item's `piId`, its position in
+  `pkItems`, so marks survive a new query. A picker that replaces its items (a search's
+  new query, workspace symbols) clears them. The row shows `●` and the count adds
+  "k marked".
+- **`picker_open`** goes to every chosen file, buffer or position inside one
+  `jumping` and ends on the last. Commands, code actions and jumplist entries use the
+  first chosen item only. `jumplist_remove` removes every chosen entry, the last first.
+- **`PickValue Text`** is a payload for a plugin's own actions; `picker_open` ignores
+  it. `openPicker` (in `Him.EditorM`) is the one way to show a picker.
+
+*Alternatives:* a registry of handler functions in `Config`, keyed by a picker kind
+(more machinery for what named actions already give); marking as a per-picker secondary
+(the jumplist couldn't remove several entries); `tab` as the secondary, as first
+suggested (moving to the next item would lose `tab`).
 
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
@@ -1338,6 +1365,8 @@ Each milestone ends with something runnable, and with this file updated.
   streaming hits into a picker with a preview (ADR-46).
 - [x] **43. Jumplist.** `C-o` / `C-i` / `tab`, `C-s`, `space j` with `del` to remove an
   entry; jumps follow edits (ADR-47).
+- [x] **44. Picker actions.** Every picker has a primary (`ret`) and a secondary
+  (`del`) action, and `tab` marks items for both to act on (ADR-48).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
@@ -1363,7 +1392,7 @@ them in the editor.
 | Select | Normal mode where motions extend; `v` / `esc` back. |
 | Insert | typing, `ret` (keeps indentation), `tab` (spaces with `expand-tab`), `backspace`, `del`, arrows, `esc`. |
 | Command line | typing, `tab` (complete names, paths, themes, plugins), `backspace`, `ret`, `esc`. |
-| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`/`tab`/`S-tab`, `ret`, `del` (the picker's second action: the jumplist removes the entry), `esc`. |
+| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`/`S-tab`, `tab` (mark, for `ret`/`del` to act on all marked), `ret`, `del` (the picker's second action: the jumplist removes the entry), `esc`. |
 | Jumplist | `C-o` (back), `C-i` / `tab` (forward), both with a count; `C-s` (save the selection). |
 | Directory listings | `space d` (the file's directory), `space D` (the working directory), `:o dir`; in a listing: `ret`, `-` / `^` / `backspace` (parent), `g r` (refresh), `a` (new file or `dir/`), `+` (new directory), `r` (rename), `d` (delete, asks), `g .` (dotfiles). |
 | Windows | `C-w` or `space w`, then `v` / `s` (split side by side / stacked), `w` (next), `h j k l` (focus), `H J K L` (swap), `q` (close), `o` (only), `n v` / `n s` (split with a scratch buffer). |
@@ -1406,10 +1435,10 @@ them in the editor.
 ## 8. Where to pick up
 
 *Last updated 2026-10-05.* Everything the user asked for so far is done; the latest
-work is the jumplist (ADR-47), and before it the global search picker, `space /`
-(ADR-46), and the chat panel (ADR-45).
+work is picker actions and marks (ADR-48), and before it
+the jumplist (ADR-47) and the global search picker, `space /` (ADR-46).
 
-- **State:** milestones 1–43 (§5) and ADR-1…47 (§3). `make test` runs 597 tests (pure
+- **State:** milestones 1–44 (§5) and ADR-1…48 (§3). `make test` runs 602 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).
@@ -1425,13 +1454,9 @@ work is the jumplist (ADR-47), and before it the global search picker, `space /`
   tools); the faults it found were him's and are fixed (ADR-42). `dev/fake-claude`
   checks the flow without a model.
 - **Ideas, roughly by value:**
-  0. **A common picker API** (the user's idea, "for later"): every picker gets a
-     primary and a secondary action on two keys (the user suggested `ret` and
-     `tab`). For example, the file picker's `tab` marks several files and `ret`
-     opens them; the jumplist's `ret` jumps and its secondary deletes. Today
-     `picker_secondary` (on `del`) is that hook, with only the jumplist using it,
-     and `tab` moves the selection. Moving `tab` would need another key for
-     "next" (`down` / `C-n` stay).
+  0. **A public plugin API** (being designed on the `plugin-api` branch): plugins
+     compiled in, as in xmonad, with the picker (ADR-48), status line segments and
+     signs as building blocks.
   1. Regex search and `S` (split on a pattern), on `Him.Regex`.
   2. Incremental tree-sitter parsing (the buffer's `changeBetween` is ready) and
      injections.
