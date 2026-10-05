@@ -1488,11 +1488,6 @@ them in the editor.
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-06.* Everything the user asked for so far is done; the latest
-work is registers and the system clipboard (ADR-49), and before it cycling the `:`
-line's completions with `tab` / `S-tab`, previewing themes as `:theme <name>` is
-typed, picker actions and marks (ADR-48) and the jumplist (ADR-47).
-
 - **State:** milestones 1–45 (§5) and ADR-1…49 (§3). `make test` runs 631 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
@@ -1509,9 +1504,23 @@ typed, picker actions and marks (ADR-48) and the jumplist (ADR-47).
   tools); the faults it found were him's and are fixed (ADR-42). `dev/fake-claude`
   checks the flow without a model.
 - **Ideas, roughly by value:**
-  0. **A public plugin API** (being designed on the `plugin-api` branch): plugins
-     compiled in, as in xmonad, with the picker (ADR-48), status line segments and
-     signs as building blocks.
+  0. **A public plugin API** (in progress on `plugin-api`): the design and phases are
+     in `docs/PLUGIN-API.md`. Plugins are compiled in, as in xmonad.
+     Development focuses on releases that include a contrib collection, off by
+     default. A template repository with CI builds and `him --rebuild` come later.
+     Plugin processes and `.so` loading are ruled out. Phase 0, picker actions,
+     is ADR-48; the open questions at the end of that file are for the user.
+     Earlier note: every picker gets a
+     primary and a secondary action on two keys (the user suggested `ret` and
+     `tab`). For example, the file picker's `tab` marks several files and `ret`
+     opens them; the jumplist's `ret` jumps and its secondary deletes. Today
+     `picker_secondary` (on `del`) is that hook, with only the jumplist using it,
+     and `tab` moves the selection. Moving `tab` would need another key for
+     "next" (`down` / `C-n` stay). The longer aim: make the picker a component of a
+     public plugin API, so a user's plugin can open its own picker with its own
+     actions. That means `PickTarget` (a closed sum read in `picker_accept`) has to
+     give way to items whose actions come from the picker, e.g. named actions
+     (ADR-17 invocations) that receive the chosen items.
   1. Regex search and `S` (split on a pattern), on `Him.Regex`.
   2. Incremental tree-sitter parsing (the buffer's `changeBetween` is ready) and
      injections.
