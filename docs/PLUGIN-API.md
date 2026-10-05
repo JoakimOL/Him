@@ -1,7 +1,7 @@
 # Plugin API: design and plan
 
-*2026-10-05, branch `plugin-api`. Phases 0–3 are done (ADR-48, ADR-50, ADR-51); phase
-4 is in progress.* The goal is for users to write their own
+*2026-10-05, branch `plugin-api`. Phases 0–4 are done (ADR-48, ADR-50 to ADR-52). Not done
+yet: `him --update`, and a real run of a personal build, which needs the network.* The goal is for users to write their own
 plugins **in Haskell** and switch them on and off with the `:plugin` commands. A plugin
 builds its UI from building blocks (pickers, status line segments, …) and can see the
 editor's state and loaded buffers, much as Vim plugins can.

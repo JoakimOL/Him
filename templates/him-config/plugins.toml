@@ -1,0 +1,14 @@
+# The plugins to build into your own him (ADR-52). The contrib plugins are
+# in every release already (:plugins switches them on); list others here.
+#
+# [him]                       # where him's source comes from
+# git = "https://github.com/JoakimOL/Him"
+# ref = "v0.1.0.0"            # default: the version you run (in CI: the repository variable HIM_REF)
+#
+# [plugins.harpoon]
+# git = "https://github.com/someone/him-harpoon"
+# ref = "v1.2"                # a tag or a commit
+# package = "him-harpoon"     # its package name (default: the name above)
+# module = "Harpoon"          # the module that exports the plugin
+# spec = "harpoon"            # its PluginSpec
+# # path = "plugins/my-plugin" (a directory in this repository, instead of git and ref)

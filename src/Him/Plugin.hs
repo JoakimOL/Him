@@ -17,6 +17,7 @@ module Him.Plugin
   ( -- * Plugins
     PluginSpec (..)
   , pluginSpec
+  , hostPlugin
   , PluginM
   , apiVersion
   , pluginName
@@ -135,6 +136,7 @@ import Him.Mode (Mode (..))
 import Him.Options (Options (..))
 import Him.Picker qualified as Picker
 import Him.Plugin.Internal (askCtx, liftEditor)
+import Him.Plugin.Host (hostPlugin)
 import Him.Plugin.Types
 import Him.PluginEvent (Event (..))
 import Him.PluginState (insertState, lookupState)

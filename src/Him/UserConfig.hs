@@ -28,6 +28,12 @@ module Him.UserConfig
   , configPath
   , applyUserConfig
   , applyUserConfigWith
+  , applyUserConfigIn
+  , applyUserConfigWithIn
+  , parseUserConfigWith
+  , loadUserConfigWith
+  , enabledPluginsIn
+  , defaultConfigTextFor
   , enabledPlugins
   , applyEditorOptions
   , userOptions
@@ -47,7 +53,7 @@ import Data.Text.IO qualified as TIO
 import Him.Action
 import Him.Config (Bindings, Config (..), Plugin (..))
 import Data.Set qualified as Set
-import Him.Config.Default (allActions, allPlugins, configWith, defaultBindings, pluginOf, plugins)
+import Him.Config.Default (actionsFor, bindingsWith, configWithPlugins, pluginOfIn, plugins)
 import Him.Editor (Editor (..))
 import Him.Json hiding (path)
 import Him.Lsp.Config (ServerConfig (..), ServerTable, defaultServers)
@@ -105,18 +111,25 @@ modeSections =
 
 -- | Read the config file; a missing file is an empty config.
 loadUserConfig :: FilePath -> IO (Either [Text] UserConfig)
-loadUserConfig path = do
+loadUserConfig = loadUserConfigWith plugins
+
+loadUserConfigWith :: [Plugin] -> FilePath -> IO (Either [Text] UserConfig)
+loadUserConfigWith every path = do
   exists <- doesFileExist path
   if not exists
     then pure (Right emptyUserConfig)
     else
       try @IOException (TIO.readFile path) >>= \case
         Left e -> pure (Left [T.pack (show e)])
-        Right src -> pure (parseUserConfig src)
+        Right src -> pure (parseUserConfigWith every src)
 
 -- | Check a config file's text; every problem is reported.
 parseUserConfig :: Text -> Either [Text] UserConfig
-parseUserConfig src = do
+parseUserConfig = parseUserConfigWith plugins
+
+-- | The same, for a build with these plugins ("Him.Main").
+parseUserConfigWith :: [Plugin] -> Text -> Either [Text] UserConfig
+parseUserConfigWith every src = do
   doc <- either (\e -> Left [e]) Right (parseToml src)
   top <- maybe (Left ["the config must be a table"]) Right (asObject doc)
   let results = map section top
@@ -167,8 +180,8 @@ parseUserConfig src = do
     -- @name = true@, or a table of the plugin's settings (@enabled@ among
     -- them): TOML has no room for both.
     pluginKey = \case
-      (name, JBool b) | Set.member name allPlugins -> Right (name, Just b, Map.empty)
-      (name, JObject kvs) | Just p <- find ((== name) . plName) plugins -> do
+      (name, JBool b) | Set.member name names -> Right (name, Just b, Map.empty)
+      (name, JObject kvs) | Just p <- find ((== name) . plName) every -> do
         let known = map fst (plOptions p)
             enabled = [b | ("enabled", JBool b) <- kvs]
             bad = [k | (k, _) <- kvs, k /= "enabled", k `notElem` known]
@@ -177,8 +190,9 @@ parseUserConfig src = do
           ([], []) -> Right (name, listToMaybe enabled, Map.fromList [(k, x) | (k, x) <- kvs, k /= "enabled"])
           ([], _) -> Left ["plugins." <> name <> ".enabled must be true or false"]
           (k : _, _) -> Left ["plugins." <> name <> "." <> k <> ": unknown setting (known: " <> T.intercalate ", " ("enabled" : known) <> ")"]
-      (name, _) | Set.member name allPlugins -> Left ["plugins." <> name <> " must be true or false, or a table of its settings"]
-      (name, _) -> Left ["unknown plugin " <> name <> " (known: " <> T.intercalate ", " (Set.toList allPlugins) <> ")"]
+      (name, _) | Set.member name names -> Left ["plugins." <> name <> " must be true or false, or a table of its settings"]
+      (name, _) -> Left ["unknown plugin " <> name <> " (known: " <> T.intercalate ", " (Set.toList names) <> ")"]
+    names = Set.fromList (map plName every)
     isBool = \case
       JBool _ -> True
       _ -> False
@@ -232,17 +246,27 @@ parseUserConfig src = do
 -- | The configuration with the user's changes: bindings on top of the
 -- defaults (validated), servers changed or added.
 applyUserConfig :: UserConfig -> Either Text Config
-applyUserConfig uc = applyUserConfigWith (enabledPlugins uc) uc
+applyUserConfig = applyUserConfigIn plugins
+
+-- | The same, for a build with these plugins ("Him.Main").
+applyUserConfigIn :: [Plugin] -> UserConfig -> Either Text Config
+applyUserConfigIn every uc = applyUserConfigWithIn every (enabledPluginsIn every uc) uc
 
 -- | The plugins a config switches on: those it turns on, and those on by
 -- default that it does not turn off.
 enabledPlugins :: UserConfig -> Set.Set Text
-enabledPlugins uc = Set.fromList [plName p | p <- plugins, Map.findWithDefault (plDefaultOn p) (plName p) (ucPlugins uc)]
+enabledPlugins = enabledPluginsIn plugins
+
+enabledPluginsIn :: [Plugin] -> UserConfig -> Set.Set Text
+enabledPluginsIn every uc = Set.fromList [plName p | p <- every, Map.findWithDefault (plDefaultOn p) (plName p) (ucPlugins uc)]
 
 -- | The same with other plugins on (switching them while running).
 applyUserConfigWith :: Set.Set Text -> UserConfig -> Either Text Config
-applyUserConfigWith enabled uc = do
-  config <- configWith enabled (ucBindings uc)
+applyUserConfigWith = applyUserConfigWithIn plugins
+
+applyUserConfigWithIn :: [Plugin] -> Set.Set Text -> UserConfig -> Either Text Config
+applyUserConfigWithIn every enabled uc = do
+  config <- configWithPlugins every enabled (ucBindings uc)
   servers <- applyServers (ucServers uc) defaultServers
   repls <- applyRepls (ucRepls uc) defaultRepls
   pure config {cfgServers = servers, cfgRepls = repls, cfgChat = ucChat uc}
@@ -322,7 +346,11 @@ userOptions uc = foldl' (\o (k, v) -> either (const o) id (setOption k v o)) def
 -- settings, all bindings per mode (with what they do), the language
 -- servers, and a list of all actions.
 defaultConfigText :: Text
-defaultConfigText =
+defaultConfigText = defaultConfigTextFor plugins
+
+-- | The same, for a build with these plugins ("Him.Main").
+defaultConfigTextFor :: [Plugin] -> Text
+defaultConfigTextFor every =
   T.unlines $
     [ "# him configuration: the defaults, as printed by `him --dump-default-config`."
     , "# Save as ~/.config/him/config.toml (or $XDG_CONFIG_HOME/him/config.toml, or"
@@ -338,11 +366,11 @@ defaultConfigText =
       <> [ ""
          , "[plugins]   # features that can be switched on and off (also :plugin-enable, :plugin-disable)"
          ]
-      <> [T.justifyLeft 34 ' ' (plName p <> " = " <> (if plDefaultOn p then "true" else "false")) <> " # " <> plDoc p | p <- plugins]
+      <> [T.justifyLeft 34 ' ' (plName p <> " = " <> (if plDefaultOn p then "true" else "false")) <> " # " <> plDoc p | p <- every]
       <> concat
         [ ["", "# [plugins." <> plName p <> "]   # instead of " <> plName p <> " = …: its settings, and enabled = true / false"]
             <> ["# " <> k <> " = …   # " <> d | (k, d) <- plOptions p]
-        | p <- plugins
+        | p <- every
         , not (null (plOptions p))
         ]
       <> concatMap modeBlock modeSections
@@ -360,7 +388,7 @@ defaultConfigText =
          , "# Every action, by group (<required> and [optional] arguments):"
          ]
       <> [ "#   " <> T.justifyLeft 34 ' ' (actName a <> signature a) <> " " <> actDoc a
-         | a <- sortOn actGroup allActions
+         | a <- sortOn actGroup (actionsFor every)
          ]
   where
     optionBlock section =
@@ -378,7 +406,7 @@ defaultConfigText =
       , "[keys." <> name <> "]" <> modeNote mode
       ]
         <> [ T.justifyLeft 30 ' ' (quoteString keys <> " = " <> quoteString inv) <> describe inv
-           | (keys, inv) <- Map.findWithDefault [] mode defaultBindings
+           | (keys, inv) <- Map.findWithDefault [] mode (bindingsWith every)
            ]
     modeNote = \case
       Select -> "   # select mode also has every normal-mode key"
@@ -388,9 +416,9 @@ defaultConfigText =
       Completing -> "   # insert mode with the completion menu open; also every insert-mode key"
       _ -> ""
     describe inv = case parseInvocation inv >>= \i -> maybe (Left "") Right (lookupAction (invAction i) registry) of
-      Right a -> " # " <> maybe "" (\p -> "(" <> plName p <> ") ") (pluginOf (actName a)) <> actDoc a
+      Right a -> " # " <> maybe "" (\p -> "(" <> plName p <> ") ") (pluginOfIn every (actName a)) <> actDoc a
       Left _ -> ""
-    registry = either (error . T.unpack) id (mkActionRegistry allActions)
+    registry = either (error . T.unpack) id (mkActionRegistry (actionsFor every))
     signature a = T.concat [" " <> shape p | p <- actParams a]
     shape p = case paramDefault p of
       Nothing -> "<" <> paramName p <> ">"

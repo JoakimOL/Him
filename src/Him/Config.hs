@@ -59,6 +59,9 @@ data Config = Config
   , cfgPlugins :: [Plugin]
   -- ^ The enabled plugins, in order (their actions, keys and commands are
   -- in the fields above already).
+  , cfgAllPlugins :: [Plugin]
+  -- ^ Every plugin this build has, on or off: the built-in ones, contrib,
+  -- and a personal build's own ("Him.Main", ADR-52).
   }
 
 -- | A feature that can be switched off (ADR-35): git signs and staging,
@@ -153,5 +156,6 @@ buildConfig actions bindings fallback = do
           , cfgChatProviders = []
           , cfgClipboardProviders = systemProviders
           , cfgPlugins = []
+          , cfgAllPlugins = []
           }
     errs -> Left (T.intercalate "\n" errs)

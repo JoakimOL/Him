@@ -1,0 +1,60 @@
+# Builds your own him with the plugins in plugins.toml, on every push, and
+# publishes it as a release of this repository. Download the binary for
+# your system and put it at ~/.local/state/him/bin/him: the released him
+# starts it from then on (until a newer him is installed).
+name: build him
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: him-linux-x86_64
+          - os: macos-latest
+            asset: him-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        with:
+          enable-stack: true
+          stack-version: latest
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.stack
+          key: stack-${{ matrix.os }}-${{ hashFiles('plugins.toml') }}
+          restore-keys: stack-${{ matrix.os }}-
+
+      # A him to run --rebuild with: the version in the repository variable
+      # HIM_REF (Settings → Variables), else the latest release. Keep it the
+      # same as [him] ref in plugins.toml, if you set that.
+      - name: Build him
+        env:
+          HIM_REF: ${{ vars.HIM_REF }}
+        run: |
+          git clone https://github.com/JoakimOL/Him him-src
+          ref="${HIM_REF:-$(git -C him-src describe --tags --abbrev=0)}"
+          git -C him-src checkout "$ref"
+          (cd him-src && stack build --copy-bins --local-bin-path "$GITHUB_WORKSPACE/tools")
+
+      - name: Build your him
+        env:
+          HIM_CONFIG: ${{ github.workspace }}/config.toml
+          HIM_STATE: ${{ github.workspace }}/out
+        run: ./tools/him --rebuild && test -x out/bin/him && cp out/bin/him "${{ matrix.asset }}"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          files: ${{ matrix.asset }}

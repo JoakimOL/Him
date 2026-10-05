@@ -16,6 +16,9 @@ import Him.UserConfig (UserConfig (..), applyEditorOptions, applyUserConfig, par
 import System.Directory (doesDirectoryExist, getTemporaryDirectory, removeDirectoryRecursive)
 import System.Environment (setEnv)
 import System.FilePath (takeFileName)
+import Data.Version (showVersion)
+import Him.Rebuild (ListedPlugin (..), PluginList (..), Source (..), himSnapshot, parsePluginList, projectFiles)
+import Paths_him (version)
 import Data.Foldable (foldlM)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.IntMap.Strict qualified as IntMap
@@ -98,6 +101,7 @@ pluginApiTests = do
       )
       (newEditor (10, 40) (newDocument Nothing (buf "hello world")))
   removeIfThere stateDir
+  stackYaml <- readFile "stack.yaml"
   pure
     [ test "signs: the higher priority wins where they overlap; only the asked lines" $
         let ui n spans = (n, emptyPluginUI {puSigns = IntMap.singleton 1 spans})
@@ -165,6 +169,52 @@ pluginApiTests = do
           , B.toText (docBuffer (edDoc afterApi))
           , isReadOnly (edDoc afterApi)
           )
+    , test "plugins.toml: him from the release by default; plugins from git or a path" $
+        assertEqual
+          ( Right
+              ( FromGit "https://github.com/JoakimOL/Him" (T.pack ("v" <> showVersion version))
+              , [ ListedPlugin "harpoon" (FromGit "https://x/h" "v1") "him-harpoon" "Harpoon" "harpoon"
+                , ListedPlugin "mine" (FromPath "p/mine") "mine" "My.Plugin" "mine"
+                ]
+              )
+          )
+          ( (\l -> (plHim l, plPlugins l))
+              <$> parsePluginList
+                ( T.unlines
+                    [ "[plugins.harpoon]"
+                    , "git = \"https://x/h\""
+                    , "ref = \"v1\""
+                    , "package = \"him-harpoon\""
+                    , "module = \"Harpoon\""
+                    , "spec = \"harpoon\""
+                    , "[plugins.mine]"
+                    , "path = \"p/mine\""
+                    , "module = \"My.Plugin\""
+                    , "spec = \"mine\""
+                    ]
+                )
+          )
+    , test "plugins.toml: problems are reported" $
+        assertEqual
+          [ Left ["plugins.a: module and spec are needed"]
+          , Left ["plugins.b: give path, or git and ref"]
+          , Left ["plugins.c: module must be a module name (Harpoon) and spec a name (harpoon)"]
+          ]
+          [ () <$ parsePluginList "[plugins.a]\npath = \"x\"\n"
+          , () <$ parsePluginList "[plugins.b]\ngit = \"x\"\nmodule = \"B\"\nspec = \"b\"\n"
+          , () <$ parsePluginList "[plugins.c]\npath = \"x\"\nmodule = \"c\"\nspec = \"C\"\n"
+          ]
+    , test "the project --rebuild writes: him and the plugins as dependencies, a Main of hostPlugin" $
+        let files = projectFiles (PluginList (FromPath "/him") [ListedPlugin "h" (FromGit "u" "r") "him-h" "Harpoon" "harpoon"])
+            file f = maybe [] T.lines (lookup f files)
+         in assertEqual
+              (True, True, True)
+              ( all (`elem` file "stack.yaml") ["- /him", "- git: u", "  commit: r"]
+              , "main = himMain [hostPlugin Harpoon.harpoon]" `elem` file "Main.hs"
+              , "  build-depends: base, him, him-h" `elem` file "him-personal.cabal"
+              )
+    , test "personal builds use him's own snapshot" $
+        assertEqual True (("snapshot: " <> T.unpack himSnapshot) `elem` lines stackYaml)
     , test "a segment, a sign and an annotation are drawn" $
         let ed0 = newEditor (6, 40) (newDocument Nothing (buf "hello\nworld"))
             ui =

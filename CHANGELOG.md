@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- Personal builds: `him --rebuild` builds a him with the plugins in `~/.config/him/plugins.toml`, and the released him starts it. `templates/him-config` builds one in GitHub Actions, with no toolchain needed.
 - Plugin API (`Him.Plugin`): plugins see buffers and events, run programs, and show status line segments, gutter signs, annotations, pickers and scratch buffers. Settings go under `[plugins.<name>]`.
 - Contrib plugins, off until switched on: `wordcount` (words in the status line) and `recent-files` (`space o`, files opened lately).
 - `:plugins` is a picker: `ret` switches the chosen plugins on or off.

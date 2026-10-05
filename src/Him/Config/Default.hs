@@ -7,12 +7,17 @@
 module Him.Config.Default
   ( defaultConfig
   , defaultBindings
+  , bindingsWith
   , configWith
+  , configWithPlugins
   , allActions
+  , actionsFor
   , plugins
   , allPlugins
   , defaultPlugins
+  , defaultPluginsOf
   , pluginOf
+  , pluginOfIn
   , fallback
   ) where
 
@@ -61,7 +66,10 @@ allPlugins = Set.fromList (map plName plugins)
 
 -- | The plugin an action comes from, if any.
 pluginOf :: Text -> Maybe Plugin
-pluginOf name = find (\p -> name `elem` map actName (plActions p)) plugins
+pluginOf = pluginOfIn plugins
+
+pluginOfIn :: [Plugin] -> Text -> Maybe Plugin
+pluginOfIn every name = find (\p -> name `elem` map actName (plActions p)) every
 
 -- | The core's actions, without the command-line ones (which need the
 -- @:@ commands, see 'actionsWith').
@@ -78,20 +86,24 @@ coreActions =
     <> Window.actions
     <> Match.actions
 
--- | The actions with these plugins on.
-actionsWith :: [Plugin] -> [Action]
-actionsWith on = coreActions <> concatMap plActions on <> CommandLine.actions (exCommandsWith on)
+-- | The actions with these plugins on (of all these).
+actionsWith :: [Plugin] -> [Plugin] -> [Action]
+actionsWith every on = coreActions <> concatMap plActions on <> CommandLine.actions (exCommandsWith every on)
 
 -- | Every action, of the core and of every plugin (for the dumped config).
 allActions :: [Action]
-allActions = actionsWith plugins
+allActions = actionsFor plugins
 
-exCommandsWith :: [Plugin] -> [ExCommand]
-exCommandsWith on = File.exCommands <> Window.exCommands <> Register.exCommands <> pluginCommands <> concatMap plExCommands on
+-- | Every action of the core and of these plugins.
+actionsFor :: [Plugin] -> [Action]
+actionsFor every = actionsWith every every
+
+exCommandsWith :: [Plugin] -> [Plugin] -> [ExCommand]
+exCommandsWith every on = File.exCommands <> Window.exCommands <> Register.exCommands <> pluginCommands every <> concatMap plExCommands on
 
 -- | Switching plugins while running (carried out by the main loop).
-pluginCommands :: [ExCommand]
-pluginCommands =
+pluginCommands :: [Plugin] -> [ExCommand]
+pluginCommands every =
   [ ExCommand ["plugins"] "List the plugins and whether they are on" NoArgs $ \_ -> request (PluginCommand Nothing)
   , ExCommand ["plugin-enable"] "Switch a plugin on" (NameArgs names) $ \case
       [name] -> request (PluginCommand (Just (name, True)))
@@ -101,7 +113,7 @@ pluginCommands =
       _ -> failWith ("usage: :plugin-disable <name> (" <> T.intercalate ", " names <> ")")
   ]
   where
-    names = map plName plugins
+    names = map plName every
 
 -- | Movement keys shared by normal, select and insert mode.
 arrowBindings :: [(Text, Text)]
@@ -281,24 +293,32 @@ defaultConfig = configWith defaultPlugins Map.empty
 
 -- | The plugins on by default (the built-in ones; contrib plugins are off).
 defaultPlugins :: Set.Set Text
-defaultPlugins = Set.fromList [plName p | p <- plugins, plDefaultOn p]
+defaultPlugins = defaultPluginsOf plugins
+
+defaultPluginsOf :: [Plugin] -> Set.Set Text
+defaultPluginsOf every = Set.fromList [plName p | p <- every, plDefaultOn p]
 
 -- | The configuration with these plugins on, and the user's bindings over
 -- the defaults. User bindings to a switched-off plugin's actions are left
 -- out (they come back with the plugin).
 configWith :: Set.Set Text -> Bindings -> Either Text Config
-configWith enabled user = do
-  let on = [p | p <- plugins, plName p `Set.member` enabled]
-      offActions = Set.fromList [actName a | p <- plugins, plName p `Set.notMember` enabled, a <- plActions p]
+configWith = configWithPlugins plugins
+
+-- | The same, for a build with these plugins ("Him.Main").
+configWithPlugins :: [Plugin] -> Set.Set Text -> Bindings -> Either Text Config
+configWithPlugins every enabled user = do
+  let on = [p | p <- every, plName p `Set.member` enabled]
+      offActions = Set.fromList [actName a | p <- every, plName p `Set.notMember` enabled, a <- plActions p]
       usable (_, inv) = either (const True) ((`Set.notMember` offActions) . invAction) (parseInvocation inv)
-  config <- buildConfig (actionsWith on) (overrideBindings (Map.map (filter usable) user) (bindingsWith on)) fallback
+  config <- buildConfig (actionsWith every on) (overrideBindings (Map.map (filter usable) user) (bindingsWith on)) fallback
   pure
     config
-      { cfgExCommands = exCommandsWith on
+      { cfgExCommands = exCommandsWith every on
       , cfgPrefixNames = prefixNames <> Map.fromList (concatMap plPrefixNames on)
       , cfgSyntaxProviders = syntaxProviders
       , cfgChatProviders = chatProviders
       , cfgPlugins = on
+      , cfgAllPlugins = every
       }
 
 -- | Chat providers (ADR-41); @[chat] provider@ names the one used.

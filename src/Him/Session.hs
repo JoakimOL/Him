@@ -4,6 +4,7 @@
 -- The terminal loop ("Him.App") drives it; another frontend could too.
 module Him.Session
   ( loadConfig
+  , loadConfigWith
   , openAll
   , handleEvent
   , housekeeping
@@ -30,7 +31,7 @@ import Him.Effect (Effect (..), JobResult (..))
 import Him.EditorM (failWith, request)
 import Him.EditorM qualified as Command
 import Him.Config (Config (..), Plugin (..))
-import Him.Config.Default (defaultConfig, plugins)
+import Him.Config.Default (configWithPlugins, defaultPluginsOf, plugins)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
 import Him.Actions.File qualified as File
@@ -40,7 +41,7 @@ import Him.Actions.Picker qualified as Picker
 import Him.Actions.Jump qualified as Jump
 import Him.Actions.Syntax qualified as Syntax
 import Him.Info (refreshInfo)
-import Him.UserConfig (UserConfig (..), applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
+import Him.UserConfig (UserConfig (..), applyUserConfigIn, configPath, defaultConfigTextFor, emptyUserConfig, loadUserConfigWith)
 import Control.Monad.IO.Class (liftIO)
 import System.Directory (doesFileExist)
 import Him.Palette (paletteItems)
@@ -57,12 +58,16 @@ import System.Exit (die)
 -- | The config: the user's file on top of the defaults. On a problem, the
 -- defaults and a message naming the first one (all are logged).
 loadConfig :: IO (UserConfig, Config, Maybe T.Text)
-loadConfig = do
+loadConfig = loadConfigWith plugins
+
+-- | The same, for a build with these plugins ("Him.Main").
+loadConfigWith :: [Plugin] -> IO (UserConfig, Config, Maybe T.Text)
+loadConfigWith every = do
   path <- configPath
-  defaults <- either (die . T.unpack) pure defaultConfig
-  loadUserConfig path >>= \case
+  defaults <- either (die . T.unpack) pure (configWithPlugins every (defaultPluginsOf every) Map.empty)
+  loadUserConfigWith every path >>= \case
     Left errs -> broken path defaults errs
-    Right uc -> case applyUserConfig uc of
+    Right uc -> case applyUserConfigIn every uc of
       Left e -> broken path defaults (T.lines e)
       Right config -> pure (uc, config, Nothing)
   where
@@ -269,7 +274,7 @@ runEffects config = go (8 :: Int)
             item p
               | plName p `elem` on = pickerItem (plName p) (PickValue ("-" <> plName p)) ("on   " <> plDoc p)
               | otherwise = pickerItem (plName p) (PickValue ("+" <> plName p)) ("off  " <> plDoc p)
-         in Command.openPicker (newPicker "plugins (ret switches on / off)" (map item plugins)) {pkPrimary = "plugin_toggle"}
+         in Command.openPicker (newPicker "plugins (ret switches on / off)" (map item (cfgAllPlugins config))) {pkPrimary = "plugin_toggle"}
       OpenConfig -> do
         path <- liftIO configPath
         exists <- liftIO (doesFileExist path)
@@ -277,7 +282,7 @@ runEffects config = go (8 :: Int)
           then File.openFile path
           else do
             -- A new file, with the defaults to start from (saved with :w).
-            modify' (openBuffer ((newDocument (Just path) (Buffer.fromText defaultConfigText)) {docDirty = True}))
+            modify' (openBuffer ((newDocument (Just path) (Buffer.fromText (defaultConfigTextFor (cfgAllPlugins config)))) {docDirty = True}))
             Command.info "a new config file with the defaults: change what you like, then :w and :config-reload"
       RunAction inv -> either failWith boundRun (bindInvocation (cfgActions config) inv)
       OpenPalette -> modify' $ \e ->

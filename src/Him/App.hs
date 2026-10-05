@@ -3,6 +3,7 @@
 -- event handling itself is "Him.Session".
 module Him.App
   ( run
+  , runWith
   , handleEvent
   ) where
 
@@ -18,8 +19,8 @@ import Him.Ex (previewedTheme)
 import Him.EditorM (failWith)
 import Him.Config (Config (..), Plugin (..))
 import Him.Actions.Search (refreshSearchPreview)
-import Him.Config.Default (allPlugins)
-import Him.UserConfig (UserConfig (..), applyEditorOptions, applyUserConfigWith, userOptions)
+import Him.Config.Default (plugins)
+import Him.UserConfig (UserConfig (..), applyEditorOptions, applyUserConfigWithIn, userOptions)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Him.Runtime (Runtime, newRuntime)
 import Him.Runtime qualified as Runtime
@@ -43,9 +44,15 @@ import Him.Session
 
 -- | Run the editor, opening the given files (the first one is shown).
 run :: [FilePath] -> IO ()
-run files = do
+run = runWith plugins Nothing
+
+-- | The same, for a build with these plugins: the built-in ones and
+-- contrib, then a personal build's own ("Him.Main", ADR-52); with a
+-- message to show at the start.
+runWith :: [Plugin] -> Maybe T.Text -> [FilePath] -> IO ()
+runWith every notice files = do
   -- The user's config; a broken one starts the defaults and says why.
-  (userConfig, config, problem) <- loadConfig
+  (userConfig, config, problem) <- loadConfigWith every
   trueColor <- hasTrueColor
   (theme, themeProblem) <- either (\e -> (defaultTheme, Just e)) (\t -> (t, Nothing)) <$> themeOf trueColor userConfig
   -- Load before entering raw mode, so errors print normally.
@@ -60,14 +67,14 @@ run files = do
     runtime <- newRuntime config (atomically . writeTChan events)
     -- Start what the first document needs (its git state) before any key.
     let opened = applyEditorOptions userConfig (openAll size docs)
-    start <- execStateT (housekeeping config) (withPlugins config opened) {edStatus = Status Error <$> (problem <|> themeProblem)}
+    start <- execStateT (housekeeping config) (withPlugins config opened) {edStatus = Status Error <$> (problem <|> themeProblem <|> notice)}
     mapM_ (Runtime.perform runtime) (edEffects start)
     configRef <- newIORef config
     userRef <- newIORef userConfig
     themeRef <- newIORef theme
     previewRef <- newIORef (Nothing, Nothing)
     shownRef <- newIORef Nothing
-    eventLoop (Loop configRef userRef themeRef trueColor previewRef shownRef) runtime suspend events start {edEffects = []}
+    eventLoop (Loop configRef userRef themeRef trueColor previewRef shownRef every) runtime suspend events start {edEffects = []}
     Runtime.shutdown runtime
 
 -- | The theme a config names (@[editor] theme@), or the built-in one.
@@ -87,8 +94,9 @@ loadNamedTheme trueColor name =
 -- it was made from (to make it again with other plugins), the theme (all
 -- replaced by :config-reload, :plugin-*, :theme), and whether the terminal
 -- shows 24-bit colour. Then the theme previewed on the : line (the name
--- and, if it loaded, the theme) and the name of the theme last drawn.
-data Loop = Loop (IORef Config) (IORef UserConfig) (IORef Theme) Bool (IORef (Maybe T.Text, Maybe Theme)) (IORef (Maybe T.Text))
+-- and, if it loaded, the theme), the name of the theme last drawn, and
+-- every plugin of this build.
+data Loop = Loop (IORef Config) (IORef UserConfig) (IORef Theme) Bool (IORef (Maybe T.Text, Maybe Theme)) (IORef (Maybe T.Text)) [Plugin]
 
 -- | Most events that can be handled before one render. Typeahead (a paste,
 -- key repeat, a fast typist) is handled first and drawn once, the way Vim
@@ -97,7 +105,7 @@ maxBatch :: Int
 maxBatch = 512
 
 eventLoop :: Loop -> Runtime -> IO () -> TChan Event -> Editor -> IO ()
-eventLoop (Loop configRef userRef themeRef trueColor previewRef shownRef) runtime suspend events = go Nothing
+eventLoop (Loop configRef userRef themeRef trueColor previewRef shownRef every) runtime suspend events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
@@ -141,7 +149,7 @@ eventLoop (Loop configRef userRef themeRef trueColor previewRef shownRef) runtim
     -- :config-reload: a new config for the loop, the runtime's server table
     -- and the editor's settings; a broken file keeps the current config.
     reloadConfig ed = do
-      (uc, config, problem) <- loadConfig
+      (uc, config, problem) <- loadConfigWith every
       case problem of
         Just e -> pure ed {edStatus = Just (Status Error e)}
         Nothing -> do
@@ -164,9 +172,9 @@ eventLoop (Loop configRef userRef themeRef trueColor previewRef shownRef) runtim
       old <- readIORef configRef
       uc <- readIORef userRef
       let enabled = (if on then Set.insert else Set.delete) name (Set.fromList (map plName (cfgPlugins old)))
-      if name `Set.notMember` allPlugins
+      if name `Set.notMember` Set.fromList (map plName every)
         then pure ed {edStatus = Just (Status Error ("unknown plugin " <> name))}
-        else case applyUserConfigWith enabled uc of
+        else case applyUserConfigWithIn every enabled uc of
           Left e -> pure ed {edStatus = Just (Status Error e)}
           Right config -> do
             writeIORef configRef config

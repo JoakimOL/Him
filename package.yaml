@@ -77,8 +77,6 @@ executables:
     - '"-with-rtsopts=-xn"'
     dependencies:
     - him
-    - directory
-    - text
 
 tests:
   him-test:

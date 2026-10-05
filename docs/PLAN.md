@@ -1337,6 +1337,49 @@ xmonad. Releases include a contrib collection that is off until switched on.
 `.so` loading or plugin processes (ruled out in `docs/PLUGIN-API.md`); a typed options
 record per plugin (more machinery than reading `Value`s with defaults).
 
+**ADR-52: Personal builds, as in xmonad: `himMain`, `him --rebuild`, and a template
+repository.**
+This is phase 4 of `docs/PLUGIN-API.md`, for plugins outside the contrib collection.
+- **The program is a library function.** `Him.Main.himMain :: [Plugin] -> IO ()` is
+  the whole command line, and `app/Main.hs` is `himMain []`. The list of every plugin
+  is threaded through:
+  - `cfgAllPlugins`;
+  - `configWithPlugins`, `parseUserConfigWith`, `applyUserConfigIn` and
+    `defaultConfigTextFor`;
+  - `Session.loadConfigWith` and `App.runWith`.
+
+  So `[plugins]`, `:plugins`, `:plugin-enable` and the dumped config know a personal
+  build's own plugins. Two plugins with the same name stop `himMain`.
+- **`him --rebuild`** (`Him.Rebuild`) reads `~/.config/him/plugins.toml`:
+  - `[him]` says where him's source is: git and ref, or a path. The default is
+    `github.com/JoakimOL/Him` at `v<version>`.
+  - Each `[plugins.<name>]` gives git and ref (or a path), `package`, `module` and
+    `spec`.
+
+  It writes a stack project in `<state dir>/build` on him's own snapshot (`himSnapshot`;
+  a test keeps it equal to `stack.yaml`). The project is a `.cabal` file and a
+  `Main.hs` of `himMain [hostPlugin M.spec, …]`. It runs `stack build`, which copies
+  the result to `<state dir>/bin/him`. An empty list builds nothing.
+- **The released him starts a personal build:** when `<state dir>/bin/him` exists, is
+  not itself, and is not older, it `exec`s it. An older one (built before an update)
+  is not started, and the editor says so at startup.
+- **Template repository** (`templates/him-config/`): `plugins.toml`, a README, and a
+  GitHub Actions workflow. The workflow builds him at the repository variable
+  `HIM_REF` (or the latest tag), runs `him --rebuild` in CI and publishes the binary
+  as a release. The user downloads it to `<state dir>/bin/him`. There is no
+  `him --update` yet.
+- **Not tried:** the build itself. Running it fetches him and plugins from the
+  network, which needs the user's go-ahead. The tests cover the list, the generated
+  files and the snapshot.
+- **Needs from the user:** release tags `v<version>`; none exist yet, and the default
+  `ref` and the workflow assume them. The repository must also be reachable (public)
+  for CI and for git-based personal builds.
+
+*Alternatives:* loading `.so` files or running plugins as separate programs (ruled
+out); a global plugin registry set at startup (hidden state that tests could see
+half-set); the release including every plugin there is (that is contrib, and it needs
+review).
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -1381,6 +1424,7 @@ Pure modules are marked *(pure)*.
 | `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`, `Jump` (the jumplist and `jumping`); the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
 | `Him.Plugin` (+ `.Types`, `.Host`, `.Internal`), `Him.PluginState`, `Him.Contrib` (+ `.WordCount`, `.RecentFiles`) | The public plugin API, plugins' state, the contrib collection (ADR-51). |
 | `Him.PluginUI`, `Him.PluginEvent`, `Him.Spawn` | What plugins show (segments, signs, annotations); events found by comparing with what was seen; plugin processes (ADR-50) *(the first two pure)*. |
+| `Him.Main`, `Him.Rebuild` | The program as `himMain [Plugin]`; `him --rebuild` and starting a personal build (ADR-52). |
 | `Him.Ex`, `Him.Info`, `Him.Palette`, `Him.Picker` | `:` commands; the info box after a prefix; the command palette; pickers and fuzzy ranking. |
 | `Him.Config`, `Him.Config.Default` | `Config` and the `Plugin` record (ADR-35); the default bindings, actions and plugins; `configWith`. |
 | `Him.Options`, `Him.UserConfig`, `Him.Toml`, `Him.Paths` | Settings (ADR-34); the config file (ADR-32); the TOML reader; where files live. |
@@ -1525,6 +1569,8 @@ Each milestone ends with something runnable, and with this file updated.
 - [x] **47. `Him.Plugin` and contrib.** The public plugin API, settings under
   `[plugins.<name>]`, the `:plugins` picker; contrib `wordcount` and `recent-files`
   (ADR-51).
+- [x] **48. Personal builds.** `himMain`, `him --rebuild` from `plugins.toml`, the
+  released him starting a personal build, the template repository (ADR-52).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
@@ -1593,13 +1639,13 @@ them in the editor.
 ## 8. Where to pick up
 
 *Last updated 2026-10-06.* Everything the user asked for so far is done; the latest
-work, on the `plugin-api` branch, is the plugin API: building blocks (ADR-50) and `Him.Plugin` with
-contrib (ADR-51); before it
+work, on the `plugin-api` branch, is the plugin API: building blocks (ADR-50),
+`Him.Plugin` and contrib (ADR-51), personal builds (ADR-52). Before that came
 registers and the system clipboard (ADR-49), cycling the `:` line's completions with
 `tab` / `S-tab`, previewing themes as `:theme <name>` is typed, picker actions and
 marks (ADR-48) and the jumplist (ADR-47).
 
-- **State:** milestones 1–47 (§5) and ADR-1…51 (§3). `make test` runs 644 tests (pure
+- **State:** milestones 1–48 (§5) and ADR-1…52 (§3). `make test` runs 648 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).
