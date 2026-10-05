@@ -24,6 +24,7 @@ import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Syntax.Span (LineSpan)
+import Him.PluginUI (Annotation)
 import Him.Terminal.Ansi (Color (..), CursorShape (..), PackedStyle, Style, packStyle, packedDefault)
 
 data Cell = Cell
@@ -59,6 +60,8 @@ data RowKey = RowKey
   -- ^ Its highlighting.
   , rkDiagnostics :: ![(Int, Int, Int)]
   -- ^ Underlined ranges and their severity.
+  , rkAnnotations :: ![Annotation]
+  -- ^ Plugins' text after the line's end (ADR-50).
   }
   deriving stock (Eq, Show)
 

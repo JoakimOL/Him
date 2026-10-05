@@ -8,7 +8,8 @@ module Him.Render.Gutter
 import Data.Text qualified as T
 import Him.Buffer (lineCount)
 import Data.IntMap.Strict qualified as IntMap
-import Him.GitState (Sign (..), SignKind (..), gitSigns, tracking)
+import Him.GitState (SignKind (..))
+import Him.PluginUI (GutterSign (..), signsIn)
 import Him.Lsp.State (ShownDiagnostic (..), shownDiagnosticsIn)
 import Him.Document (DocKind (..), Document (..))
 import Him.Chat (ChatMark (..), ChatState (..))
@@ -58,7 +59,8 @@ drawGutter theme ed rect frame0 = case docKind (edDoc ed) of
     current = posLine (rangeHead (primary (docSelection doc)))
     lane = signLane ed
     digits = rectWidth rect - 1 - lane
-    signs = maybe mempty (\t -> gitSigns t top (top + rectHeight rect - 1)) (tracking (docGit doc))
+    -- Plugins' signs (git's among them, ADR-50).
+    signs = signsIn (docId doc) top (top + rectHeight rect - 1) (edPluginUI ed)
     -- Diagnostics win over git signs: the most severe on each line.
     diagnostics =
       IntMap.fromListWith min [(sdLine sd, sdSeverity sd) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) (docBuffer doc) top (top + rectHeight rect)]
@@ -75,12 +77,8 @@ drawGutter theme ed rect frame0 = case docKind (edDoc ed) of
         (signText, signStyle) = case (IntMap.lookup line diagnostics, IntMap.lookup line signs) of
           _ | any (\(a, b) -> a <= line && line < b) added -> ("+", themeGitSign theme SignAdded False)
           (Just sev, _) -> ("●", themeDiagnostic theme sev)
-          (_, Just (Sign kind staged)) -> (glyph kind, themeGitSign theme kind staged)
+          (_, Just gs) -> (T.take 1 (gsText gs), faceStyle theme (gsFace gs))
           _ -> (" ", themeGutter theme)
-        glyph = \case
-          SignAdded -> "▎"
-          SignChanged -> "▎"
-          SignRemoved -> "▁"
 
 -- | The chat's gutter: a bar beside your messages, the code blocks, the
 -- changes to review, and the input.

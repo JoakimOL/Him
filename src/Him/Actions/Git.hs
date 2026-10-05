@@ -7,6 +7,7 @@ module Him.Actions.Git
   , gitHousekeeping
   , applyGitResult
   , markGitReload
+  , gitSignSpans
   ) where
 
 import Control.Monad.Trans.State.Strict (gets, modify')
@@ -27,6 +28,8 @@ import Data.Map.Strict qualified as Map
 import Him.Config (Plugin (..), plugin)
 import Him.Key (KeyCode (..), plain)
 import Him.Mode (Mode (..))
+import Data.IntMap.Strict qualified as IntMap
+import Him.PluginUI (Face (..), GutterSign (..), PluginUI (..), Segment (..), Side (..), SignSpan (..), face)
 
 -- | Git signs in the gutter, change navigation and line staging (ADR-25),
 -- as a plugin (ADR-35).
@@ -146,6 +149,7 @@ jumpChange forward = jumping $ do
 -- asks again, so a burst of edits costs one diff at a time.
 gitHousekeeping :: EditorM ()
 gitHousekeeping = do
+  modify' syncUI
   d <- getDoc
   case (docGit d, docKind d, docPath d) of
     (GitUnknown, TextDoc, Just path) -> do
@@ -162,6 +166,36 @@ gitHousekeeping = do
     _ -> pure ()
   where
     setTracking t = modifyDoc (\doc -> doc {docGit = GitTracked t})
+
+-- | Show each document's changes as signs, and its branch in the status
+-- line (ADR-50); only when they changed since they were last shown.
+syncUI :: Editor -> Editor
+syncUI ed
+  | fmap (\ui -> (puSigns ui, puSegments ui)) (Map.lookup "git" (edPluginUI ed)) == Just (signs, segments) = ed
+  | otherwise = modifyPluginUI "git" (\ui -> ui {puSigns = signs, puSegments = segments}) ed
+  where
+    tracked = [(d, t) | d <- allDocuments ed, Just t <- [tracking (docGit d)]]
+    signs = IntMap.fromList [(docId d, spans) | (d, t) <- tracked, let spans = gitSignSpans t, not (null spans)]
+    segments =
+      [ Segment SideRight branch Nothing 5 (Just (docId d))
+      | (d, t) <- tracked
+      , let branch = gbBranch (gtBase t)
+      , not (T.null branch)
+      ]
+
+-- | The signs of a document's changes: unstaged ones over staged ones,
+-- which are dimmer. A removal is marked on the line above it (or line 0).
+gitSignSpans :: GitTracking -> [SignSpan]
+gitSignSpans t = spans False (gtUnstaged t) <> spans True (gtStaged t)
+  where
+    spans staged hunks = [span' staged h | h <- hunks]
+    span' staged h = case hunkKind h of
+      Added -> SignSpan (hNewStart h) (hNewStart h + hNewCount h) (sign staged "▎" "diff.plus")
+      Changed -> SignSpan (hNewStart h) (hNewStart h + hNewCount h) (sign staged "▎" "diff.delta")
+      Removed -> let l = max 0 (hNewStart h - 1) in SignSpan l (l + 1) (sign staged "▁" "diff.minus")
+    sign staged glyph scope
+      | staged = GutterSign glyph (Face (scope <> ".staged") True) 10
+      | otherwise = GutterSign glyph (face (scope <> ".gutter")) 11
 
 -- | A git job reported back.
 applyGitResult :: JobResult -> EditorM ()

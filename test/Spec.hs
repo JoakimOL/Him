@@ -15,6 +15,7 @@ import Test.Register
 import Test.Jump
 import Test.Chat
 import Test.Repl
+import Test.PluginApi
 
 main :: IO ()
 main = do
@@ -34,6 +35,7 @@ main = do
   jump <- jumpTests
   chat <- chatTests
   repl <- replTests
+  pluginApi <- pluginApiTests
   runTests
     [ group "Him.Key" keyTests
     , group "Him.Terminal.Input.decodeKeys" decodeTests
@@ -80,6 +82,7 @@ main = do
     , group "AI chat (scripted provider; nothing live)" chat
     , group "windows (splits)" windows
     , group "REPL" repl
+    , group "plugin building blocks (ADR-50)" pluginApi
     , group "keys through the default config" integration
     , group "rebinding keys to actions" rebinding
     , group "buffers" bufferIO

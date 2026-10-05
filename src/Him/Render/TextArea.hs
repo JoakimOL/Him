@@ -29,6 +29,7 @@ import Him.Terminal.Ansi (Style (..), defaultStyle, packStyle, patchStyle, unpac
 import Him.Selection
 import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
 import Him.View (View (..))
+import Him.PluginUI (Annotation (..), annotationsIn)
 
 -- | Draws the visible lines. Rows whose 'RowKey' is the same as in the
 -- previous frame are copied from it instead of being laid out again.
@@ -124,6 +125,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
       InlineCode -> themeInlineCode theme
       InlineBold -> defaultStyle {styleBold = True}
       InlineHeading -> bold (themeDirectoryHeader theme)
+    annotationsByLine = annotationsIn (docId doc) top bottom (edPluginUI ed)
     diagnosticsByLine =
       IntMap.fromListWith (<>) [(sdLine sd, [(sdStart sd, sdEnd sd, sdSeverity sd)]) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) buf top bottom]
     sevRank = \case
@@ -141,7 +143,8 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
           remember (copyCells (prevRowOf screenRow) screenRow (rectCol rect) (rectWidth rect) p f)
       | otherwise = remember (putCells screenRow (rectCol rect) visible f)
       where
-        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls syntax [(a, b, sevRank sev) | (a, b, sev) <- underlines]
+        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls syntax [(a, b, sevRank sev) | (a, b, sev) <- underlines] annotations
+        annotations = IntMap.findWithDefault [] line annotationsByLine
         underlines = IntMap.findWithDefault [] line diagnosticsByLine
         -- Diagnostics are underlined (as the theme says).
         underlineAt i = case [sev | (a, b, sev) <- underlines, a <= i, i < b] of
@@ -189,7 +192,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
         lineCells
           | plain = zipWith (\i ch -> Cell ch (styled i)) [0 ..] (T.unpack text) <> lineEndCell
           | otherwise = concatMap charCells (layoutLine tabWidth text) <> lineEndCell
-        visible = fillRow $
+        visible = annotate . fillRow $
           if plain
             then take (rectWidth rect) (drop left lineCells)
             else fixEdges (take (rectWidth rect) (drop left lineCells))
@@ -206,6 +209,18 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
            in if isWide c
                 then [Cell c style, Cell continuation style]
                 else map (`Cell` style) (glyphs c w)
+        -- Plugins' annotations follow the line's end, a space apart, as far
+        -- as the row goes (ADR-50).
+        annotate cs
+          | null annotations || banded cls = cs
+          | otherwise =
+              cs
+                <> take
+                  (rectWidth rect - length cs)
+                  (concat [Cell ' ' base : annotationCells a | a <- annotations])
+        annotationCells a =
+          let st = over (faceStyle theme (anFace a)) base
+           in concat [if isWide c then [Cell c st, Cell continuation st] else [Cell (if c < ' ' then ' ' else c) st] | c <- T.unpack (anText a)]
         -- The line end only shows when it is selected (or a cursor).
         lineEndCell = maybe [] (\st -> [Cell ' ' (over st base)]) (styleAt len)
         -- A wide character cut by the left or right edge becomes a blank, so

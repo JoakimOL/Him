@@ -1240,6 +1240,45 @@ functions, and `Editor` derives `Eq`/`Show`); reading the clipboard on every
 `getRegister` (blocking IO in pure-looking code, and tests would touch the real
 clipboard).
 
+**ADR-50: What plugins build on: events, processes, segments, signs, annotations.**
+This is phase 1 of the plugin API (`docs/PLUGIN-API.md`). The pieces are all core and
+pure where they can be, and they are meant to be what `Him.Plugin` exposes.
+- **UI as data** (`Him.PluginUI`): each plugin has a `PluginUI` in `edPluginUI`
+  (by plugin name) holding status line `Segment`s, gutter `SignSpan`s and end-of-line
+  `Annotation`s by document. The renderer draws them, so a plugin never draws into the
+  frame.
+  - **Faces:** a `Face` names a theme scope, with an optional dimmed fallback to its
+    parent (git's staged signs use `diff.plus.staged`). `faceStyle` turns a face into
+    a style.
+  - **Segments** come left after the file name or right before the position. They are
+    shown best priority first while they fit, and the file name keeps up to 16 cells.
+  - **Signs:** where signs overlap, the higher priority wins, and diagnostics win over
+    all of them.
+  - **Annotations** are part of the row cache key.
+  - **Clean-up:** a closed document's entries are dropped, and a plugin that is
+    switched off loses its `PluginUI`.
+- **Events** (`Him.PluginEvent`) cover a buffer being opened, closed, entered,
+  changed or saved, and a mode change. Housekeeping compares the documents (version,
+  saves), the mode and the focused document with `edSeen`, instead of each code path
+  raising them. They reach `plEvent` of every enabled plugin, then the effects those
+  handlers ask for run. At startup, every document is "opened".
+- **Processes** (`Him.Spawn`): `ProcessStart key cmd args dir`, `ProcessSend`,
+  `ProcessStop`, `ProcessStopAll owner`.
+  - The key is `plugin:name`. Output and errors arrive line by line as `ProcessLine`
+    and are routed to the owner's `plEvent` as `ProcessOutput name line`, then
+    `ProcessExited name code`.
+  - A process that is replaced or stopped says nothing more, guarded by a `Unique`.
+  - Switching the plugin off stops its processes.
+- **Git on top of it:** the git plugin sets its signs from the hunks (`gitSignSpans`;
+  `GitState.gitSigns` is gone) and a branch segment for each document in a repository.
+  `loadBase` reads the branch in the same `rev-parse` call (`gbBranch`). The branch is
+  updated whenever the base reloads (save, staging).
+
+*Alternatives:* raising events at each place a buffer opens, changes or saves (many
+paths, easy to miss one); a plugin drawing into the frame itself (impure, and plugins
+could overwrite each other); signs per line instead of spans (a long untracked file
+would mean a map entry per line on every diff).
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -1282,6 +1321,7 @@ Pure modules are marked *(pure)*.
 | `Him.EditorM` | The monad actions run in and its helpers (`edit`, `motion`, `request`, `info`). |
 | `Him.Action`, `Him.Invocation` | Named actions with typed parameters; invocations as text (ADR-17). |
 | `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`, `Jump` (the jumplist and `jumping`); the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
+| `Him.PluginUI`, `Him.PluginEvent`, `Him.Spawn` | What plugins show (segments, signs, annotations); events found by comparing with what was seen; plugin processes (ADR-50) *(the first two pure)*. |
 | `Him.Ex`, `Him.Info`, `Him.Palette`, `Him.Picker` | `:` commands; the info box after a prefix; the command palette; pickers and fuzzy ranking. |
 | `Him.Config`, `Him.Config.Default` | `Config` and the `Plugin` record (ADR-35); the default bindings, actions and plugins; `configWith`. |
 | `Him.Options`, `Him.UserConfig`, `Him.Toml`, `Him.Paths` | Settings (ADR-34); the config file (ADR-32); the TOML reader; where files live. |
@@ -1421,6 +1461,8 @@ Each milestone ends with something runnable, and with this file updated.
   `+` / `*` as the system clipboard / primary selection (`space y`, `space p`), `R` /
   `space R` (replace with a register / the clipboard), `_`,
   `C-r` in insert mode, `:registers`, `:clear-register` (ADR-49).
+- [x] **46. Plugin building blocks.** Events, plugin processes, status line segments,
+  gutter signs and annotations; git's signs and a branch segment on them (ADR-50).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
@@ -1488,7 +1530,13 @@ them in the editor.
 
 ## 8. Where to pick up
 
-- **State:** milestones 1–45 (§5) and ADR-1…49 (§3). `make test` runs 631 tests (pure
+*Last updated 2026-10-06.* Everything the user asked for so far is done; the latest
+work, on the `plugin-api` branch, is the plugin building blocks (ADR-50), and before it
+registers and the system clipboard (ADR-49), cycling the `:` line's completions with
+`tab` / `S-tab`, previewing themes as `:theme <name>` is typed, picker actions and
+marks (ADR-48) and the jumplist (ADR-47).
+
+- **State:** milestones 1–46 (§5) and ADR-1…50 (§3). `make test` runs 639 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).

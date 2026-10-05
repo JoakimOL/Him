@@ -37,10 +37,19 @@ git dir args input =
 loadBase :: FilePath -> IO (Maybe GitBase)
 loadBase path = do
   canon <- either (const path) id <$> try @IOException (canonicalizePath path)
-  git (takeDirectory canon) ["rev-parse", "--show-toplevel"] "" >>= \case
+  -- The root and the branch in one call; a repository without commits has
+  -- no HEAD to name, so then the root alone.
+  located <-
+    git (takeDirectory canon) ["rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"] "" >>= \case
+      Right out -> pure (Right out)
+      Left _ -> git (takeDirectory canon) ["rev-parse", "--show-toplevel"] ""
+  case located of
     Left _ -> pure Nothing
     Right out -> do
-      let root = T.unpack (T.strip (decodeUtf8Lenient out))
+      let (root, branch) = case T.lines (decodeUtf8Lenient out) of
+            r : b : _ -> (T.unpack (T.strip r), T.strip b)
+            r : _ -> (T.unpack (T.strip r), "")
+            [] -> ("", "")
           rel = makeRelative root canon
       staged <- git root ["ls-files", "--stage", "--", rel] ""
       let mode = case staged of
@@ -60,6 +69,7 @@ loadBase path = do
           , gbIndexNewline = newline
           , gbHead = either (const []) (fst . splitBlob) headVersion
           , gbInHead = either (const False) (const True) headVersion
+          , gbBranch = if branch == "HEAD" then "(detached)" else branch
           }
 
 -- | A blob as lines, split the way documents are ("Him.File"), and whether

@@ -1,22 +1,19 @@
 -- | What a document knows about its file in git (ADR-25): the versions in
 -- the index and in HEAD, the hunks between them and the buffer, and the
--- gutter signs and staging edits computed from those. Pure; the git
+-- staging edits computed from those (the signs are drawn by the git
+-- plugin, "Him.Actions.Git"). Pure; the git
 -- commands are in "Him.Git" and run as background jobs.
 module Him.GitState
   ( GitBase (..)
   , GitInfo (..)
   , GitTracking (..)
-  , Sign (..)
   , SignKind (..)
   , tracking
-  , gitSigns
   , changeStarts
   , applySelected
   , invertHunk
   ) where
 
-import Data.IntMap.Strict (IntMap)
-import Data.IntMap.Strict qualified as IntMap
 import Data.Text (Text)
 import Him.Diff
 
@@ -32,6 +29,9 @@ data GitBase = GitBase
   -- ^ Whether the index version ends with a line break.
   , gbHead :: ![Text]
   , gbInHead :: !Bool
+  , gbBranch :: !Text
+  -- ^ The checked-out branch when the base was loaded (empty before the
+  -- first commit).
   }
   deriving stock (Eq, Show)
 
@@ -68,29 +68,6 @@ tracking = \case
 
 data SignKind = SignAdded | SignChanged | SignRemoved
   deriving stock (Eq, Show)
-
--- | A gutter sign: what changed, and whether it is staged.
-data Sign = Sign !SignKind !Bool
-  deriving stock (Eq, Show)
-
--- | Signs for the buffer lines @[from, to]@. Unstaged changes win over
--- staged ones on the same line. A removal is marked on the line above it
--- (or on line 0).
-gitSigns :: GitTracking -> Int -> Int -> IntMap Sign
-gitSigns t from to = IntMap.union (signs False (gtUnstaged t)) (signs True (gtStaged t))
-  where
-    signs staged hunks =
-      IntMap.fromList
-        [ (l, Sign kind staged)
-        | h <- hunks
-        , (l, kind) <- case hunkKind h of
-            Added -> [(l, SignAdded) | l <- lines' h]
-            Changed -> [(l, SignChanged) | l <- lines' h]
-            Removed -> [(max 0 (hNewStart h - 1), SignRemoved)]
-        , l >= from
-        , l <= to
-        ]
-    lines' h = [hNewStart h .. hNewStart h + hNewCount h - 1]
 
 -- | The buffer lines where changes start, sorted (for @] g@ / @[ g@).
 changeStarts :: GitTracking -> [Int]

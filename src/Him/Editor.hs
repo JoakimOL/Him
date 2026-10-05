@@ -24,6 +24,7 @@ module Him.Editor
   , modifyDocument
   , previewFor
   , mapDocuments
+  , modifyPluginUI
     -- * Windows
   , windowBoxes
   , focusedTextHeight
@@ -49,6 +50,8 @@ import Data.Text qualified as T
 import Him.Lsp.State (Attachment (..), Completion, DocLsp (..), LspState, emptyLsp)
 import Him.Position (Pos (..))
 import Him.Picker (PickTarget (..), Picker)
+import Him.PluginEvent (Seen, unseen)
+import Him.PluginUI (PluginUI, emptyPluginUI)
 import Him.Jumplist (Jump (..), Jumplist (..))
 import Data.Sequence qualified as Seq
 import Him.Search (Direction)
@@ -226,6 +229,10 @@ data Editor = Editor
   , edJumpTexts :: !(IntMap (Int, Buffer))
   -- ^ For each document with jumps: the version and text their positions
   -- refer to, so they can follow later edits.
+  , edPluginUI :: !(Map Text PluginUI)
+  -- ^ What each plugin shows, by plugin name (ADR-50).
+  , edSeen :: !Seen
+  -- ^ What plugin events have been raised for ("Him.PluginEvent").
   , edQuit :: !Bool
   }
   deriving stock (Eq, Show)
@@ -266,6 +273,8 @@ newEditor size doc =
     , edSelectedRegister = Nothing
     , edJumps = IntMap.empty
     , edJumpTexts = IntMap.empty
+    , edPluginUI = Map.empty
+    , edSeen = unseen
     , edQuit = False
     }
 
@@ -504,3 +513,7 @@ reviewFor :: Editor -> Int -> Maybe Review
 reviewFor ed i = case [rv | d <- allDocuments ed, ChatDoc cs <- [docKind d], rv <- csReviews cs, rvDoc rv == i] of
   rv : _ -> Just rv
   [] -> Nothing
+
+-- | Change what a plugin shows (ADR-50).
+modifyPluginUI :: Text -> (PluginUI -> PluginUI) -> Editor -> Editor
+modifyPluginUI name f e = e {edPluginUI = Map.insert name (f (Map.findWithDefault emptyPluginUI name (edPluginUI e))) (edPluginUI e)}

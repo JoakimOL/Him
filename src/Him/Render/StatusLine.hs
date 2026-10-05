@@ -15,14 +15,34 @@ import Him.Position (Pos (..))
 import Him.Render.Frame
 import Him.Render.Theme
 import Him.Selection (primary, primaryIndex, rangeCount, rangeHead)
+import Him.PluginUI (Segment (..), Side (..), segmentsFor)
+import Him.Terminal.Ansi (Style (..), patchStyle)
 
 drawStatusLine :: Theme -> Bool -> Editor -> Rect -> Frame -> Frame
 drawStatusLine theme focused ed rect =
   putText row (rectCol rect + rectWidth rect - T.length right) style right
+    . putSegments (rectCol rect + rectWidth rect - T.length right - segmentsWidth rights) rights
+    . putSegments (rectCol rect + T.length mode + T.length file + 2) lefts
     . putText row (rectCol rect + T.length mode) style file
     . putText row (rectCol rect) (if focused then themeMode theme (keymapMode ed) else style) mode
     . fillRect rect style
   where
+    -- Plugins' segments (ADR-50), each followed by two spaces, best first
+    -- while they fit beside the rest (a file name keeps up to 16 cells).
+    fitting = takeFitting (rectWidth rect - T.length mode - T.length right - min 16 (T.length (displayName doc)) - T.length bufs - T.length dirty - 2) (segmentsFor (docId doc) (edPluginUI ed))
+    takeFitting free = \case
+      s : rest
+        | segmentWidth s <= free -> s : takeFitting (free - segmentWidth s) rest
+        | otherwise -> takeFitting free rest
+      [] -> []
+    segmentWidth s = T.length (segText s) + 2
+    segmentsWidth = sum . map segmentWidth
+    lefts = [s | s <- fitting, segSide s == SideLeft]
+    rights = [s | s <- fitting, segSide s == SideRight]
+    putSegments col segs fr =
+      fst (foldl' (\(f, at) s -> (putText row at (segmentStyle s) (segText s) f, at + segmentWidth s)) (fr, col) segs)
+    -- A face colours the text; the background stays the status line's.
+    segmentStyle s = maybe style (\fc -> style `patchStyle` (faceStyle theme fc) {styleBg = styleBg style}) (segFace s)
     row = rectRow rect
     style = if focused then themeStatusLine theme else themeStatusLineInactive theme
     doc = edDoc ed
@@ -36,7 +56,7 @@ drawStatusLine theme focused ed rect =
       (i, n) -> "[" <> maybe "?" (T.pack . show . (+ 1)) i <> "/" <> T.pack (show n) <> "] "
     -- Shorten the file name from the left so the dirty marker and the right
     -- section always fit.
-    room = rectWidth rect - T.length mode - T.length right - T.length dirty - T.length bufs - 2
+    room = rectWidth rect - T.length mode - T.length right - T.length dirty - T.length bufs - 2 - segmentsWidth fitting
     name = displayName doc
     shortName
       | T.length name <= room = name

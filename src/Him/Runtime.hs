@@ -48,6 +48,8 @@ import Him.Grep (Hit (..), grepFile)
 import Him.Search (compileNeedle)
 import Data.Foldable (for_)
 import Him.Syntax (SyntaxProvider, SyntaxSession (..), startSyntax)
+import Data.Unique (Unique, newUnique)
+import Him.Spawn (Spawned, sendSpawned, spawnLines, stopSpawned)
 
 data Runtime = Runtime
   { rtPost :: Event -> IO ()
@@ -65,6 +67,8 @@ data Runtime = Runtime
   , rtServers :: MVar (Map Text (MVar (Either Text (Server, ServerInfo))))
   -- ^ Language servers by key; the inner variable is filled once the
   -- server has started (or failed to).
+  , rtProcesses :: MVar (Map Text (Unique, Spawned))
+  -- ^ Plugin processes, by key (@plugin:name@).
   }
 
 newRuntime :: Config -> (Event -> IO ()) -> IO Runtime
@@ -75,7 +79,8 @@ newRuntime config post = do
   replProcesses <- newMVar Map.empty
   chats <- newMVar Map.empty
   servers <- newMVar Map.empty
-  pure (Runtime post jobs (cfgSyntaxProviders config) sessions configRef replProcesses chats servers)
+  processes <- newMVar Map.empty
+  pure (Runtime post jobs (cfgSyntaxProviders config) sessions configRef replProcesses chats servers processes)
 
 -- | Use another config's tables from now on (after a reload; running
 -- servers and REPLs keep running).
@@ -148,7 +153,32 @@ perform rt = \case
   LspStopAll -> do
     stopped <- modifyMVar (rtServers rt) (\servers -> pure (Map.empty, Map.elems servers))
     mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) stopped
+  ProcessStart key command args dir -> do
+    takeProcesses rt (== key) >>= mapM_ stopSpawned
+    me <- newUnique
+    registered <- newEmptyMVar
+    let post = rtPost rt . EvJob
+        -- A process stopped or replaced under its key says nothing more;
+        -- the end waits until the process is in the table.
+        exited code = do
+          readMVar registered
+          current <- modifyMVar (rtProcesses rt) $ \m -> case Map.lookup key m of
+            Just (u, _) | u == me -> pure (Map.delete key m, True)
+            _ -> pure (m, False)
+          when current (post (ProcessDone key code))
+    spawnLines command args dir (post . ProcessLine key) exited >>= \case
+      Left e -> post (ProcessLine key e) >> post (ProcessDone key (-1))
+      Right sp -> modifyMVar_ (rtProcesses rt) (pure . Map.insert key (me, sp)) >> putMVar registered ()
+  ProcessSend key text -> Map.lookup key <$> readMVar (rtProcesses rt) >>= mapM_ ((`sendSpawned` text) . snd)
+  ProcessStop key -> takeProcesses rt (== key) >>= mapM_ stopSpawned
+  ProcessStopAll owner -> takeProcesses rt ((== owner) . T.takeWhile (/= ':')) >>= mapM_ stopSpawned
   _ -> pure ()
+
+-- | Take the processes whose keys match out of the table.
+takeProcesses :: Runtime -> (Text -> Bool) -> IO [Spawned]
+takeProcesses rt match = modifyMVar (rtProcesses rt) $ \m ->
+  let (taken, kept) = Map.partitionWithKey (\k _ -> match k) m
+   in pure (kept, map snd (Map.elems taken))
 
 -- | A chat buffer's session: which provider started it, and how to cancel
 -- the turn in flight.
@@ -171,6 +201,7 @@ withRepl rt doc k = Map.lookup doc <$> readMVar (rtRepls rt) >>= mapM_ k
 shutdown :: Runtime -> IO ()
 shutdown rt = do
   readMVar (rtRepls rt) >>= mapM_ stopRepl
+  readMVar (rtProcesses rt) >>= mapM_ (stopSpawned . snd)
   readMVar (rtChats rt) >>= mapM_ (sessClose . ceSession)
   servers <- readMVar (rtServers rt)
   mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) (Map.elems servers)

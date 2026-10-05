@@ -6,6 +6,7 @@ module Him.Render.Theme
   , fromScopes
   , defaultTheme
   , scopeStyle
+  , faceStyle
   ) where
 
 import Data.Map.Strict (Map)
@@ -16,6 +17,7 @@ import Data.Text qualified as T
 import Him.GitState (SignKind (..))
 import Him.Lsp.Protocol (Severity (..))
 import Him.Mode (Mode (..))
+import Him.PluginUI (Face (..))
 import Him.Terminal.Ansi
 import Him.Theme (defaultThemeText, parseThemeFile, resolveTheme)
 
@@ -77,6 +79,14 @@ data Theme = Theme
 -- @keyword.control.import@, then @keyword.control@, then @keyword@.
 scopeStyle :: Theme -> Text -> Maybe Style
 scopeStyle theme = lookupScope (themeScopes theme)
+
+-- | How a plugin's 'Face' looks in a theme (ADR-50).
+faceStyle :: Theme -> Face -> Style
+faceStyle theme (Face scope dimFallback) = case Map.lookup scope (themeScopes theme) of
+  Just st -> st
+  Nothing
+    | dimFallback -> (fromMaybe defaultStyle (lookupScope (themeScopes theme) (T.dropEnd 1 (T.dropWhileEnd (/= '.') scope)))) {styleDim = True}
+    | otherwise -> fromMaybe defaultStyle (lookupScope (themeScopes theme) scope)
 
 lookupScope :: Map Text Style -> Text -> Maybe Style
 lookupScope scopes = go

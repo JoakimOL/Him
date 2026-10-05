@@ -77,6 +77,15 @@ data Effect
     ClipboardSet !Char ![Text]
   | -- | Read the clipboard into its register, then use it.
     ClipboardGet !Char !RegisterUse
+  | -- | Start a program for a plugin (ADR-50): key (@plugin:name@; one
+    -- running with the same key is stopped first), command, arguments,
+    -- directory. Its lines come back as 'ProcessLine'.
+    ProcessStart !Text !FilePath ![String] !(Maybe FilePath)
+  | -- | Write to a plugin process's input.
+    ProcessSend !Text !Text
+  | ProcessStop !Text
+  | -- | Stop every process of a plugin (it was switched off).
+    ProcessStopAll !Text
   deriving stock (Eq, Show)
 
 -- | What a register read from the clipboard is for.
@@ -165,4 +174,9 @@ data JobResult
     ReplExited !Int !Text
   | -- | A file read for the preview, or why not.
     PreviewLoaded !FilePath !(Either Text Buffer)
+  | -- | A line of output from a plugin process (by key).
+    ProcessLine !Text !Text
+  | -- | It ended: the exit code (-1: it could not start; the reason came
+    -- as a line before).
+    ProcessDone !Text !Int
   deriving stock (Eq, Show)

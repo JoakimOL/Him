@@ -20,8 +20,10 @@ import Data.Text.Encoding qualified as TE
 import System.Directory (createDirectoryIfMissing, doesPathExist, getTemporaryDirectory, removeDirectoryRecursive)
 import Him.Diff
 import Him.GitState
-import Him.Actions.Git (gitHousekeeping)
+import Him.Actions.Git (gitHousekeeping, gitSignSpans)
+import Him.PluginUI (Face (..), GutterSign (..), PluginUI (..), Segment (..), emptyPluginUI, signsIn)
 import Data.IntMap.Strict qualified as IntMap
+import Data.Map.Strict qualified as Map
 import Him.Process (ProcessResult (..), runProcess)
 import Him.Key
 import Data.Text qualified as T
@@ -80,10 +82,11 @@ gitStateTests =
           new = ["a", "B", "c", "D"]
        in assertEqual ["a", "b", "c", "D"] (apply old new (/= 1))
   , test "signs: added, changed, removed; unstaged wins" $
-      let t = GitTracking (GitBase "" "" "" [] True [] True) [Hunk 0 0 0 1, Hunk 2 1 3 0] [Hunk 0 1 0 1, Hunk 4 1 5 1] 0 (-1) False
+      let t = GitTracking (GitBase "" "" "" [] True [] True "") [Hunk 0 0 0 1, Hunk 2 1 3 0] [Hunk 0 1 0 1, Hunk 4 1 5 1] 0 (-1) False
+          ui = Map.singleton "git" emptyPluginUI {puSigns = IntMap.singleton 1 (gitSignSpans t)}
        in assertEqual
-            [(0, Sign SignAdded False), (2, Sign SignRemoved False), (5, Sign SignChanged True)]
-            (IntMap.toList (gitSigns t 0 10))
+            [(0, ("▎", "diff.plus.gutter")), (2, ("▁", "diff.minus.gutter")), (5, ("▎", "diff.delta.staged"))]
+            (IntMap.toList (fmap (\g -> (gsText g, faceScope (gsFace g))) (signsIn 1 0 10 ui)))
   ]
   where
     apply old new = applySelected old new (diffLines old new)
@@ -102,7 +105,7 @@ gitTests = do
   exists <- doesPathExist repo
   when exists (removeDirectoryRecursive repo)
   createDirectoryIfMissing True repo
-  _ <- g ["init", "-q"]
+  _ <- g ["init", "-q", "-b", "trunk"]
   _ <- g ["config", "user.email", "t@t"]
   _ <- g ["config", "user.name", "t"]
   writeFile file "one\ntwo\nthree\n"
@@ -123,6 +126,9 @@ gitTests = do
   removeDirectoryRecursive repo
   pure
     [ test "a tracked file gets its git base" (assertEqual (Just "f.txt") (gbPath . gtBase <$> tracking (docGit (edDoc opened))))
+    , test "the branch shows in the status line, the changes as signs" $
+        let ui = Map.lookup "git" (edPluginUI edited)
+         in assertEqual (Just ["trunk"], Just [1, 3]) (map segText . puSegments <$> ui, IntMap.keys . signsIn (docId (edDoc edited)) 0 10 . Map.singleton "git" <$> ui)
     , test "edits show as unstaged hunks" (assertEqual (Just [Hunk 1 1 1 1, Hunk 3 0 3 1], Just []) (hunksOf edited))
     , test "staging the selected line writes only it to the index" $
         assertEqual True ("-two\n+TWO\n" `T.isInfixOf` cached && not ("+four" `T.isInfixOf` cached))

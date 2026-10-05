@@ -11,18 +11,22 @@ module Him.Session
   , switchPlugins
   ) where
 
-import Control.Monad (unless, when)
+import Control.Monad (forM_, unless, when)
 import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.Map.Strict qualified as Map
 import Data.Char (digitToInt, isDigit)
 import Data.List (partition)
 import Data.Maybe (isJust)
 import Data.Set qualified as Set
+import Data.IntSet qualified as IntSet
+import Him.PluginEvent (detectEvents)
+import Him.PluginEvent qualified as PE
+import Him.PluginUI (dropDocuments)
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
 import Him.Action (Bound (..), bindInvocation)
-import Him.Effect (Effect (..))
-import Him.EditorM (failWith)
+import Him.Effect (Effect (..), JobResult (..))
+import Him.EditorM (failWith, request)
 import Him.EditorM qualified as Command
 import Him.Config (Config (..), Plugin (..))
 import Him.Config.Default (defaultConfig, plugins)
@@ -84,8 +88,17 @@ handleEvent config (EvJob result) = do
   Picker.applyJobResult result
   Syntax.applySyntaxResult result
   mapM_ (`plJobResult` result) (cfgPlugins config)
+  -- A plugin process's output goes to the plugin that started it.
+  case result of
+    ProcessLine key line -> toOwner key (`PE.ProcessOutput` line)
+    ProcessDone key code -> toOwner key (`PE.ProcessExited` code)
+    _ -> pure ()
   runEffects config
   housekeeping config
+  where
+    toOwner key event =
+      let (owner, name) = T.breakOn ":" key
+       in mapM_ (\p -> plEvent p (event (T.drop 1 name))) [p | p <- cfgPlugins config, plName p == owner]
 handleEvent config (EvKey key) = do
   -- A key some command waits for (the character after f) is that
   -- command's, not the keymap's.
@@ -158,6 +171,29 @@ housekeeping config = do
   mapM_ plHousekeeping (cfgPlugins config)
   Picker.pickerHousekeeping
   modify' Jump.syncJumps
+  pluginEvents config
+
+-- | Tell the plugins what happened since the last event (ADR-50), and
+-- forget what they showed for documents that closed. Effects their
+-- handlers ask for run at once; events those cause wait for the next
+-- round.
+pluginEvents :: Config -> Command.EditorM ()
+pluginEvents config = do
+  ed <- get
+  let docs = allDocuments ed
+      (events, seen) = detectEvents docs (docId (edDoc ed)) (edMode ed) (edSeen ed)
+  modify' (\e -> e {edSeen = seen})
+  if null events
+    then pure ()
+    else do
+      when (any isClosed events) $
+        modify' (\e -> e {edPluginUI = dropDocuments (IntSet.fromList (map docId docs)) (edPluginUI e)})
+      sequence_ [plEvent p ev | ev <- events, p <- cfgPlugins config]
+      runEffects config
+  where
+    isClosed = \case
+      PE.BufferClosed _ -> True
+      _ -> False
 
 -- | What the editor needs to know about the enabled plugins.
 withPlugins :: Config -> Editor -> Editor
@@ -171,6 +207,10 @@ switchPlugins old new = do
       gone = [p | p <- cfgPlugins old, plName p `Set.notMember` names new]
       added = [p | p <- cfgPlugins new, plName p `Set.notMember` names old]
   mapM_ plDisable gone
+  -- What a plugin showed and the processes it ran go with it.
+  forM_ gone $ \p -> do
+    modify' (\e -> e {edPluginUI = Map.delete (plName p) (edPluginUI e)})
+    request (ProcessStopAll (plName p))
   mapM_ plEnable added
   modify' (withPlugins new)
   housekeeping new
@@ -214,6 +254,10 @@ runEffects config = go (8 :: Int)
       ReplStop _ -> pure ()
       ChatSend {} -> pure ()
       ChatCancel _ -> pure ()
+      ProcessStart {} -> pure ()
+      ProcessSend _ _ -> pure ()
+      ProcessStop _ -> pure ()
+      ProcessStopAll _ -> pure ()
       ChatAnswer {} -> pure ()
       PluginCommand (Just _) -> pure ()
       ClipboardSet c vs -> Register.clipboardSet (cfgClipboardProviders config) c vs

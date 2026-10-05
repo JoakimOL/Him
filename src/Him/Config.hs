@@ -26,6 +26,7 @@ import Him.Ex (ExCommand)
 import Him.Repl (ReplTable, defaultRepls)
 import Him.Chat (ChatConfig, ChatProvider, defaultChatConfig)
 import Him.Effect (JobResult)
+import Him.PluginEvent (Event)
 import Him.Lsp.Config (ServerTable, defaultServers)
 import Him.Syntax (SyntaxProvider)
 import Him.Key (Key)
@@ -82,6 +83,9 @@ data Plugin = Plugin
   -- ^ Once per batch of input, before drawing.
   , plJobResult :: JobResult -> EditorM ()
   -- ^ Every background job result (it picks out its own).
+  , plEvent :: Event -> EditorM ()
+  -- ^ Buffers opened, changed, saved, closed, entered; mode changes;
+  -- output of its processes (ADR-50).
   , plEnable :: EditorM ()
   -- ^ Switched on while running: e.g. look every document up again.
   , plDisable :: EditorM ()
@@ -90,7 +94,7 @@ data Plugin = Plugin
 
 -- | A plugin that adds nothing yet; fill in what it has.
 plugin :: Text -> Text -> Plugin
-plugin name doc = Plugin name doc [] Map.empty [] [] False (pure ()) (pure ()) (const (pure ())) (pure ()) (pure ())
+plugin name doc = Plugin name doc [] Map.empty [] [] False (pure ()) (pure ()) (const (pure ())) (const (pure ())) (pure ()) (pure ())
 
 -- | Per mode, @(keys, action invocation)@ pairs such as
 -- @("g g", "goto_file_start")@ or @("C-d", "move_line_down 20")@. Within a
