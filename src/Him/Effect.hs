@@ -79,6 +79,9 @@ data Effect
 data Job
   = -- | List the files below a directory for the picker of this generation.
     ScanFiles !Int !WalkOptions !FilePath
+  | -- | Search the files below a directory for a query (literal, smart
+    -- case), for the global search picker of this generation.
+    GrepFiles !Int !Text !WalkOptions !FilePath
   | -- | Rank a large picker's items for a query.
     FilterPicker !Int !Text !(Seq PickerItem)
   | -- | Look up a document's file in git (by document id and path).
@@ -100,13 +103,14 @@ data Job
     LoadPreview !Int !FilePath
   deriving stock (Eq, Show)
 
-data JobKey = ScanJob | FilterJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int | SyntaxJob !Int | LspStartJob !Int | PreviewJob !FilePath
+data JobKey = ScanJob | FilterJob | GrepJob | GitLoadJob !Int | GitDiffJob !Int | GitWriteJob !Int | SyntaxJob !Int | LspStartJob !Int | PreviewJob !FilePath
   deriving stock (Eq, Ord, Show)
 
 jobKey :: Job -> JobKey
 jobKey = \case
   ScanFiles {} -> ScanJob
   FilterPicker {} -> FilterJob
+  GrepFiles {} -> GrepJob
   GitLoad d _ -> GitLoadJob d
   GitDiff d _ _ _ -> GitDiffJob d
   GitWriteIndex d _ _ _ -> GitWriteJob d
@@ -118,6 +122,11 @@ jobKey = \case
 data JobResult
   = FilesFound !Int ![FilePath]
   | ScanFinished !Int
+  | -- | Generation, query, more matching lines (until the picker holds
+    -- 'Him.Picker.matchLimit'), and how many matching lines were found
+    -- since the last batch (those included).
+    GrepFound !Int !Text ![PickerItem] !Int
+  | GrepFinished !Int !Text
   | -- | Generation, query, best matches, total number of matches.
     PickerFiltered !Int !Text ![PickerItem] !Int
   | -- | Document id, and its git base ('Nothing': not in a repository).

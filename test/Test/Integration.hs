@@ -279,6 +279,12 @@ openBufferTests = do
   staleDropped <- execStateT (handleEvent config (EvJob (PickerFiltered 7 "need" [] 0))) filteredBig
   otherScan <- execStateT (handleEvent config (EvJob (FilesFound 99 ["x"]))) filteredBig
   pickedFile <- settle config =<< foldlM run scanned (map charKey "test/Spec.hs" <> [plain KEnter])
+  -- The global search, over this repository.
+  searched <- settle config =<< foldlM run start ([plain (KChar ' '), charKey '/'] <> map charKey "maxHitText")
+  searchedAgain <- foldlM run searched (map charKey " ::")
+  let firstHit = edPicker searched >>= selectedItem
+  pickedHit <- foldlM run searched [plain KEnter]
+  searchStale <- execStateT (handleEvent config (EvJob (GrepFound (maybe 0 pkGeneration (edPicker searched)) "maxHit" [pickerItem "x" (PickFile "x") ""] 1))) searched
   -- listFiles on a small tree with a hidden directory.
   let tree = dir <> "/him-test-tree"
   createDirectoryIfMissing True (tree <> "/sub/deeper")
@@ -433,6 +439,16 @@ openBufferTests = do
     , test "an answer for an older query or another scan is dropped" $
         assertEqual (edPicker filteredBig, edPicker filteredBig) (edPicker staleDropped, edPicker otherScan)
     , test "space f opens the chosen file" (assertEqual (Just "test/Spec.hs", (1, 2)) (docPath (edDoc pickedFile), bufferIndex pickedFile))
+    , test "space / finds the lines that contain the query" $
+        assertEqual (Just (False, True))
+          ((\p -> (pkLoading p, any (\i -> piDetail i == "maxHitText :: Int" && (case piTarget i of PickPosition f _ _ _ -> f == "src/Him/Grep.hs"; _ -> False)) (pkMatches p))) <$> edPicker searched)
+    , test "space /: a new query keeps the old hits (stale) and searches again" $
+        assertEqual (Just (True, True, pkMatches <$> edPicker searched), True)
+          ((\p -> (pkLoading p, pkStale p, Just (pkMatches p))) <$> edPicker searchedAgain, any (\case StartJob (GrepFiles _ "maxHitText ::" _ _) -> True; _ -> False) (edEffects searchedAgain))
+    , test "space /: hits for another query are dropped" (assertEqual (edPicker searched) (edPicker searchStale))
+    , test "space / opens the hit at its line and column" $
+        assertEqual ((\case PickPosition f l c _ -> Just (Just f, Pos l c); _ -> Nothing) . piTarget =<< firstHit)
+          (Just (docPath (edDoc pickedHit), rangeHead (primary (docSelection (edDoc pickedHit)))))
     , test ":o of a directory lists it" $
         assertEqual (Just dcanon, [T.pack dcanon <> ":  (ret opens, - goes up)", "../", "sub/", "a.txt", "b.txt"], 2, Directory)
           (docPath (edDoc listing), lines' listing, cursorLine listing, keymapMode listing)

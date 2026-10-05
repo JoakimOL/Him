@@ -43,7 +43,10 @@ import Him.Diff (Hunk (..), diffLines, mapLine)
 import Him.Git (loadBase, removeFromIndex, writeIndex)
 import Him.GitState (GitBase (..))
 import Data.IntMap.Strict qualified as IntMap
-import Him.Picker (rank)
+import Him.Picker (PickTarget (..), matchLimit, pickerItem, rank)
+import Him.Grep (Hit (..), grepFile)
+import Him.Search (compileNeedle)
+import Data.Foldable (for_)
 import Him.Syntax (SyntaxProvider, SyntaxSession (..), startSyntax)
 
 data Runtime = Runtime
@@ -191,6 +194,37 @@ runJob rt = \case
     rest <- atomicModifyIORef' pending (\(acc, _, t) -> (([], 0, t), acc))
     send rest
     post (EvJob (ScanFinished gen))
+  GrepFiles gen query opts root -> do
+    -- Debounce: the search for the next key replaces this one (same key)
+    -- while it waits, so typing a word searches once.
+    threadDelay 80000
+    for_ (compileNeedle True query) $ \needle -> do
+      -- The walk calls emit from its worker threads, so files are searched
+      -- in parallel. Hits are sent in batches (every 50 ms, or sooner for
+      -- many), and only until the picker holds matchLimit of them; after
+      -- that only the count grows.
+      start <- getMonotonicTime
+      pending <- newIORef ([], 0 :: Int, 0 :: Int, start)
+      let send (items, n) = when (n > 0) (post (EvJob (GrepFound gen query items n)))
+          path f = if root == "." then f else root <> "/" <> f
+          emit files = do
+            found <- concat <$> mapM (\f -> map (item f) <$> grepFile needle (path f)) (sort files)
+            let n = length found
+            now <- getMonotonicTime
+            due <- atomicModifyIORef' pending $ \(acc, count, kept, lastSent) ->
+              let new = take (matchLimit - kept) found
+                  acc' = acc <> new
+                  count' = count + n
+                  kept' = kept + length new
+               in if length acc' >= 500 || now - lastSent >= 0.05
+                    then (([], 0, kept', now), (acc', count'))
+                    else ((acc', count', kept', lastSent), ([], 0))
+            send due
+          item f h = pickerItem (T.pack (f <> ":" <> show (hitLine h + 1))) (PickPosition (path f) (hitLine h) (hitColumn h) Nothing) (T.strip (hitText h))
+      _ <- walkFiles opts root emit
+      rest <- atomicModifyIORef' pending (\(acc, count, kept, t) -> (([], 0, kept, t), (acc, count)))
+      send rest
+    post (EvJob (GrepFinished gen query))
   FilterPicker gen query items -> do
     let (best, total) = rank query (toList items)
     _ <- evaluate (length best + total)

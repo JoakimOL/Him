@@ -22,6 +22,7 @@ import Him.Edit
 import Him.Search (Direction (..), Match (..), compileNeedle, findMatch, selectMatches)
 import Him.History qualified as H
 import Him.Regex
+import Him.Grep (Hit (..), grepText, maxHitText)
 import Him.Motion
 import Him.Position (Pos (..))
 import Him.Selection
@@ -147,8 +148,15 @@ searchTests =
   , test "wraps around" (assertEqual (Just (Match (Pos 0 0) (Pos 0 1) True)) (findIn "ab ab" "ab" (Pos 0 3)))
   , test "multi-byte columns" (assertEqual (Just (Pos 0 3)) (matchStart <$> findIn "漢字 x" "x" (Pos 0 0)))
   , test "1500 random searches match the naive search" (randomSearches 1500)
+  , test "global search: one hit per line, columns in characters" $
+      assertEqual [(0, 3, "漢字 abc ABC"), (2, 0, "abc")] (grep_ "abc" "漢字 abc ABC\nnone\nabc")
+  , test "global search: smart case, CRLF lines" $
+      assertEqual [(1, 1, "xABC")] (grep_ "ABC" "abc\r\nxABC\r\nabc\r\n")
+  , test "global search: long lines are cut" $
+      assertEqual [maxHitText] (map (\(_, _, t) -> T.length t) (grep_ "x" (T.replicate 1000 "x")))
   ]
   where
+    grep_ q t = [(hitLine h, hitColumn h, hitText h) | n <- maybe [] pure (compileNeedle True q), h <- grepText n t]
     findIn t p pos = compileNeedle True p >>= \n -> findMatch True Forward n (buf t) pos
     alphabet = "aAbB é漢\t" :: String
     randomSearches :: Int -> Either String ()

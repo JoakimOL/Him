@@ -8,6 +8,7 @@ module Him.Search
   ( Direction (..)
   , Needle
   , needleText
+  , needleFold
   , compileNeedle
   , Match (..)
   , findMatch

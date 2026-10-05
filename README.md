@@ -36,6 +36,7 @@ make fmt / make lint         # format / lint
   pages. Match mode: `m i w`, `m a (`, `m s"`, `m r ( [`, `m d (`, `m m`.
 - **Files, buffers, windows.**
   - `space f` / `space b` pickers with a preview.
+  - `space /` searches the project's files as you type.
   - `space d` lists a directory (create, rename, delete).
   - `space ?` lists every command with its keys.
   - Splits: `C-w v` / `C-w s` (or `space w`), `:vsplit`, `:hsplit`.

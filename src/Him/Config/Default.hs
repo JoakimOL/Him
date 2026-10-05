@@ -153,6 +153,7 @@ normalBindings =
        , ("g l", "goto_line_end")
        , ("space f", "file_picker")
        , ("space b", "buffer_picker")
+       , ("space /", "global_search")
        , ("space ?", "command_palette")
        , ("space d", "directory_of_buffer")
        , ("space D", "directory_of_cwd")

@@ -1,5 +1,6 @@
--- | Pickers: @space f@ (files under the working directory) and @space b@
--- (open buffers), and the keys that drive an open picker.
+-- | Pickers: @space f@ (files under the working directory), @space b@
+-- (open buffers), @space /@ (search the files), and the keys that drive
+-- an open picker.
 module Him.Actions.Picker
   ( actions
   , pickerInsert
@@ -8,6 +9,7 @@ module Him.Actions.Picker
   ) where
 
 import Control.Monad.Trans.State.Strict (get, gets, modify')
+import Data.Foldable (toList)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
@@ -35,7 +37,12 @@ actions =
       modify' (\e -> e {edNextId = gen + 1})
       open (newPicker "files" []) {pkGeneration = gen, pkLoading = True}
       o <- gets edOptions
-      request (StartJob (ScanFiles gen (WalkOptions (optPickerHidden o) (optPickerGitIgnore o) (optPickerIgnore o) (optPickerFollowSymlinks o) (optPickerMaxFiles o)) "."))
+      request (StartJob (ScanFiles gen (walkOptions o) "."))
+  , simple "global_search" GSearch "Search the files of the working directory for text" $ do
+      -- Each query starts a search that streams its hits in (ADR-46).
+      gen <- gets edNextId
+      modify' (\e -> e {edNextId = gen + 1})
+      open (newPicker "search" []) {pkGeneration = gen, pkSource = GrepQuery}
   , simple "buffer_picker" GBuffers "Switch to an open buffer" $ do
       (bs, cur) <- gets buffers
       let label i b = T.pack (show (i + 1)) <> (if i == cur then " * " else "   ") <> displayName (bufDoc b)
@@ -79,6 +86,11 @@ actions =
       modify' (\e -> e {edPicker = Nothing, edMode = Normal, edPreviews = Map.empty})
       request (CancelJob ScanJob)
       request (CancelJob FilterJob)
+      request (CancelJob GrepJob)
+
+-- | What the file picker and the global search walk.
+walkOptions :: Options -> WalkOptions
+walkOptions o = WalkOptions (optPickerHidden o) (optPickerGitIgnore o) (optPickerIgnore o) (optPickerFollowSymlinks o) (optPickerMaxFiles o)
 
 -- | Typing narrows the picker.
 pickerInsert :: Char -> EditorM ()
@@ -94,12 +106,22 @@ changeQuery f =
   gets edPicker >>= \case
     Nothing -> pure ()
     Just p -> case pkSource p of
-      StaticItems -> refresh p {pkQuery = f (pkQuery p), pkSelected = 0}
+      StaticItems -> refresh p {pkQuery = query, pkSelected = 0}
       -- The server filters: ask again, keep showing the last answer.
       ServerQuery server -> do
-        let query = f (pkQuery p)
         modify' (\e -> e {edPicker = Just p {pkQuery = query, pkStale = True}})
         Lsp.queryWorkspaceSymbols server (pkGeneration p) query
+      -- Search again; the last hits stay (stale) until new ones arrive.
+      GrepQuery
+        | T.null query -> do
+            modify' (\e -> e {edPicker = Just p {pkQuery = query, pkItems = Seq.empty, pkMatches = [], pkMatchCount = 0, pkSelected = 0, pkLoading = False, pkStale = False, pkLabelWidth = 0}})
+            request (CancelJob GrepJob)
+        | otherwise -> do
+            modify' (\e -> e {edPicker = Just p {pkQuery = query, pkLoading = True, pkStale = True}})
+            o <- gets edOptions
+            request (StartJob (GrepFiles (pkGeneration p) query (walkOptions o) "."))
+      where
+        query = f (pkQuery p)
 
 -- | Bring a picker's matches up to date with its query and items: at once
 -- when it is small or the query is empty, otherwise in a job.
@@ -130,6 +152,17 @@ applyJobResult result =
       PreviewLoaded file loaded ->
         Just $ modify' $ \e ->
           e {edPreviews = capped (Map.insert file (either PreviewNone PreviewText loaded) (edPreviews e))}
+      GrepFound gen query new n
+        | gen == pkGeneration p && query == pkQuery p ->
+            -- The first hits for a new query replace the last query's.
+            let (old, oldCount, sel) = if pkStale p then (Seq.empty, 0, 0) else (pkItems p, pkMatchCount p, pkSelected p)
+                items = old <> Seq.fromList new
+             in Just $ modify' $ \e ->
+                  e {edPicker = Just p {pkItems = items, pkMatches = toList items, pkMatchCount = oldCount + n, pkSelected = sel, pkStale = False, pkLabelWidth = (if pkStale p then 0 else pkLabelWidth p) `max` labelWidth new}}
+      GrepFinished gen query
+        | gen == pkGeneration p && query == pkQuery p ->
+            Just $ modify' $ \e ->
+              e {edPicker = Just (if pkStale p then p {pkItems = Seq.empty, pkMatches = [], pkMatchCount = 0, pkSelected = 0, pkLabelWidth = 0} else p) {pkLoading = False, pkStale = False}}
       PickerFiltered gen query best total
         | gen == pkGeneration p && query == pkQuery p ->
             Just $ modify' $ \e ->

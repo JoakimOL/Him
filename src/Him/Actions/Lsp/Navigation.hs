@@ -124,7 +124,7 @@ workspaceSymbolsArrived gen query value = do
           enc <- currentEncoding
           let root = case pkSource p of
                 ServerQuery server -> maybe "" siRoot (Map.lookup server (lsServers (edLsp ed)))
-                StaticItems -> ""
+                _ -> ""
               items =
                 [ pickerItem name (PickPosition file l c (Just (encodingName enc))) (T.intercalate "  " (filter (not . T.null) [kind, container, T.pack (makeRelative root file <> ":" <> show (l + 1))]))
                 | s <- fromMaybe [] (asArray value)

@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- Global search (`space /`): search the project's files as you type, with hits streaming into a picker with a preview.
 - The chat looks and works like VS Code's: message blocks, an input box with history, wrapped answers, code blocks (`space c y` copies one), tool and change lines, a review summary; changes are kept or discarded.
 - Insert-mode chords such as `"j j" = "normal_mode"`: a first key the chord doesn't continue from is typed as usual.
 - REPL and chat buffers are transcripts: only the input can change.

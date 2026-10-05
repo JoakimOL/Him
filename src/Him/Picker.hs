@@ -52,6 +52,9 @@ data PickerSource
   | -- | Asked from a language server (by key) for each query, which also
     -- filters them (workspace symbols).
     ServerQuery !Text
+  | -- | Lines of the project's files that contain the query, found by a
+    -- background search for each query (ADR-46); shown as they arrive.
+    GrepQuery
   deriving stock (Eq, Show)
 
 data PickerItem = PickerItem

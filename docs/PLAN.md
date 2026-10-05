@@ -1086,6 +1086,45 @@ pure).
   - The focused chat window follows the end of the transcript while its cursor is
     in the input.
 
+**ADR-46: A global search picker (`space /`) that searches as you type.**
+Helix's `space /` and VS Code's search panel: lines of the project's files that contain
+the query, in a picker with a preview.
+- **Pattern:** literal text with smart case, the same needle as `/` (`Him.Search`), not
+  a regex. Regex search is a separate item (§8), and `Him.Regex` is a backtracking
+  engine on strings, too slow to run over a project.
+- **Search** (`Him.Grep`, pure apart from reading a file): each file is read whole and
+  scanned in C (`Him.Native.findForward`), one hit per line: the line number, the
+  column of the first match, and the line (cut to 300 characters and copied, so a hit
+  does not keep its file alive). Files over 20 MB and binary files (a NUL in the first
+  8 KB, as for the preview) are skipped.
+- **Job:** the picker's source is `GrepQuery`. Every change of the query starts a
+  `GrepFiles` job (one `GrepJob` at a time, so the last one cancels the one before).
+  - The job waits 80 ms first, so typing a word searches once.
+  - It walks the files as `space f` does (`walkFiles`, the `[editor.file-picker]`
+    options), searching each directory's files in the walk's worker threads.
+  - Hits go out in batches (`GrepFound`, every 50 ms or 500 hits), only until the
+    picker holds `matchLimit` (1000) of them; after that only the count grows.
+    `GrepFinished` ends it.
+  - Results name their generation and query; others are dropped.
+- **Picker:** items are `path:line` with the line as the detail, and `PickPosition`
+  targets, so the preview and `ret` go to the match. While a new query runs, the last
+  hits stay, marked stale, until its first batch replaces them. The count is the
+  number of matching lines found (not `matches/items`). A label too long for its
+  column is cut so the detail does not cover it (search hits from the left, keeping
+  the file name and line).
+- **Speed:** on `/usr/include` (49k files, 600 MB, warm cache) the search takes about
+  0.6 s and the first hits show within about 0.2 s. Reading the files is most of it.
+  The editor runs on one capability (no `-N`), so the walk's workers overlap
+  I/O but do not search in parallel; `-N4` changed little in a benchmark.
+- **Not done:** open buffers' unsaved text is not searched (the files on disk are);
+  matches are not highlighted in the list or the preview; files are searched in walk
+  order, not sorted.
+
+*Alternatives:* running `rg` / `grep` (fast, but an outside program the editor would
+depend on, and its ignore rules would differ from the file picker's); searching only
+after `ret` (Helix's old behaviour), which loses the "search as you type" the user
+asked for.
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -1108,6 +1147,7 @@ Pure modules are marked *(pure)*.
 | `Him.Motion`, `Him.Edit` | Motions and edits applied to every range (ADR-18) *(pure)*. |
 | `Him.TextObject` | Match mode's objects (`m i w`, `m a (`), the pair around a position, the matching bracket (ADR-40) *(pure)*. |
 | `Him.Search`, `Him.Regex` | Literal search with smart case and wrap-around; the regex subset used by highlight queries (ADR-28) *(pure)*. |
+| `Him.Grep` | The global search: the lines of a text (or a file) that contain a needle (ADR-46). |
 | `Him.History` | Undo/redo snapshots *(pure)*. |
 | `Him.TextWidth`, `Him.View` | Display columns (tabs, wide and control characters); scrolling with scrolloff *(pure)*. |
 | `Him.Document` | A buffer with its selection, path, history, kind (text, directory listing, REPL, chat), git/LSP/syntax state; `changeDocument`, `replaceBuffer`, `unsaved` *(pure)*. |
@@ -1254,6 +1294,8 @@ Each milestone ends with something runnable, and with this file updated.
   change; select and yank anywhere; insert mode goes to the input (ADR-44).
 - [x] **39. Reviewing proposed changes.** All of a turn's changes at once, decided in
   any order with the cursor on one, shown inline with their removed lines (ADR-43).
+- [x] **42. Global search.** `space /` searches the project's files as you type,
+  streaming hits into a picker with a preview (ADR-46).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
@@ -1262,7 +1304,6 @@ Later (not started; the architecture has room for them):
   clipboard.
 - [ ] Incremental parsing and injections for tree-sitter (ADR-27); highlighting in the
   picker preview.
-- [ ] Global search picker (`space /`).
 - [ ] Detecting files changed on disk.
 
 ## 6. Keybindings
@@ -1280,7 +1321,7 @@ them in the editor.
 | Select | Normal mode where motions extend; `v` / `esc` back. |
 | Insert | typing, `ret` (keeps indentation), `tab` (spaces with `expand-tab`), `backspace`, `del`, arrows, `esc`. |
 | Command line | typing, `tab` (complete names, paths, themes, plugins), `backspace`, `ret`, `esc`. |
-| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`/`tab`/`S-tab`, `ret`, `esc`. |
+| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`/`tab`/`S-tab`, `ret`, `esc`. |
 | Directory listings | `space d` (the file's directory), `space D` (the working directory), `:o dir`; in a listing: `ret`, `-` / `^` / `backspace` (parent), `g r` (refresh), `a` (new file or `dir/`), `+` (new directory), `r` (rename), `d` (delete, asks), `g .` (dotfiles). |
 | Windows | `C-w` or `space w`, then `v` / `s` (split side by side / stacked), `w` (next), `h j k l` (focus), `H J K L` (swap), `q` (close), `o` (only), `n v` / `n s` (split with a scratch buffer). |
 | git plugin | `] g` / `[ g` (next / previous change); `space g s` / `u` (stage / unstage the selected lines), `S` / `U` (the file), `r` (reset the lines). |
@@ -1321,12 +1362,11 @@ them in the editor.
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-02.* Everything the user asked for so far is done; the latest
-work is match mode and `I` / `A` (ADR-40), the AI chat plugin (ADR-41) with Claude
-Code as its default provider over MCP (ADR-42), and a sweep of the repository and the
-documents.
+*Last updated 2026-10-04.* Everything the user asked for so far is done; the latest
+work is the global search picker, `space /` (ADR-46), before that the chat panel
+(ADR-45), match mode (ADR-40) and the AI chat plugin (ADR-41, ADR-42).
 
-- **State:** milestones 1–41 (§5) and ADR-1…45 (§3). `make test` runs 573 tests (pure
+- **State:** milestones 1–42 (§5) and ADR-1…46 (§3). `make test` runs 580 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).
@@ -1350,6 +1390,9 @@ documents.
      pending edits, more tools (search the project).
   5. Moving the buffer zipper out of `Editor`, and per-subsystem job runners (ADR-36
      left them for later).
+  6. Global search (ADR-46): regex patterns (with item 1), searching open buffers'
+     unsaved text, highlighting the match in the list and preview, and speed (scan
+     the bytes before decoding them; more capabilities).
 - **Known issues:**
   - Zero-width combining characters are treated as width 1; case-insensitive search
     folds ASCII letters only.

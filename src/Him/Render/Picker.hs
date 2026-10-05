@@ -42,7 +42,9 @@ drawPicker theme ed area f = case edPicker ed of
           -- Scroll the list so the selected item is visible.
           first = max 0 (sel - listRows + 1)
           visible = zip [first ..] (take listRows (drop first ms))
-          count = T.pack (show (pkMatchCount p) <> "/" <> show (length (pkItems p))) <> if pkLoading p || pkStale p then "…" else ""
+          -- A search shows the matching lines it found (it keeps only the
+          -- first ones); other pickers, matches out of all items.
+          count = T.pack (if pkSource p == GrepQuery then show (pkMatchCount p) else show (pkMatchCount p) <> "/" <> show (length (pkItems p))) <> if pkLoading p || pkStale p then "…" else ""
           titled = T.take inner (" " <> pkTitle p <> " ")
           fit t = T.take inner t <> T.replicate (inner - T.length t) " "
           queryLine = fit (T.take (inner - T.length count - 1) ("> " <> pkQuery p) `padTo` (inner - T.length count) <> count)
@@ -50,7 +52,14 @@ drawPicker theme ed area f = case edPicker ed of
           -- Labels are padded to a common width so details line up.
           labelW = min (inner `div` 2) (pkLabelWidth p)
           rowStyle i = if i == sel then themePopupSelected theme else themePopup theme
-          row i item = (rowStyle i, fit (" " <> piLabel item))
+          row i item = (rowStyle i, fit (" " <> clip item))
+          -- A label too long for its column, when a detail follows, is cut
+          -- so the detail does not cover it: a search hit's path from the
+          -- left (the file name and line matter most), others from the right.
+          clip item
+            | T.null (piDetail item) || piLength item <= labelW + 1 = piLabel item
+            | pkSource p == GrepQuery = "…" <> T.takeEnd labelW (piLabel item)
+            | otherwise = T.take labelW (piLabel item) <> "…"
           detailCol = left + 2 + labelW + 2
           full = w - 2
           wide t = T.take full t <> T.replicate (full - T.length t) " "
