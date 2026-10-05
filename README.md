@@ -37,6 +37,8 @@ make fmt / make lint         # format / lint
 - **Files, buffers, windows.**
   - `space f` / `space b` pickers with a preview.
   - `space /` searches the project's files as you type.
+  - A jumplist, as in Helix: `C-o` / `tab`, `C-s` to save a place, `space j` to
+    list (and prune) it.
   - `space d` lists a directory (create, rename, delete).
   - `space ?` lists every command with its keys.
   - Splits: `C-w v` / `C-w s` (or `space w`), `:vsplit`, `:hsplit`.

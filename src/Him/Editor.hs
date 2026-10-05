@@ -48,17 +48,19 @@ import Data.Text qualified as T
 import Him.Lsp.State (Attachment (..), Completion, DocLsp (..), LspState, emptyLsp)
 import Him.Position (Pos (..))
 import Him.Picker (PickTarget (..), Picker)
+import Him.Jumplist (Jump (..), Jumplist (..))
+import Data.Sequence qualified as Seq
 import Him.Search (Direction)
 import Him.Selection (Selection, primary, rangeHead)
 import Him.Buffer (Buffer)
 import Him.Buffer qualified as Buffer
-import Him.Document (DocKind (..), Document (..), clampSelection, newDocument)
+import Him.Document (DocKind (..), Document (..), clampSelection, displayName, newDocument)
 import Him.Chat (ChatState (..), Review (..))
 import Him.View (View, initialView)
 import Him.Window
 import Data.IntMap.Strict (IntMap)
 import Data.IntMap.Strict qualified as IntMap
-import Data.List (findIndex)
+import Data.List (find, findIndex)
 import Data.Maybe (fromMaybe)
 
 data Severity = Info | Error
@@ -194,6 +196,11 @@ data Editor = Editor
   , edRegisters :: !(Map Char [Text])
   -- ^ Registers: @\"@ (yanked text, one value per range) and @/@ (the
   -- last search).
+  , edJumps :: !(IntMap Jumplist)
+  -- ^ Each window's jumplist, by window id (ADR-47).
+  , edJumpTexts :: !(IntMap (Int, Buffer))
+  -- ^ For each document with jumps: the version and text their positions
+  -- refer to, so they can follow later edits.
   , edQuit :: !Bool
   }
   deriving stock (Eq, Show)
@@ -231,6 +238,8 @@ newEditor size doc =
     , edInfo = Nothing
     , edCompletions = []
     , edRegisters = Map.empty
+    , edJumps = IntMap.empty
+    , edJumpTexts = IntMap.empty
     , edQuit = False
     }
 
@@ -332,6 +341,10 @@ previewFor ed = \case
     [] -> Nothing
   PickFile file -> place file 0
   PickPosition file line _ _ -> place file line
+  PickJump i -> do
+    j <- IntMap.lookup (edFocus ed) (edJumps ed) >>= Seq.lookup i . jlJumps
+    d <- find ((== jumpDoc j) . docId) (allDocuments ed)
+    pure (displayName d, Right (docBuffer d, posLine (rangeHead (primary (jumpSelection j)))))
   _ -> Nothing
   where
     place file line = Just (T.pack file, maybe cached (\d -> Right (docBuffer d, line)) (openDoc file))

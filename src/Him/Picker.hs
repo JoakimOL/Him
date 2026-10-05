@@ -43,6 +43,8 @@ data PickTarget
     PickPosition !FilePath !Int !Int !(Maybe Text)
   | -- | A language server's code action (or command), as it sent it.
     PickCodeAction !Value
+  | -- | An entry of the focused window's jumplist, by index (ADR-47).
+    PickJump !Int
   deriving stock (Eq, Show)
 
 -- | Where a picker's items come from.

@@ -17,6 +17,7 @@ import Him.Action
 import Him.Effect (Effect (..), Job (..), JobKey (..), JobResult (..))
 import Him.EditorM
 import Him.Actions.File (openFile)
+import Him.Actions.Jump (deleteJump, goToEntry, jumping, jumplistPicker)
 import Him.Actions.Lsp qualified as Lsp
 import Him.Lsp.Protocol (Encoding (..), fromLspColumn)
 import Him.Buffer qualified as Buffer
@@ -54,14 +55,14 @@ actions =
         Just (Just item) -> do
           close
           case piTarget item of
-            PickFile path -> openFile path
-            PickBuffer i -> modify' (gotoBuffer i)
+            PickFile path -> jumping (openFile path)
+            PickBuffer i -> jumping (modify' (gotoBuffer i))
             PickAction name needsArgs
               | needsArgs -> do
                   modify' (\e -> e {edPrompt = ExPrompt, edCmdLine = "action " <> name <> " ", edCompletions = []})
                   setMode CmdLine
               | otherwise -> request (RunAction (Invocation name []))
-            PickPosition path line col encoding -> do
+            PickPosition path line col encoding -> jumping $ do
               openFile path
               modifyDoc $ \d ->
                 let l = max 0 (min line (Buffer.lineCount (docBuffer d) - 1))
@@ -74,7 +75,18 @@ actions =
                       _ -> max 0 (min col (Buffer.lineLength l (docBuffer d)))
                  in d {docSelection = single (point (Pos l c))}
             PickCodeAction act -> Lsp.runCodeAction act
+            PickJump i -> goToEntry i
         _ -> close
+  , simple "picker_secondary" GPrompt "The picker's second action on the selected item (the jumplist: remove the entry)" $
+      gets edPicker >>= \case
+        Just p | Just item <- selectedItem p -> case piTarget item of
+          PickJump i -> do
+            deleteJump i
+            -- The entries after it moved up: list them again.
+            fresh <- gets jumplistPicker
+            modify' (\e -> e {edPicker = Just (setQuery (pkQuery p) fresh) {pkSelected = min (pkSelected p) (max 0 (pkMatchCount (setQuery (pkQuery p) fresh) - 1))}})
+          _ -> failWith "this picker has no second action"
+        _ -> pure ()
   , simple "picker_next" GPrompt "Select the next item" (onPicker (moveSelection 1))
   , simple "picker_previous" GPrompt "Select the previous item" (onPicker (moveSelection (-1)))
   , simple "picker_backspace" GPrompt "Delete the last character of the query" $

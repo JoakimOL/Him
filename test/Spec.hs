@@ -11,6 +11,7 @@ import Test.Render
 import Test.Integration
 import Test.Windows
 import Test.Match
+import Test.Jump
 import Test.Chat
 import Test.Repl
 
@@ -28,6 +29,7 @@ main = do
   loading <- loadingTests
   windows <- windowTests
   match <- matchTests
+  jump <- jumpTests
   chat <- chatTests
   repl <- replTests
   runTests
@@ -71,6 +73,7 @@ main = do
     , group "Him.Render" renderTests
     , group "Him.Render.Diff" diffTests
     , group "match mode (m) and I / A" match
+    , group "jumplist" jump
     , group "AI chat (scripted provider; nothing live)" chat
     , group "windows (splits)" windows
     , group "REPL" repl

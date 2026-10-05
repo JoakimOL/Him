@@ -31,6 +31,7 @@ import Him.History qualified as History
 import Him.Actions.File qualified as File
 import Him.Actions.Motion qualified as Motion
 import Him.Actions.Picker qualified as Picker
+import Him.Actions.Jump qualified as Jump
 import Him.Actions.Syntax qualified as Syntax
 import Him.Info (refreshInfo)
 import Him.UserConfig (UserConfig (..), applyUserConfig, configPath, defaultConfigText, emptyUserConfig, loadUserConfig)
@@ -152,6 +153,7 @@ housekeeping config = do
   Syntax.syntaxHousekeeping
   mapM_ plHousekeeping (cfgPlugins config)
   Picker.pickerHousekeeping
+  modify' Jump.syncJumps
 
 -- | What the editor needs to know about the enabled plugins.
 withPlugins :: Config -> Editor -> Editor

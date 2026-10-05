@@ -1125,6 +1125,45 @@ depend on, and its ignore rules would differ from the file picker's); searching 
 after `ret` (Helix's old behaviour), which loses the "search as you type" the user
 asked for.
 
+**ADR-47: A jumplist per window, as in Helix, with entries you add and remove.**
+The user asked for Helix's jumplist as the baseline, plus deleting entries from its
+picker and adding entries by hand.
+- **The list** (`Him.Jumplist`, pure) is Helix's: at most 30 jumps, oldest first,
+  and a current index that equals the length when you are not walking the list.
+  - `push` drops the jumps after the current one, does not repeat the last jump,
+    and drops the oldest when the list is full.
+  - `backward` (`C-o`) first pushes where the cursor is when you are not walking the
+    list yet, so `forward` (`C-i`, `tab`) can come back to it. A jump to where the
+    cursor already is gets skipped. Both take a count.
+- **Per window:** `edJumps` maps window ids to lists. A new split starts with an empty
+  list, and a closed window's list is dropped.
+- **What jumps:** an action wraps its work in `jumping`, which pushes the place
+  before if the cursor moved or the document changed. Helix's set: `g g` (and
+  `<count> g g`, `goto_line`), `g e`, `%`, `g d` / `g y` / `g i` / `g r` (via `openAt`),
+  `] d` / `[ d`, `] g` / `[ g`, and switching documents (`g n` / `g p`, `:o`,
+  accepting any picker that goes to a place). Searches (`/`, `?`, `n`, `N`) are
+  jumps too, as in Vim.
+- **By hand:** `C-s` (`save_selection`) pushes the selection. `space j` lists the
+  jumps, newest first, with a preview. `ret` goes to an entry as a jump of its own,
+  so picking never cuts the list short, and `del` removes an entry
+  (`picker_secondary`, see below).
+- **Following edits:** a jump stores a document id and a selection. `edJumpTexts`
+  keeps, for each document with jumps, the version and text the positions refer
+  to. After every event (`syncJumps`, in housekeeping) and before the list is used,
+  a document whose version changed has its jumps moved through
+  `Buffer.changeBetween` (one span; positions inside it go to its start) and clamped.
+  So edits from anywhere (typing, undo, a language server, the chat) are followed
+  without each edit path knowing about jumps. Jumps into closed documents are
+  dropped.
+- **`picker_secondary`** (`del` in pickers) is a picker's second action on the
+  selected item. Only the jumplist has one so far (remove the entry). It is the first
+  step towards the common picker API in §8.
+
+*Alternatives:* keeping the positions in each document and mapping them inside every
+edit path (more exact for several edits in one event, but every path would have to
+take part); clamping only, as unfocused windows' selections do (ADR-37), which sends
+`C-o` to the wrong line after edits above it.
+
 **ADR-8: No test framework.**
 The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
 Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
@@ -1148,6 +1187,7 @@ Pure modules are marked *(pure)*.
 | `Him.TextObject` | Match mode's objects (`m i w`, `m a (`), the pair around a position, the matching bracket (ADR-40) *(pure)*. |
 | `Him.Search`, `Him.Regex` | Literal search with smart case and wrap-around; the regex subset used by highlight queries (ADR-28) *(pure)*. |
 | `Him.Grep` | The global search: the lines of a text (or a file) that contain a needle (ADR-46). |
+| `Him.Jumplist` | Helix's jumplist: push, back, forward, remove, and moving positions through a change (ADR-47) *(pure)*. |
 | `Him.History` | Undo/redo snapshots *(pure)*. |
 | `Him.TextWidth`, `Him.View` | Display columns (tabs, wide and control characters); scrolling with scrolloff *(pure)*. |
 | `Him.Document` | A buffer with its selection, path, history, kind (text, directory listing, REPL, chat), git/LSP/syntax state; `changeDocument`, `replaceBuffer`, `unsaved` *(pure)*. |
@@ -1164,7 +1204,7 @@ Pure modules are marked *(pure)*.
 | `Him.Mode`, `Him.Key`, `Him.Keymap` | Modes and keymap layers (directory, completion, REPL, chat); keys; keymap tries. |
 | `Him.EditorM` | The monad actions run in and its helpers (`edit`, `motion`, `request`, `info`). |
 | `Him.Action`, `Him.Invocation` | Named actions with typed parameters; invocations as text (ADR-17). |
-| `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`; the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
+| `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`, `Jump` (the jumplist and `jumping`); the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
 | `Him.Ex`, `Him.Info`, `Him.Palette`, `Him.Picker` | `:` commands; the info box after a prefix; the command palette; pickers and fuzzy ranking. |
 | `Him.Config`, `Him.Config.Default` | `Config` and the `Plugin` record (ADR-35); the default bindings, actions and plugins; `configWith`. |
 | `Him.Options`, `Him.UserConfig`, `Him.Toml`, `Him.Paths` | Settings (ADR-34); the config file (ADR-32); the TOML reader; where files live. |
@@ -1296,6 +1336,8 @@ Each milestone ends with something runnable, and with this file updated.
   any order with the cursor on one, shown inline with their removed lines (ADR-43).
 - [x] **42. Global search.** `space /` searches the project's files as you type,
   streaming hits into a picker with a preview (ADR-46).
+- [x] **43. Jumplist.** `C-o` / `C-i` / `tab`, `C-s`, `space j` with `del` to remove an
+  entry; jumps follow edits (ADR-47).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
@@ -1321,7 +1363,8 @@ them in the editor.
 | Select | Normal mode where motions extend; `v` / `esc` back. |
 | Insert | typing, `ret` (keeps indentation), `tab` (spaces with `expand-tab`), `backspace`, `del`, arrows, `esc`. |
 | Command line | typing, `tab` (complete names, paths, themes, plugins), `backspace`, `ret`, `esc`. |
-| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`/`tab`/`S-tab`, `ret`, `esc`. |
+| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`/`tab`/`S-tab`, `ret`, `del` (the picker's second action: the jumplist removes the entry), `esc`. |
+| Jumplist | `C-o` (back), `C-i` / `tab` (forward), both with a count; `C-s` (save the selection). |
 | Directory listings | `space d` (the file's directory), `space D` (the working directory), `:o dir`; in a listing: `ret`, `-` / `^` / `backspace` (parent), `g r` (refresh), `a` (new file or `dir/`), `+` (new directory), `r` (rename), `d` (delete, asks), `g .` (dotfiles). |
 | Windows | `C-w` or `space w`, then `v` / `s` (split side by side / stacked), `w` (next), `h j k l` (focus), `H J K L` (swap), `q` (close), `o` (only), `n v` / `n s` (split with a scratch buffer). |
 | git plugin | `] g` / `[ g` (next / previous change); `space g s` / `u` (stage / unstage the selected lines), `S` / `U` (the file), `r` (reset the lines). |
@@ -1362,11 +1405,11 @@ them in the editor.
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-04.* Everything the user asked for so far is done; the latest
-work is the global search picker, `space /` (ADR-46), before that the chat panel
-(ADR-45), match mode (ADR-40) and the AI chat plugin (ADR-41, ADR-42).
+*Last updated 2026-10-05.* Everything the user asked for so far is done; the latest
+work is the jumplist (ADR-47), and before it the global search picker, `space /`
+(ADR-46), and the chat panel (ADR-45).
 
-- **State:** milestones 1–42 (§5) and ADR-1…46 (§3). `make test` runs 580 tests (pure
+- **State:** milestones 1–43 (§5) and ADR-1…47 (§3). `make test` runs 597 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).
@@ -1382,6 +1425,13 @@ work is the global search picker, `space /` (ADR-46), before that the chat panel
   tools); the faults it found were him's and are fixed (ADR-42). `dev/fake-claude`
   checks the flow without a model.
 - **Ideas, roughly by value:**
+  0. **A common picker API** (the user's idea, "for later"): every picker gets a
+     primary and a secondary action on two keys (the user suggested `ret` and
+     `tab`). For example, the file picker's `tab` marks several files and `ret`
+     opens them; the jumplist's `ret` jumps and its secondary deletes. Today
+     `picker_secondary` (on `del`) is that hook, with only the jumplist using it,
+     and `tab` moves the selection. Moving `tab` would need another key for
+     "next" (`down` / `C-n` stay).
   1. Regex search and `S` (split on a pattern), on `Him.Regex`.
   2. Incremental tree-sitter parsing (the buffer's `changeBetween` is ready) and
      injections.

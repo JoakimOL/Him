@@ -18,6 +18,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
 import Him.EditorM
+import Him.Actions.Jump (jumping)
 import Him.Actions.File (openFile)
 import Him.Document (Document (..))
 import Him.Editor hiding (Severity (..))
@@ -80,7 +81,7 @@ goToLocations title locations = do
 -- | Open a location's file and put the cursor there, converting the
 -- server's column against the line.
 openAt :: Encoding -> Location -> EditorM ()
-openAt enc loc = do
+openAt enc loc = jumping $ do
   openFile (locPath loc)
   let (l, c) = locStart loc
   modifyDoc $ \d ->
@@ -89,7 +90,7 @@ openAt enc loc = do
      in d {docSelection = single (point (Pos line col))}
 
 jumpDiagnostic :: Bool -> EditorM ()
-jumpDiagnostic forward = do
+jumpDiagnostic forward = jumping $ do
   ed <- get
   let d = edDoc ed
       here = rangeHead (primary (docSelection d))

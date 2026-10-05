@@ -15,6 +15,7 @@ import Data.Text qualified as T
 import Him.Action
 import Him.Buffer qualified as Buffer
 import Him.EditorM
+import Him.Actions.Jump (jumping)
 import Him.Diff
 import Him.Document (DocKind (..), Document (..), replaceBuffer)
 import Him.Effect (Effect (..), Job (..), JobResult (..))
@@ -118,7 +119,7 @@ replaceLines new = modifyDoc $ \d ->
    in replaceBuffer buf (single (point (Pos (max 0 line) 0))) d
 
 jumpChange :: Bool -> EditorM ()
-jumpChange forward = do
+jumpChange forward = jumping $ do
   d <- getDoc
   case tracking (docGit d) of
     Nothing -> failWith "no git changes"

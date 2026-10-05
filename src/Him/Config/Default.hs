@@ -32,6 +32,7 @@ import Him.Actions.Lsp qualified as Lsp
 import Him.Actions.File qualified as File
 import Him.Actions.Motion qualified as Motion
 import Him.Actions.Picker qualified as Picker
+import Him.Actions.Jump qualified as Jump
 import Him.Actions.Search qualified as Search
 import Him.Actions.Window qualified as Window
 import Him.Actions.Match qualified as Match
@@ -67,6 +68,7 @@ coreActions =
     <> Search.actions
     <> File.actions
     <> Picker.actions
+    <> Jump.actions
     <> Directory.actions
     <> Window.actions
     <> Match.actions
@@ -154,6 +156,11 @@ normalBindings =
        , ("space f", "file_picker")
        , ("space b", "buffer_picker")
        , ("space /", "global_search")
+       , ("space j", "jumplist_picker")
+       , ("C-o", "jump_backward")
+       , ("C-i", "jump_forward")
+       , ("tab", "jump_forward")
+       , ("C-s", "save_selection")
        , ("space ?", "command_palette")
        , ("space d", "directory_of_buffer")
        , ("space D", "directory_of_cwd")
@@ -231,6 +238,7 @@ pickerBindings =
   , ("C-p", "picker_previous")
   , ("S-tab", "picker_previous")
   , ("backspace", "picker_backspace")
+  , ("del", "picker_secondary")
   ]
 
 -- | The default bindings, of the core and every plugin. Select mode also

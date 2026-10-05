@@ -15,6 +15,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Action
 import Him.EditorM
+import Him.Actions.Jump (jumping)
 import Him.Document (Document (..))
 import Him.Edit (selectionText)
 import Him.Editor
@@ -75,7 +76,7 @@ executeSearch dir origin typed = do
     Nothing -> failWith "no search pattern"
     Just needle -> do
       setSearchRegister pattern
-      jump dir needle origin
+      jumping (jump dir needle origin)
 
 -- | Enter on the @s@ prompt.
 executeSelect :: Selection -> Text -> EditorM ()
@@ -101,7 +102,7 @@ repeatSearch dir =
     Nothing -> failWith "no previous search (use / first)"
     Just pattern -> gets (optSmartCase . edOptions) >>= \smart -> case compileNeedle smart pattern of
       Nothing -> failWith "no previous search (use / first)"
-      Just needle -> getDoc >>= jump dir needle . docSelection
+      Just needle -> getDoc >>= jumping . jump dir needle . docSelection
 
 -- | Select the next match in a direction, searching from a selection.
 jump :: Direction -> Needle -> Selection -> EditorM ()

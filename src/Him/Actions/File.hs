@@ -14,6 +14,7 @@ import Him.Effect (Effect (..))
 import Him.Buffer (lineCount)
 import Him.Buffer qualified as Buffer
 import Him.EditorM
+import Him.Actions.Jump (jumping)
 import Him.Document (Document (..), changeDocument, clampSelection, displayName, isReadOnly, newDocument, unsaved)
 import Him.Options (Options (..))
 import Him.Editor
@@ -26,8 +27,8 @@ import System.Directory (canonicalizePath, doesFileExist, getCurrentDirectory, s
 
 actions :: [Action]
 actions =
-  [ simple "buffer_next" GBuffers "Go to the next buffer" (modify' (switchBuffer 1))
-  , simple "buffer_previous" GBuffers "Go to the previous buffer" (modify' (switchBuffer (-1)))
+  [ simple "buffer_next" GBuffers "Go to the next buffer" (jumping (modify' (switchBuffer 1)))
+  , simple "buffer_previous" GBuffers "Go to the previous buffer" (jumping (modify' (switchBuffer (-1))))
   ]
 
 exCommands :: [ExCommand]
@@ -47,7 +48,7 @@ exCommands =
       if ok then quit else pure ()
   , ExCommand ["open", "o", "edit", "e"] "Open files (switches to one already open)" PathArgs $ \case
       [] -> failWith ":open needs a path"
-      paths -> mapM_ (openFile . T.unpack) paths
+      paths -> jumping (mapM_ (openFile . T.unpack) paths)
   , ExCommand ["new", "n"] "Open a new scratch buffer" NoArgs $ \_ ->
       modify' (openBuffer (newDocument Nothing Buffer.empty))
   , ExCommand ["buffer-close", "bc", "bclose"] "Close the buffer (refuses with unsaved changes)" NoArgs $ \_ -> do

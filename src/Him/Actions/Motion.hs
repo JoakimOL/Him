@@ -15,6 +15,7 @@ import Him.View (View (..))
 import Data.Text (Text)
 import Him.Action
 import Him.EditorM
+import Him.Actions.Jump (jumping)
 import Him.Document (Document (..))
 import Him.Motion
 import Him.Actions.Match (awaitedMatchKey)
@@ -31,9 +32,9 @@ actions =
   , simple "goto_line_start" GMovement "Go to the start of the line" (motion lineStart)
   , simple "goto_line_end" GMovement "Go to the last character of the line" (motion lineEnd)
   , action "goto_file_start" GMovement "Go to the first line, or to line <count> (5 g g)" (optional "-" 0 (int "count")) $ \n ->
-      motion (if n > 0 then gotoLine n else fileStart)
-  , simple "goto_last_line" GMovement "Go to the last line" (motion lastLine)
-  , action "goto_line" GMovement "Go to a line (counting from 1)" (int "line") (motion . gotoLine)
+      jumping (motion (if n > 0 then gotoLine n else fileStart))
+  , simple "goto_last_line" GMovement "Go to the last line" (jumping (motion lastLine))
+  , action "goto_line" GMovement "Go to a line (counting from 1)" (int "line") (jumping . motion . gotoLine)
   , repeated "move_next_word_start" GSelection "Select to the start of the next word" nextWordStart
   , repeated "move_prev_word_start" GSelection "Select back to the start of the previous word" prevWordStart
   , repeated "move_next_word_end" GSelection "Select to the end of the next word" nextWordEnd
@@ -52,7 +53,7 @@ actions =
       gets edLastFind >>= \case
         Just (forward, till, ch) -> motion (findChar True forward till ch 1)
         Nothing -> info "no character search to repeat"
-  , simple "select_all" GSelection "Select the whole file" (withBuffer (const . selectAll))
+  , simple "select_all" GSelection "Select the whole file" (jumping (withBuffer (const . selectAll)))
   , simple "keep_primary_selection" GSelection "Keep only the primary selection" (withBuffer (const keepPrimary))
   , simple "remove_primary_selection" GSelection "Remove the primary selection" (withBuffer (const removePrimary))
   , simple "rotate_selections_forward" GSelection "Make the next selection primary" (withBuffer (const (rotatePrimary 1)))
