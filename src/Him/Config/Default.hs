@@ -208,6 +208,7 @@ commandBindings =
   [ ("esc", "cmdline_cancel")
   , ("ret", "cmdline_execute")
   , ("tab", "cmdline_complete")
+  , ("S-tab", "cmdline_complete_previous")
   , ("backspace", "cmdline_backspace")
   ]
 

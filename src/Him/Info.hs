@@ -40,6 +40,7 @@ keyInfo config ed = do
       { infoTitle = fromMaybe (showKeys pending) (Map.lookup pending names)
       , infoRows = [(showKey k, describe k b) | (k, b) <- children sub]
       , infoPlace = BottomRight
+      , infoSelected = Nothing
       }
   where
     pending = edPending ed
@@ -57,15 +58,16 @@ keyInfo config ed = do
 -- the command's description, or the candidates of the last @tab@.
 exInfo :: [ExCommand] -> Editor -> Maybe InfoBox
 exInfo table ed
-  | not (null (edCompletions ed)) =
-      Just (InfoBox "complete" [(c, "") | c <- edCompletions ed] BottomLeft)
+  | Just cc <- edCompletions ed =
+      Just (InfoBox "complete" [(c, "") | c <- ccShown cc] BottomLeft (ccSelected cc))
   | T.null rest = case matching of
       [] -> Nothing
-      cs -> Just (InfoBox "commands" (map row cs) BottomLeft)
+      cs -> Just (InfoBox "commands" (map row cs) BottomLeft Nothing)
   | otherwise = case [c | c <- table, name `elem` exNames c] of
-      c : _ -> Just (InfoBox "command" [row c] BottomLeft)
+      c : _ -> Just (InfoBox "command" [row c] BottomLeft Nothing)
       [] -> Nothing
   where
     (name, rest) = T.break (== ' ') (edCmdLine ed)
     matching = [c | c <- table, any (name `T.isPrefixOf`) (exNames c)]
     row c = (T.intercalate ", " (exNames c), exDoc c)
+

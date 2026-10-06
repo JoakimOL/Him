@@ -19,11 +19,17 @@ drawInfo theme ed area cursor f = case edInfo ed <|> edPopup ed of
   Just box | rectHeight area >= 3 && rectWidth area >= 8 -> draw box
   _ -> f
   where
-    draw (InfoBox title rows place) =
+    draw (InfoBox title rows place selected) =
       let maxRows = rectHeight area - 2
-          shown
-            | length rows > maxRows = take (maxRows - 1) rows <> [("…", T.pack (show (length rows - maxRows + 1)) <> " more")]
-            | otherwise = rows
+          -- When the rows do not fit, scroll so the selected one shows.
+          (skip, shown)
+            | length rows > maxRows =
+                let fit = maxRows - 1
+                    from = maybe 0 (\i -> max 0 (min (length rows - fit) (i - fit + 1))) selected
+                    rest = length rows - from - fit
+                 in (from, take fit (drop from rows) <> [("…", T.pack (show rest) <> " more") | rest > 0])
+            | otherwise = (0, rows)
+          isSelected i = fmap (subtract skip) selected == Just i
           keyW = maximum (0 : map (T.length . fst) shown)
           docW = maximum (0 : map (T.length . snd) shown)
           -- One column of padding on each side inside the border.
@@ -47,7 +53,9 @@ drawInfo theme ed area cursor f = case edInfo ed <|> edPopup ed of
             [(top, border "┌" "┐" "─" titled, themePopup theme)]
               <> [(top + 1 + i, border "│" "│" " " (line r), themePopup theme) | (i, r) <- zip [0 ..] shown]
               <> [(top + h - 1, border "└" "┘" "─" "", themePopup theme)]
+          selectedRows = [(top + 1 + i, border "" "" " " (line r), themePopupSelected theme) | (i, r) <- zip [0 ..] shown, isSelected i]
           drawn = foldl' (\fr (row, t, st) -> putText row left st t fr) f lines'
-          keys = [(top + 1 + i, k) | (i, (k, _)) <- zip [0 ..] shown]
-          withKeys = foldl' (\fr (row, k) -> putText row (left + 2) (themePopupKey theme) (T.take (inner - 1) k) fr) drawn keys
+          highlighted = foldl' (\fr (row, t, st) -> putText row (left + 1) st t fr) drawn selectedRows
+          keys = [(top + 1 + i, k, if isSelected i then themePopupSelected theme else themePopupKey theme) | (i, (k, _)) <- zip [0 ..] shown]
+          withKeys = foldl' (\fr (row, k, st) -> putText row (left + 2) st (T.take (inner - 1) k) fr) highlighted keys
        in forgetRows top h withKeys

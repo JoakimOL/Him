@@ -42,7 +42,9 @@ make fmt / make lint         # format / lint
   - `space d` lists a directory (create, rename, delete).
   - `space ?` lists every command with its keys.
   - Splits: `C-w v` / `C-w s` (or `space w`), `:vsplit`, `:hsplit`.
-- **The `:` line** shows the commands as you type; `tab` completes.
+- **The `:` line** shows the commands as you type; `tab` completes, and `tab` / `S-tab`
+  again cycle through the candidates. `:theme <name>` previews the theme as you type
+  or cycle; `esc` goes back.
 - **Highlighting** with tree-sitter grammars that him compiles itself. Fetch grammar
   sources once with Helix (`hx --grammar fetch`), then run `him --build-grammars`.
 - **Themes:** any Helix theme (`:theme onedark`), or your own.

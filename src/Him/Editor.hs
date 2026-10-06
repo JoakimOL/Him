@@ -6,6 +6,7 @@ module Him.Editor
   , PromptKind (..)
   , FileAction (..)
   , InfoBox (..)
+  , CmdCompletions (..)
   , Preview (..)
   , Await (..)
   , InfoPlace (..)
@@ -106,6 +107,22 @@ data InfoBox = InfoBox
   , infoRows :: ![(Text, Text)]
   -- ^ A key or name, and its description.
   , infoPlace :: !InfoPlace
+  , infoSelected :: !(Maybe Int)
+  -- ^ The highlighted row, if any.
+  }
+  deriving stock (Eq, Show)
+
+-- | The candidates of a @tab@ on the command line. Further @tab@s (and
+-- @S-tab@) cycle through them, as in Helix.
+data CmdCompletions = CmdCompletions
+  { ccBefore :: !Text
+  -- ^ The line before the completed word.
+  , ccCandidates :: ![Text]
+  -- ^ What each candidate puts after 'ccBefore'.
+  , ccShown :: ![Text]
+  -- ^ The candidates as listed (a path's last component).
+  , ccSelected :: !(Maybe Int)
+  -- ^ The candidate on the line; none before the first cycle.
   }
   deriving stock (Eq, Show)
 
@@ -190,9 +207,9 @@ data Editor = Editor
   , edWindows :: !(IntMap Window)
   -- ^ The other windows.
   , edInfo :: !(Maybe InfoBox)
-  , edCompletions :: ![Text]
+  , edCompletions :: !(Maybe CmdCompletions)
   -- ^ Candidates from the last @tab@ on the command line, shown until the
-  -- line changes.
+  -- line is edited.
   , edRegisters :: !(Map Char [Text])
   -- ^ Registers: @\"@ (yanked text, one value per range) and @/@ (the
   -- last search).
@@ -236,7 +253,7 @@ newEditor size doc =
     , edFocus = 0
     , edWindows = IntMap.empty
     , edInfo = Nothing
-    , edCompletions = []
+    , edCompletions = Nothing
     , edRegisters = Map.empty
     , edJumps = IntMap.empty
     , edJumpTexts = IntMap.empty

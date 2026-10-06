@@ -19,6 +19,8 @@ import Him.Config.Default (defaultConfig)
 import Him.Document
 import Him.Editor
 import Him.Event (Event (..))
+import Him.Ex (previewedTheme)
+import Him.Config (Config (..))
 import Him.Actions.Search (refreshSearchPreview)
 import Him.File (decodeDocument, encodeDocument, loadDocument, loadDocumentChunked, saveDocument)
 import Data.Text.Encoding qualified as TE
@@ -127,6 +129,15 @@ integrationTests = do
   infoArgs <- typeKeys ": o space x" (start "abc")
   completeName <- typeKeys ": b u f f e r - n tab" (start "abc")
   completeMany <- typeKeys ": w r i tab" (start "abc")
+  cycleOnce <- typeKeys ": w r i tab tab" (start "abc")
+  cycleTwice <- typeKeys ": w r i tab tab tab" (start "abc")
+  cycleBack <- typeKeys ": w r i tab S-tab" (start "abc")
+  cycleWrap <- typeKeys ": w r i tab tab tab tab tab tab" (start "abc")
+  cycleTyped <- typeKeys ": w r i tab tab tab a" (start "abc")
+  cycleAtPrefix <- typeKeys ": w r i t e tab" (start "abc")
+  themeLine <- typeKeys ": t h e m e space n o r d" (start "abc")
+  themeEsc <- typeKeys ": t h e m e space n o r d esc" (start "abc")
+  themeBare <- typeKeys ": t h e m e space" (start "abc")
   pendingG <- typeKeys "g" (start "abc")
   badChord <- typeKeys "g z" (start "abc")
   -- Settings change what keys do.
@@ -225,7 +236,22 @@ integrationTests = do
         assertEqual (Just ["open, o, edit, e"]) (map fst . infoRows <$> edInfo infoArgs)
     , test "tab completes a unique command" (assertEqual "buffer-next " (edCmdLine completeName))
     , test "tab extends to the common prefix and lists candidates" $
-        assertEqual ("write", ["write", "write-quit", "write-all", "write-quit-all"]) (edCmdLine completeMany, edCompletions completeMany)
+        assertEqual ("write", Just ["write", "write-quit", "write-all", "write-quit-all"]) (edCmdLine completeMany, ccShown <$> edCompletions completeMany)
+    , test "tab again puts the first candidate on the line" $
+        assertEqual ("write ", Just (Just 0)) (edCmdLine cycleOnce, ccSelected <$> edCompletions cycleOnce)
+    , test "tab cycles to the next candidate" (assertEqual "write-quit " (edCmdLine cycleTwice))
+    , test "S-tab cycles backwards" (assertEqual "write-quit-all " (edCmdLine cycleBack))
+    , test "cycling wraps around" (assertEqual "write " (edCmdLine cycleWrap))
+    , test "typing ends the cycle" (assertEqual ("write-quit a", Nothing) (edCmdLine cycleTyped, edCompletions cycleTyped))
+    , test "tab at the common prefix goes straight to the first candidate" $
+        assertEqual ("write ", Just 0) (edCmdLine cycleAtPrefix, ccSelected =<< edCompletions cycleAtPrefix)
+    , test "the info box highlights the candidate on the line" (assertEqual (Just (Just 1)) (infoSelected <$> edInfo cycleTwice))
+    , test ":theme <name> previews the theme" $
+        assertEqual (Just "nord") (previewedTheme (cfgExCommands config) themeLine)
+    , test "esc ends the theme preview" $
+        assertEqual Nothing (previewedTheme (cfgExCommands config) themeEsc)
+    , test ":theme without a name previews nothing" $
+        assertEqual Nothing (previewedTheme (cfgExCommands config) themeBare)
     , test "g waits for the next key" (assertEqual [plain (KChar 'g')] (edPending pendingG))
     , test "an unknown chord is dropped" (assertEqual ([], "abc") (edPending badChord, B.toText (docBuffer (edDoc badChord))))
     ]

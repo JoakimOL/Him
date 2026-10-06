@@ -114,7 +114,7 @@ actions =
       case docLsp (edDoc ed) of
         LspAttached _ -> do
           let ((l, c), word) = wordAroundCursor ed
-          modify' (\e -> e {edPrompt = RenamePrompt (l, c), edCmdLine = word, edCompletions = []})
+          modify' (\e -> e {edPrompt = RenamePrompt (l, c), edCmdLine = word, edCompletions = Nothing})
           setMode CmdLine
         _ -> failWith "no language server for this file"
   , simple "format_document" GLsp "Format the file with the language server" formatDocument
@@ -210,7 +210,7 @@ answered :: Pending -> Value -> EditorM ()
 answered pending value = case pending of
   PendingHover -> case parseHover value of
     [] -> info "no documentation here"
-    ls -> modify' (\e -> e {edPopup = Just (InfoBox "hover" [(l, "") | l <- take (optHoverLines (edOptions e)) ls] AtCursor)})
+    ls -> modify' (\e -> e {edPopup = Just (InfoBox "hover" [(l, "") | l <- take (optHoverLines (edOptions e)) ls] AtCursor Nothing)})
   PendingLocations title -> goToLocations title (parseLocations value)
   PendingCompletion doc _ start -> do
     ed <- get
@@ -254,7 +254,7 @@ answered pending value = case pending of
   PendingResolve -> runCodeAction value
   PendingSignature -> case signatureLines value of
     [] -> pure ()
-    ls -> modify' (\e -> e {edPopup = Just (InfoBox "signature" [(l, "") | l <- ls] AboveCursor)})
+    ls -> modify' (\e -> e {edPopup = Just (InfoBox "signature" [(l, "") | l <- ls] AboveCursor Nothing)})
   PendingSymbols file -> do
     enc <- currentEncoding
     case symbols value of

@@ -4,12 +4,15 @@ module Him.Ex
   , ExArgs (..)
   , parseExLine
   , runExLine
+  , previewedTheme
   ) where
 
 import Data.List (find)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Him.Editor (Editor (..), PromptKind (..))
 import Him.EditorM (EditorM, failWith)
+import Him.Mode (Mode (..))
 
 data ExCommand = ExCommand
   { exNames :: ![Text]
@@ -37,3 +40,13 @@ runExLine table line = case parseExLine line of
   Just (name, args) -> case find ((name `elem`) . exNames) table of
     Nothing -> failWith ("unknown command: " <> name)
     Just c -> exRun c args
+
+-- | The theme to preview while the @:@ line names one, as in Helix: the
+-- argument of a command taking a theme ('ThemeArgs').
+previewedTheme :: [ExCommand] -> Editor -> Maybe Text
+previewedTheme table ed = case (edMode ed, edPrompt ed, parseExLine (edCmdLine ed)) of
+  (CmdLine, ExPrompt, Just (name, [arg]))
+    | Just c <- find ((name `elem`) . exNames) table
+    , exArgs c == ThemeArgs ->
+        Just arg
+  _ -> Nothing

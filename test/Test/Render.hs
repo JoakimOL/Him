@@ -68,7 +68,7 @@ renderTests =
             [styleOn 0, styleOn 2, styleOn 3]
   , test "a closed info box is redrawn, not copied from the row cache" $
       let ed = newEditor (12, 40) (newDocument Nothing (buf (T.intercalate "\n" (replicate 20 "some text here"))))
-          withBox = ed {edInfo = Just (InfoBox "goto" [("g", "Go to the first line")] BottomRight)}
+          withBox = ed {edInfo = Just (InfoBox "goto" [("g", "Go to the first line")] BottomRight Nothing)}
           f1 = render defaultTheme Nothing withBox
        in assertEqual (frameCells (render defaultTheme Nothing ed)) (frameCells (render defaultTheme (Just f1) ed))
   , test "gutter shows a sign lane and line numbers" (assertEqual "   1 hello" (T.take 10 (rowText (frameOf "hello") 0)))

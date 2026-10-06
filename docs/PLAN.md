@@ -249,7 +249,12 @@ cover.**
   (`Him.Render.Info`) only draws it.
 - **Completion:** `tab` on the `:` line completes the command name, or a path for
   commands whose `exArgs` is `PathArgs`. With several candidates it extends the line to
-  their common prefix and lists them (`edCompletions`, cleared when the line changes).
+  their common prefix and lists them (`edCompletions`, cleared when the line is
+  edited). Another `tab` (or `S-tab`) cycles through the candidates as in Helix,
+  highlighting the one on the line; when the common prefix adds nothing, the first
+  `tab` already puts the first candidate on the line. While the line reads
+  `:theme <name>`, the screen is drawn in that theme if it loads (`previewedTheme`,
+  checked by the main loop before each frame); `esc` goes back, `ret` keeps it.
 - **Pickers:** a `Picking` mode with its own keymap, and a fallback that types into the
   query. `Him.Picker` is pure: items carry a `PickTarget` (a file or a buffer index)
   rather than an action, so the editor state stays plain data. The fuzzy score counts
@@ -1391,7 +1396,7 @@ them in the editor.
 | Normal (search) | `/` / `?` (with preview), `n` / `N`, `*` (selection as the pattern). |
 | Select | Normal mode where motions extend; `v` / `esc` back. |
 | Insert | typing, `ret` (keeps indentation), `tab` (spaces with `expand-tab`), `backspace`, `del`, arrows, `esc`. |
-| Command line | typing, `tab` (complete names, paths, themes, plugins), `backspace`, `ret`, `esc`. |
+| Command line | typing, `tab` (complete names, paths, themes, plugins; again to cycle the candidates), `S-tab` (cycle back), `backspace`, `ret`, `esc`. |
 | Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`/`S-tab`, `tab` (mark, for `ret`/`del` to act on all marked), `ret`, `del` (the picker's second action: the jumplist removes the entry), `esc`. |
 | Jumplist | `C-o` (back), `C-i` / `tab` (forward), both with a count; `C-s` (save the selection). |
 | Directory listings | `space d` (the file's directory), `space D` (the working directory), `:o dir`; in a listing: `ret`, `-` / `^` / `backspace` (parent), `g r` (refresh), `a` (new file or `dir/`), `+` (new directory), `r` (rename), `d` (delete, asks), `g .` (dotfiles). |
@@ -1435,10 +1440,12 @@ them in the editor.
 ## 8. Where to pick up
 
 *Last updated 2026-10-05.* Everything the user asked for so far is done; the latest
-work is picker actions and marks (ADR-48), and before it
-the jumplist (ADR-47) and the global search picker, `space /` (ADR-46).
+work is cycling the `:` line's completions with `tab` / `S-tab` and previewing
+themes as `:theme <name>` is typed or cycled, and before it
+picker actions and marks (ADR-48), the jumplist (ADR-47)
+and the global search picker, `space /` (ADR-46).
 
-- **State:** milestones 1–44 (§5) and ADR-1…48 (§3). `make test` runs 602 tests (pure
+- **State:** milestones 1–44 (§5) and ADR-1…48 (§3). `make test` runs 612 tests (pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).

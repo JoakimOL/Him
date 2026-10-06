@@ -15,7 +15,7 @@ import Him.EditorM
 import Him.Actions.Directory (runFileAction)
 import Him.Actions.Lsp qualified as Lsp
 import Him.Actions.Search (cancelSearch, executeSearch, executeSelect)
-import Him.Editor (Editor (..), PromptKind (..))
+import Him.Editor (CmdCompletions (..), Editor (..), PromptKind (..))
 import Him.Ex (ExArgs (..), ExCommand (..), runExLine)
 import Him.Theme.Load (themeNames)
 import Him.Mode (Mode (..))
@@ -42,7 +42,8 @@ actions exTable =
         SelectPrompt origin -> executeSelect origin line
         FilePrompt act -> runFileAction act line
         RenamePrompt at -> Lsp.renameTo at line
-  , simple "cmdline_complete" GPrompt "Complete the command name or path" (complete exTable)
+  , simple "cmdline_complete" GPrompt "Complete the command name or path; again: the next candidate" (complete exTable 1)
+  , simple "cmdline_complete_previous" GPrompt "Complete; again: the previous candidate" (complete exTable (-1))
   , action "ex" GPrompt "Run a : command, e.g. ex \"w\"" (text "command") (runExLine exTable)
   ]
 
@@ -66,7 +67,7 @@ setCmdLine :: T.Text -> EditorM ()
 setCmdLine t = modify' $ \e ->
   e
     { edCmdLine = t
-    , edCompletions = []
+    , edCompletions = Nothing
     , edPreviewPending = case edPrompt e of
         SearchPrompt {} -> True
         SelectPrompt {} -> True
@@ -77,36 +78,46 @@ setCmdLine t = modify' $ \e ->
 
 -- | @tab@ on the @:@ line: complete the command name, or the last argument
 -- when the command takes paths. With several candidates, the line is
--- extended to their common prefix and the candidates are listed.
-complete :: [ExCommand] -> EditorM ()
-complete exTable = do
-  prompt <- gets edPrompt
-  line <- gets edCmdLine
-  let (name, rest) = T.break (== ' ') line
-  case prompt of
-    ExPrompt
-      | T.null rest -> offer "" [n <> " " | c <- exTable, n <- exNames c, name `T.isPrefixOf` n]
-      | Just c <- find ((name `elem`) . exNames) exTable
-      , exArgs c == PathArgs -> do
-          let (before, arg) = T.breakOnEnd " " line
-          candidates <- liftIO (completePath (T.unpack arg))
-          offer before candidates
-      | Just c <- find ((name `elem`) . exNames) exTable
-      , NameArgs names <- exArgs c -> do
-          let (before, arg) = T.breakOnEnd " " line
-          offer before [n | n <- names, arg `T.isPrefixOf` n]
-      | Just c <- find ((name `elem`) . exNames) exTable
-      , exArgs c == ThemeArgs -> do
-          let (before, arg) = T.breakOnEnd " " line
-          names <- liftIO themeNames
-          offer before [n | n <- names, arg `T.isPrefixOf` n]
-    _ -> pure ()
+-- extended to their common prefix and the candidates are listed; when that
+-- adds nothing, or the candidates are already listed, the line steps to
+-- the next candidate (the previous one with @step = -1@), as in Helix.
+complete :: [ExCommand] -> Int -> EditorM ()
+complete exTable step =
+  gets edCompletions >>= \case
+    Just cc -> cycleTo cc
+    Nothing -> do
+      prompt <- gets edPrompt
+      line <- gets edCmdLine
+      let (name, rest) = T.break (== ' ') line
+          (before, arg) = T.breakOnEnd " " line
+          command = find ((name `elem`) . exNames) exTable
+      case prompt of
+        ExPrompt
+          | T.null rest -> offer line "" [n <> " " | c <- exTable, n <- exNames c, name `T.isPrefixOf` n]
+          | Just c <- command, exArgs c == PathArgs ->
+              offer line before =<< liftIO (completePath (T.unpack arg))
+          | Just c <- command, NameArgs names <- exArgs c ->
+              offer line before [n | n <- names, arg `T.isPrefixOf` n]
+          | Just c <- command, exArgs c == ThemeArgs -> do
+              names <- liftIO themeNames
+              offer line before [n | n <- names, arg `T.isPrefixOf` n]
+        _ -> pure ()
   where
-    offer _ [] = pure ()
-    offer before [c] = setCmdLine (before <> c)
-    offer before cs = do
-      setCmdLine (before <> commonPrefix cs)
-      modify' (\e -> e {edCompletions = map shortName cs})
+    offer _ _ [] = pure ()
+    offer _ before [c] = setCmdLine (before <> c)
+    offer line before cs = do
+      let extended = before <> commonPrefix cs
+          cc = CmdCompletions before cs (map shortName cs) Nothing
+      if extended /= line
+        then setCmdLine extended >> modify' (\e -> e {edCompletions = Just cc})
+        else cycleTo cc
+    cycleTo cc = do
+      let n = length (ccCandidates cc)
+          i = case ccSelected cc of
+            Nothing -> if step > 0 then 0 else n - 1
+            Just j -> (j + step) `mod` n
+      setCmdLine (ccBefore cc <> ccCandidates cc !! i)
+      modify' (\e -> e {edCompletions = Just cc {ccSelected = Just i}})
     -- A command name without its trailing space; a path's last component.
     shortName c =
       let t = T.strip c

@@ -14,6 +14,7 @@ import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Him.Effect (Effect (..))
+import Him.Ex (previewedTheme)
 import Him.EditorM (failWith)
 import Him.Config (Config (..), Plugin (..))
 import Him.Actions.Search (refreshSearchPreview)
@@ -64,7 +65,9 @@ run files = do
     configRef <- newIORef config
     userRef <- newIORef userConfig
     themeRef <- newIORef theme
-    eventLoop (Loop configRef userRef themeRef trueColor) runtime suspend events start {edEffects = []}
+    previewRef <- newIORef (Nothing, Nothing)
+    shownRef <- newIORef Nothing
+    eventLoop (Loop configRef userRef themeRef trueColor previewRef shownRef) runtime suspend events start {edEffects = []}
     Runtime.shutdown runtime
 
 -- | The theme a config names (@[editor] theme@), or the built-in one.
@@ -83,8 +86,9 @@ loadNamedTheme trueColor name =
 -- | What the loop keeps besides the editor: the config, the user's config
 -- it was made from (to make it again with other plugins), the theme (all
 -- replaced by :config-reload, :plugin-*, :theme), and whether the terminal
--- shows 24-bit colour.
-data Loop = Loop (IORef Config) (IORef UserConfig) (IORef Theme) Bool
+-- shows 24-bit colour. Then the theme previewed on the : line (the name
+-- and, if it loaded, the theme) and the name of the theme last drawn.
+data Loop = Loop (IORef Config) (IORef UserConfig) (IORef Theme) Bool (IORef (Maybe T.Text, Maybe Theme)) (IORef (Maybe T.Text))
 
 -- | Most events that can be handled before one render. Typeahead (a paste,
 -- key repeat, a fast typist) is handled first and drawn once, the way Vim
@@ -93,7 +97,7 @@ maxBatch :: Int
 maxBatch = 512
 
 eventLoop :: Loop -> Runtime -> IO () -> TChan Event -> Editor -> IO ()
-eventLoop (Loop configRef userRef themeRef trueColor) runtime suspend events = go Nothing
+eventLoop (Loop configRef userRef themeRef trueColor previewRef shownRef) runtime suspend events = go Nothing
   where
     go :: Maybe Frame -> Editor -> IO ()
     go prev ed0 = do
@@ -101,14 +105,37 @@ eventLoop (Loop configRef userRef themeRef trueColor) runtime suspend events = g
       config <- readIORef configRef
       flushed <- execStateT (mapM_ plBeforeRender (cfgPlugins config)) ed0
       mapM_ (Runtime.perform runtime) (edEffects flushed)
-      theme <- readIORef themeRef
-      -- After a suspend the terminal was cleared: draw everything.
+      committed <- readIORef themeRef
       let ed = ensureCursorVisible (refreshSearchPreview flushed {edEffects = [], edRepaint = False})
-          previous = if edRepaint flushed then Nothing else prev
+      (theme, previewChanged) <- themePreview config ed committed
+      -- After a suspend the terminal was cleared: draw everything. A
+      -- change of colours is drawn everywhere too.
+      let previous = if edRepaint flushed || previewChanged then Nothing else prev
           frame = render theme previous ed
       writeOutput (diffFrames previous frame)
       next <- atomically (readTChan events) >>= batch maxBatch ed
       unless (edQuit next) (go (Just frame) next)
+
+    -- While the : line reads ":theme <name>", draw in that theme if it
+    -- loads; otherwise (esc, ret, other text) in the one in use. The last
+    -- preview is kept, so typing elsewhere on the line loads nothing.
+    -- Whether the colours differ from the previous frame's is returned too.
+    themePreview config ed committed = do
+      let wanted = previewedTheme (cfgExCommands config) ed
+      (shown, loaded) <- readIORef previewRef
+      preview <-
+        if wanted == shown
+          then pure loaded
+          else do
+            loaded' <- case wanted of
+              Nothing -> pure Nothing
+              Just name -> either (const Nothing) Just <$> loadNamedTheme trueColor name
+            writeIORef previewRef (wanted, loaded')
+            pure loaded'
+      let theme = fromMaybe committed preview
+      changed <- (/= Just (themeName theme)) <$> readIORef shownRef
+      writeIORef shownRef (Just (themeName theme))
+      pure (theme, changed)
 
     -- Handle an event, then whatever else is already queued.
     -- :config-reload: a new config for the loop, the runtime's server table

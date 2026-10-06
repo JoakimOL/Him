@@ -69,7 +69,7 @@ actions =
             Nothing -> case piTarget item of
               PickAction name needsArgs
                 | needsArgs -> do
-                    modify' (\e -> e {edPrompt = ExPrompt, edCmdLine = "action " <> name <> " ", edCompletions = []})
+                    modify' (\e -> e {edPrompt = ExPrompt, edCmdLine = "action " <> name <> " ", edCompletions = Nothing})
                     setMode CmdLine
                 | otherwise -> request (RunAction (Invocation name []))
               PickCodeAction act -> Lsp.runCodeAction act
