@@ -15,7 +15,9 @@ The pure part is `Him.TextObject`:
 - **`m`:** the innermost pair of any kind.
 
 The commands that need a character wait for the next key the way `f` does: `Await`
-gained constructors, and `Him.Actions.Match.awaitedMatchKey` handles them. Surround
+gained constructors, and `Him.Actions.Match.awaitedMatchKey` handles them. While one
+waits, the info box lists the keys it takes (`Him.Info.awaitInfo`, from
+`TextObject.objectKeys` / `pairKeys`). Surround
 edits go through `applyEdits` (each range's pair is next to it). Tree-sitter objects
 (`f`, `t`, `a` in Helix) are not done.
 

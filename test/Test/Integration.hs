@@ -127,6 +127,9 @@ integrationTests = do
   infoAfterG <- typeKeys "g g" (start "abc")
   infoColon <- typeKeys ": w" (start "abc")
   infoArgs <- typeKeys ": o space x" (start "abc")
+  infoInside <- typeKeys "m i" (start "abc")
+  infoAfterObject <- typeKeys "m i w" (start "abc")
+  infoReplaceWith <- typeKeys "m r (" (start "(abc)")
   completeName <- typeKeys ": b u f f e r - n tab" (start "abc")
   completeMany <- typeKeys ": w r i tab" (start "abc")
   cycleOnce <- typeKeys ": w r i tab tab" (start "abc")
@@ -232,6 +235,13 @@ integrationTests = do
     , test "the info box goes away after the chord" (assertEqual Nothing (edInfo infoAfterG))
     , test ": lists the matching commands" $
         assertEqual (Just ["write, w", "write-quit, wq, x", "write-all, wa", "write-quit-all, wqa, xa"]) (map fst . infoRows <$> edInfo infoColon)
+    , test "m i lists the text objects" $
+        assertEqual
+          (Just ("select inside", Just "word"))
+          ((\b -> (infoTitle b, lookup "w" (infoRows b))) <$> edInfo infoInside)
+    , test "the text object box goes away after the object" (assertEqual Nothing (edInfo infoAfterObject))
+    , test "m r ( asks what to replace the pair with" $
+        assertEqual (Just "replace ( with") (infoTitle <$> edInfo infoReplaceWith)
     , test "after the name, the command is described" $
         assertEqual (Just ["open, o, edit, e"]) (map fst . infoRows <$> edInfo infoArgs)
     , test "tab completes a unique command" (assertEqual "buffer-next " (edCmdLine completeName))

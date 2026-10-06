@@ -10,6 +10,7 @@ module Him.Info
   , keyInfo
   , exInfo
   , registerRows
+  , awaitInfo
   ) where
 
 import Data.Map.Strict qualified as Map
@@ -22,6 +23,7 @@ import Him.Ex (ExCommand (..))
 import Him.Key (showKey, showKeys)
 import Him.Keymap (children, lookupPrefix)
 import Him.Mode (Mode (..))
+import Him.TextObject (objectKeys, pairKeys)
 
 refreshInfo :: Config -> Editor -> Editor
 refreshInfo config ed = ed {edInfo = box}
@@ -29,6 +31,7 @@ refreshInfo config ed = ed {edInfo = box}
     box = case (edPending ed, edMode ed, edPrompt ed) of
       _ | Just w <- edAwait ed, w `elem` [AwaitRegister, AwaitInsertRegister] ->
             Just (InfoBox "registers" (registerRows ed <> specials) BottomRight Nothing)
+      _ | Just w <- edAwait ed, Just b <- awaitInfo w -> Just b
       (_ : _, _, _) -> keyInfo config ed
       ([], CmdLine, ExPrompt) -> exInfo (cfgExCommands config) ed
       _ -> Nothing
@@ -73,6 +76,24 @@ exInfo table ed
     (name, rest) = T.break (== ' ') (edCmdLine ed)
     matching = [c | c <- table, any (name `T.isPrefixOf`) (exNames c)]
     row c = (T.intercalate ", " (exNames c), exDoc c)
+
+-- | While match mode waits for a key (@m i@, @m a@, @m s@, @m d@, @m r@):
+-- the keys it takes. A find (@f@, @t@) takes any character, so it has none.
+awaitInfo :: Await -> Maybe InfoBox
+awaitInfo = \case
+  AwaitObject True -> box "select inside" objectKeys
+  AwaitObject False -> box "select around" objectKeys
+  AwaitSurround -> box "surround with" (pairKeys <> [other])
+  AwaitDeleteSurround -> box "delete the pair" (closest : pairKeys <> [other])
+  AwaitReplaceSurround -> box "replace the pair" (closest : pairKeys <> [other])
+  AwaitReplaceSurroundWith c -> box ("replace " <> T.singleton c <> " with") (pairKeys <> [other])
+  AwaitFind {} -> Nothing
+  AwaitRegister -> Nothing
+  AwaitInsertRegister -> Nothing
+  where
+    closest = ('m', "the closest pair")
+    other = ('…', "any other character, on both sides")
+    box title keys = Just (InfoBox title [(T.singleton k, doc) | (k, doc) <- keys] BottomRight Nothing)
 
 -- | The registers that hold something, @\"@ first, each with the start of
 -- its text (a register yanked from several ranges says how many).

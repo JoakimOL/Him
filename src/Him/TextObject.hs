@@ -7,6 +7,8 @@ module Him.TextObject
   , surroundingPair
   , matchingBracket
   , pairFor
+  , objectKeys
+  , pairKeys
   ) where
 
 import Data.Char (isAlphaNum, isSpace)
@@ -30,6 +32,20 @@ brackets = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')]
 
 quotes :: [Char]
 quotes = ['"', '\'', '`']
+
+-- | The keys that name a text object, and what each one selects (for the
+-- info box while @m i@ / @m a@ wait).
+objectKeys :: [(Char, T.Text)]
+objectKeys =
+  [('w', "word"), ('W', "WORD (non-blank characters)"), ('p', "paragraph"), ('m', "the closest pair")]
+    <> pairKeys
+
+-- | The keys that name a pair: a bracket (either side) or a quote. Any other
+-- character is its own pair, on both sides.
+pairKeys :: [(Char, T.Text)]
+pairKeys =
+  [(o, name <> " " <> T.pack [o, cl]) | ((o, cl), name) <- zip brackets ["parentheses", "square brackets", "braces", "angle brackets"]]
+    <> [(q, name <> " " <> T.pack [q, q]) | (q, name) <- zip quotes ["double quotes", "single quotes", "backticks"]]
 
 -- | The range a text object covers around a position: @inside@ (@m i@) or
 -- around (@m a@). Objects: @w@ a word, @W@ a WORD (non-blanks), @p@ a
