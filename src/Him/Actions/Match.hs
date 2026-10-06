@@ -45,6 +45,7 @@ awaitedMatchKey waiting ch = case waiting of
   AwaitObject inside -> modifyDoc $ \d ->
     d {docSelection = mapRanges (\r -> fromMaybe r (textObject inside ch (docBuffer d) (rangeHead r))) (docSelection d)}
   AwaitFind {} -> pure ()
+  AwaitReplaceChar -> pure ()
   AwaitRegister -> pure ()
   AwaitInsertRegister -> pure ()
 

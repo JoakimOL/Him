@@ -168,6 +168,7 @@ normalBindings =
        , ("space y", "yank_to_clipboard")
        , ("space p", "paste_clipboard_after")
        , ("space P", "paste_clipboard_before")
+       , ("r", "replace")
        , ("R", "replace_with_yanked")
        , ("space R", "replace_with_clipboard")
        , ("u", "undo")

@@ -56,6 +56,10 @@ integrationTests = do
   typed <- textAfter "" "i h i space t h e r e esc"
   newline <- textAfter "ab" "a ret c esc"
   opened <- textAfter "one\ntwo" "o x esc"
+  replacedChar <- textAfter "abc" "r x"
+  replacedLine <- textAfter "ab\ncd" "x r -"
+  replaceCancelled <- textAfter "abc" "r esc i y esc"
+  replaceUndone <- textAfter "abc" "r x u"
   backspace <- textAfter "abc" "a a backspace backspace esc"
   quitDirty <- typeKeys ": q ret" =<< typeKeys "i x esc" (start "")
   quitClean <- typeKeys ": q ret" (start "")
@@ -160,6 +164,10 @@ integrationTests = do
     , test "typing in insert mode" (assertEqual "hi there" typed)
     , test "append then newline" (assertEqual "a\ncb" newline)
     , test "open below" (assertEqual "one\nx\ntwo" opened)
+    , test "r replaces the character under the cursor" (assertEqual "xbc" replacedChar)
+    , test "r replaces a whole line but keeps its line break" (assertEqual "--\ncd" replacedLine)
+    , test "esc after r cancels it" (assertEqual "yabc" replaceCancelled)
+    , test "r is one undo step" (assertEqual "abc" replaceUndone)
     , test "backspace in insert mode" (assertEqual "bc" backspace)
     , test ":q refuses when dirty" (assertEqual (False, True) (edQuit quitDirty, isError (edStatus quitDirty)))
     , test ":q quits when clean" (assertEqual True (edQuit quitClean))

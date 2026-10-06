@@ -78,7 +78,8 @@ exInfo table ed
     row c = (T.intercalate ", " (exNames c), exDoc c)
 
 -- | While match mode waits for a key (@m i@, @m a@, @m s@, @m d@, @m r@):
--- the keys it takes. A find (@f@, @t@) takes any character, so it has none.
+-- the keys it takes. A find (@f@, @t@) and @r@ take any character, so they
+-- have none.
 awaitInfo :: Await -> Maybe InfoBox
 awaitInfo = \case
   AwaitObject True -> box "select inside" objectKeys
@@ -88,6 +89,7 @@ awaitInfo = \case
   AwaitReplaceSurround -> box "replace the pair" (closest : pairKeys <> [other])
   AwaitReplaceSurroundWith c -> box ("replace " <> T.singleton c <> " with") (pairKeys <> [other])
   AwaitFind {} -> Nothing
+  AwaitReplaceChar -> Nothing
   AwaitRegister -> Nothing
   AwaitInsertRegister -> Nothing
   where

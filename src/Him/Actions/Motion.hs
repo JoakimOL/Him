@@ -17,6 +17,7 @@ import Him.Action
 import Him.EditorM
 import Him.Actions.Jump (jumping)
 import Him.Document (Document (..))
+import Him.Edit (replaceChars)
 import Him.Motion
 import Him.Actions.Match (awaitedMatchKey)
 import Him.Actions.Register (awaitedRegister)
@@ -100,7 +101,7 @@ await :: Bool -> Bool -> Int -> EditorM ()
 await forward till n = modify' (\e -> e {edAwait = Just (AwaitFind forward till n)})
 
 -- | The key after @f t F T@ (the character to find; @ret@ is a line
--- break) or after a match-mode command (see "Him.Actions.Match"); anything
+-- break), after @r@ (the replacement), or after a match-mode command (see "Him.Actions.Match"); anything
 -- else cancels. 'False' when nothing was waiting for a key.
 awaitedKey :: Key -> EditorM Bool
 awaitedKey key =
@@ -113,6 +114,10 @@ awaitedKey key =
           modify' (\e -> e {edLastFind = Just (forward, till, ch)})
           motion (findChar False forward till ch n)
         Nothing -> pure ()
+      pure True
+    Just AwaitReplaceChar -> do
+      modify' (\e -> e {edAwait = Nothing})
+      mapM_ (edit . replaceChars) (keyChar key)
       pure True
     Just waiting
       | waiting `elem` [AwaitRegister, AwaitInsertRegister] -> do

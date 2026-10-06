@@ -4,7 +4,7 @@ module Him.Actions.Edit
   , insertChar
   ) where
 
-import Control.Monad.Trans.State.Strict (gets)
+import Control.Monad.Trans.State.Strict (gets, modify')
 import Data.Text qualified as T
 import Him.Action
 import Him.Buffer (nextPos)
@@ -16,7 +16,7 @@ import Him.Document (Document (..))
 import Him.Edit
 import Him.Actions.Register (selectedRegister, yank)
 import Him.History (History, Snapshot (..), redo, undo)
-import Him.Editor (Editor (..))
+import Him.Editor (Await (..), Editor (..))
 import Him.Options (Options (..))
 import Him.Mode (Mode (..))
 import Him.Selection
@@ -44,6 +44,8 @@ actions =
   , simple "open_above" GEditing "Open a new line above and insert" $ do
       edit (openLine Above)
       setMode Insert
+  , simple "replace" GEditing "Replace each selected character with the next key" $
+      modify' (\e -> e {edAwait = Just AwaitReplaceChar})
   , simple "select_mode" GModes "Toggle select (extend) mode" $
       gets edMode >>= \m -> setMode (if m == Select then Normal else Select)
   , simple "insert_newline" GEditing "Insert a line break" (edit insertNewline)

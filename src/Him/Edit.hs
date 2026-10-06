@@ -15,6 +15,7 @@ module Him.Edit
   , pasteAfter
   , pasteBefore
   , replaceWith
+  , replaceChars
   ) where
 
 import Data.Char (isSpace)
@@ -148,6 +149,19 @@ replaceWith t b r
   where
     s = rangeStart r
     b' = deleteRange s (nextPos b (rangeEnd r)) b
+
+-- | @r@: replace every character the range covers with one character, as in
+-- Helix; line breaks stay. The range stays too, unless the character is
+-- itself a line break (@r ret@), which moves what follows.
+replaceChars :: Char -> Edit
+replaceChars ch b r
+  | ch == '\n' = pasteAt s new b'
+  | otherwise = (fst (insertText s new b'), r)
+  where
+    s = rangeStart r
+    to = nextPos b (rangeEnd r)
+    new = T.map (\c -> if c == '\n' then c else ch) (textRange s to b)
+    b' = deleteRange s to b
 
 pasteAt :: Pos -> Text -> Buffer -> (Buffer, Range)
 pasteAt p t b = selectFrom p (insertText p t b)

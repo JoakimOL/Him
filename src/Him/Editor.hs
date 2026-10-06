@@ -143,6 +143,8 @@ data Await
   | AwaitReplaceSurround
   | AwaitReplaceSurroundWith !Char
   | AwaitObject !Bool
+  | -- | The character @r@ replaces each selected one with.
+    AwaitReplaceChar
   | -- | The register for the next command (@\"@), or to insert (@C-r@ in
     -- insert mode).
     AwaitRegister

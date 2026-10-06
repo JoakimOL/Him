@@ -245,6 +245,9 @@ editTests =
   , test "delete a line with its newline" (assertEqual ("ab\nef", Pos 1 0) (runEdit deleteSelection "ab\ncd\nef" (Range (Pos 1 0) (Pos 1 2) Nothing)))
   , test "delete the last line removes it" (assertEqual ("ab", Pos 0 0) (runEdit deleteSelection "ab\ncd" (Range (Pos 1 0) (Pos 1 2) Nothing)))
   , test "open line below" (assertEqual ("  ab\n  \ncd", Pos 1 2) (runEdit (openLine Below) "  ab\ncd" (point (Pos 0 1))))
+  , test "replace the characters of a range" (assertEqual ("axx", Pos 0 2) (runEdit (replaceChars 'x') "abc" (Range (Pos 0 1) (Pos 0 2) Nothing)))
+  , test "replacing keeps line breaks" (assertEqual ("ax\nxd", Pos 1 0) (runEdit (replaceChars 'x') "ab\ncd" (Range (Pos 0 1) (Pos 1 0) Nothing)))
+  , test "replacing with a line break splits the line" (assertEqual ("\n\nc", Pos 1 0) (runEdit (replaceChars '\n') "abc" (Range (Pos 0 0) (Pos 0 1) Nothing)))
   , test "open line above" (assertEqual ("  \n  ab\ncd", Pos 0 2) (runEdit (openLine Above) "  ab\ncd" (point (Pos 0 1))))
   ]
 
