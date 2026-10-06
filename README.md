@@ -2,6 +2,7 @@
 
 *This is just ai slop, but i kinda like the product*
 
+## What is it?
 A modal, selection-first (Helix-style) text editor for the terminal, written in Haskell
 using only GHC boot libraries.
 
@@ -21,13 +22,10 @@ Vim and Helix.
 ## Usage
 
 ```sh
-make build                   # stack build
-make run ARGS="a.txt b.txt"  # run the editor (each file opens as a buffer)
-make test                    # run the test suite
-make bench                   # compare performance with vim and helix
-make watch                   # rebuild on save
-make ghci                    # REPL
-make fmt / make lint         # format / lint
+stack build                  # to build
+stack run -- <files>         # run the editor (each file opens as a buffer)
+stack test                   # run the test suite
+stack install                # build and install the built binary
 ```
 
 ## What it does
@@ -83,7 +81,7 @@ make fmt / make lint         # format / lint
 the chat and plugins. `him --dump-default-config` prints every default, with what each
 key does. `:config-open` edits the file and `:config-reload` applies it.
 
-Debug logging: `HIM_LOG=/tmp/him.log make run ARGS=file.txt`.
+Debug logging: set the `HIM_LOG` env var.
 
 ## Layout
 
