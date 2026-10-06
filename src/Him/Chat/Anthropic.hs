@@ -1,4 +1,4 @@
--- | The chat provider for the Claude API (ADR-41). There is no Anthropic
+-- | The chat provider for the Claude API (ADR ai-chat). There is no Anthropic
 -- SDK for Haskell and only boot libraries are allowed, so the request is
 -- raw HTTP through @curl@: the request (headers with the key, and the
 -- body) goes to curl's standard input as a config file, so the key never

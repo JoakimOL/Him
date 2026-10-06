@@ -1,4 +1,4 @@
--- | A small TOML reader for the config file (ADR-32). It reads the part of
+-- | A small TOML reader for the config file (ADR toml-config). It reads the part of
 -- TOML a config needs, into the JSON value type ("Him.Json"): tables
 -- become objects (keys in file order), arrays arrays.
 --

@@ -47,7 +47,7 @@ run :: [FilePath] -> IO ()
 run = runWith plugins Nothing
 
 -- | The same, for a build with these plugins: the built-in ones and
--- contrib, then a personal build's own ("Him.Main", ADR-52); with a
+-- contrib, then a personal build's own ("Him.Main", ADR personal-builds); with a
 -- message to show at the start.
 runWith :: [Plugin] -> Maybe T.Text -> [FilePath] -> IO ()
 runWith every notice files = do

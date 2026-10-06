@@ -1,4 +1,4 @@
--- | Windows (splits, ADR-37): how the screen is divided between views, as
+-- | Windows (splits, ADR window-splits): how the screen is divided between views, as
 -- a tree like Helix's. Pure; the editor keeps the tree and the windows
 -- that are not focused ("Him.Editor"), rendering draws each window in its
 -- box ("Him.Render").

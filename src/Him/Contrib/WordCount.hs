@@ -1,4 +1,4 @@
--- | A contrib plugin (ADR-51): the number of words in the buffer, in the
+-- | A contrib plugin (ADR plugin-api): the number of words in the buffer, in the
 -- status line. An example of an event handler, state and a segment.
 module Him.Contrib.WordCount
   ( wordCount

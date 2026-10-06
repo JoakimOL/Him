@@ -1,4 +1,4 @@
--- | Keeping the current document's highlighting current (ADR-26): find a
+-- | Keeping the current document's highlighting current (ADR syntax-providers): find a
 -- provider for its language, and ask for spans of the lines around the
 -- view whenever the text changes or the view leaves the lines covered.
 -- Which provider does the work is invisible here ("Him.Syntax").
@@ -60,7 +60,7 @@ syntaxHousekeeping = do
 
 -- | The lines of the current document that windows show: the focused
 -- window's, and those of other windows on the same document when they are
--- near enough to highlight in one go (ADR-37).
+-- near enough to highlight in one go (ADR window-splits).
 visibleLines :: Editor -> (Int, Int)
 visibleLines ed
   | bottom - top <= 2000 = (top, bottom)

@@ -1,4 +1,4 @@
--- | The user's config file (ADR-32): @config.toml@, read with "Him.Toml".
+-- | The user's config file (ADR toml-config): @config.toml@, read with "Him.Toml".
 --
 -- @
 -- [editor]

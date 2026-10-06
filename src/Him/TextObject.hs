@@ -1,4 +1,4 @@
--- | Helix's match mode (@m@), pure (ADR-40): text objects (@m i w@,
+-- | Helix's match mode (@m@), pure (ADR match-mode): text objects (@m i w@,
 -- @m a (@), the pair around a position, and the bracket matching one.
 -- Positions are character positions; ranges are inclusive, like
 -- selections.

@@ -1,4 +1,4 @@
--- | What a document knows about its file in git (ADR-25): the versions in
+-- | What a document knows about its file in git (ADR git): the versions in
 -- the index and in HEAD, the hunks between them and the buffer, and the
 -- staging edits computed from those (the signs are drawn by the git
 -- plugin, "Him.Actions.Git"). Pure; the git
@@ -55,7 +55,7 @@ data GitTracking = GitTracking
   , gtRequested :: !Int
   -- ^ The version a diff was last asked for (-1: none). A newer version
   -- asks again; the job waits a moment first and is replaced by a newer
-  -- one, so typing diffs once it pauses (ADR-39).
+  -- one, so typing diffs once it pauses (ADR per-key-work).
   , gtReload :: !Bool
   -- ^ The base should be loaded again (after a save or staging).
   }

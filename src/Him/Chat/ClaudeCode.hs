@@ -1,4 +1,4 @@
--- | The chat provider for Claude Code (ADR-42): the @claude@ program you
+-- | The chat provider for Claude Code (ADR claude-code-provider): the @claude@ program you
 -- are logged in to, so no API key is needed. One @claude -p@ process per
 -- chat keeps the conversation (messages go in as stream-json, events come
 -- out as stream-json; a cancelled turn is picked up again with

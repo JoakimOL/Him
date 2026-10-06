@@ -1,4 +1,4 @@
--- | Events for plugins (ADR-50): buffers opened, changed, saved, closed,
+-- | Events for plugins (ADR plugin-building-blocks): buffers opened, changed, saved, closed,
 -- entered, mode changes, and the cursor moving. They are found by comparing the editor with
 -- what was seen after the last event, so no code path that opens, edits
 -- or saves has to remember to raise them. Pure.

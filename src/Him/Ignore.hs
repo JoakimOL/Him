@@ -1,4 +1,4 @@
--- | @.gitignore@ and @.ignore@ files (see ADR-21 in docs/PLAN.md).
+-- | @.gitignore@ and @.ignore@ files (see ADR gitignore-matcher in docs/PLAN.md).
 --
 -- The syntax is git's: blank lines and @#@ comments are skipped, @!@
 -- re-includes, a trailing @/@ matches directories only, and a pattern with

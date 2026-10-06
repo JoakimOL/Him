@@ -1,4 +1,4 @@
--- | The @him@ program (ADR-52): its command line, for a build with these
+-- | The @him@ program (ADR personal-builds): its command line, for a build with these
 -- plugins besides the built-in ones and contrib. @app/Main.hs@ is
 -- @himMain []@; a personal build (@him --rebuild@, or the template
 -- repository's CI) is @himMain [hostPlugin myPlugin, …]@.
@@ -39,7 +39,7 @@ himMain extra = do
         ["--dump-default-config"] -> TIO.putStr (defaultConfigTextFor every)
         ["--rebuild"] -> rebuild
         files
-          -- The released him starts a personal build instead (ADR-52).
+          -- The released him starts a personal build instead (ADR personal-builds).
           | null extra -> personalBuild >>= maybe (App.runWith every Nothing files) (either older (\built -> executeFile built False files Nothing))
           | otherwise -> App.runWith every Nothing files
           where

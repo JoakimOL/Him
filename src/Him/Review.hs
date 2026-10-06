@@ -1,4 +1,4 @@
--- | Reviewing the chat's proposed changes (ADR-43), pure: approving or
+-- | Reviewing the chat's proposed changes (ADR change-review), pure: approving or
 -- denying one change, finding the change at a line, and the rows a text
 -- area shows for a document under review - its lines, with the removed
 -- lines of each change and a header above it.

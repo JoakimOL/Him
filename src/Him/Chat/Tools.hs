@@ -1,4 +1,4 @@
--- | What the model may do in the chat (ADR-41): read files, list the
+-- | What the model may do in the chat (ADR ai-chat): read files, list the
 -- project's files, and propose edits. Reading happens at once; an edit is
 -- applied to the file's buffer as a pending edit ("Him.Chat") that the
 -- user approves or denies. Pure: the tool definitions, checking a call's

@@ -80,7 +80,7 @@ data Theme = Theme
 scopeStyle :: Theme -> Text -> Maybe Style
 scopeStyle theme = lookupScope (themeScopes theme)
 
--- | How a plugin's 'Face' looks in a theme (ADR-50).
+-- | How a plugin's 'Face' looks in a theme (ADR plugin-building-blocks).
 faceStyle :: Theme -> Face -> Style
 faceStyle theme (Face scope dimFallback) = case Map.lookup scope (themeScopes theme) of
   Just st -> st

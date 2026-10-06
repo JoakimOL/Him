@@ -1,5 +1,5 @@
 -- | Searching the files of a project for text, for the global search
--- picker (@space /@, ADR-46). The pattern is a "Him.Search" needle
+-- picker (@space /@, ADR global-search). The pattern is a "Him.Search" needle
 -- (literal, smart case); the scan runs in C over the whole file
 -- ("Him.Native"), one hit per line.
 module Him.Grep

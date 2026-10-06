@@ -1,4 +1,4 @@
--- | Personal builds (ADR-52): @him --rebuild@ builds a @him@ with the
+-- | Personal builds (ADR personal-builds): @him --rebuild@ builds a @him@ with the
 -- plugins listed in @~/.config/him/plugins.toml@, as xmonad builds its
 -- config. It writes a small stack project (a @Main.hs@ of
 -- @himMain [hostPlugin …]@) and runs @stack build@, which needs GHC and

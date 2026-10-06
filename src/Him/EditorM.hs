@@ -55,7 +55,7 @@ setMode m = do
     else do
       modify' (\e -> e {edMode = m})
       -- In a REPL or chat buffer, typing goes to the input: a cursor up in
-      -- the transcript moves to its end (ADR-44).
+      -- the transcript moves to its end (ADR transcripts).
       when (m == Insert) $ modifyDoc $ \d -> case inputPos d of
         Just p ->
           let end = Buffer.endPos (docBuffer d)
@@ -79,7 +79,7 @@ setRegister :: Char -> [Text] -> EditorM ()
 setRegister c vs = modify' (\e -> e {edRegisters = Map.insert c vs (edRegisters e)})
 
 -- | Queue an effect for the main loop (see "Him.Effect").
--- | Show a picker; its keys take over until it closes (ADR-48: what
+-- | Show a picker; its keys take over until it closes (ADR picker-actions: what
 -- choosing does is the picker's 'Him.Picker.pkPrimary' and 'Him.Picker.pkSecondary').
 openPicker :: Picker -> EditorM ()
 openPicker p = modify' (\e -> e {edPicker = Just p, edMode = Picking})
@@ -117,7 +117,7 @@ editAll f = do
     else failWith transcriptMessage
 
 -- | In a REPL or chat buffer only the input after the prompt may change;
--- the transcript before it is read-only (ADR-44). The first difference
+-- the transcript before it is read-only (ADR transcripts). The first difference
 -- between the texts ('Buffer.changeBetween', cheap) must not be before
 -- the input.
 transcriptKept :: Document -> Buffer.Buffer -> Bool

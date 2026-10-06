@@ -1,4 +1,4 @@
--- | The jumplist (ADR-47): where the cursor was before each jump, per
+-- | The jumplist (ADR jumplist): where the cursor was before each jump, per
 -- window, as in Helix. @C-o@ goes back through it, @C-i@ / @tab@ forward,
 -- @C-s@ saves the selection into it, and @space j@ lists it. Pure; the
 -- editor-level parts are in "Him.Actions.Jump".

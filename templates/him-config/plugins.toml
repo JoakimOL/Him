@@ -1,4 +1,4 @@
-# The plugins to build into your own him (ADR-52). The contrib plugins are
+# The plugins to build into your own him (ADR personal-builds). The contrib plugins are
 # in every release already (:plugins switches them on); list others here.
 #
 # [him]                       # where him's source comes from

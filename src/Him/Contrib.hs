@@ -1,4 +1,4 @@
--- | The contrib collection (ADR-51): plugins built on "Him.Plugin" only,
+-- | The contrib collection (ADR plugin-api): plugins built on "Him.Plugin" only,
 -- compiled into every release and off until switched on (@[plugins]@ or
 -- @:plugin-enable@). To add one: a module under "Him.Contrib", its line
 -- here, its tests, and its part in the tutorial.

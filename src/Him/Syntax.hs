@@ -1,5 +1,5 @@
 -- | Syntax highlighting: one interface for every kind of highlighter
--- (ADR-26).
+-- (ADR syntax-providers).
 --
 -- The editor knows only this module. A provider (tree-sitter, TextMate,
 -- or a fake one in the tests) is a value of 'SyntaxProvider', listed in

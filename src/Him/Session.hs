@@ -179,7 +179,7 @@ housekeeping config = do
   modify' Jump.syncJumps
   pluginEvents config
 
--- | Tell the plugins what happened since the last event (ADR-50), and
+-- | Tell the plugins what happened since the last event (ADR plugin-building-blocks), and
 -- forget what they showed for documents that closed. Effects their
 -- handlers ask for run at once; events those cause wait for the next
 -- round.
@@ -219,7 +219,7 @@ switchPlugins old new = do
     request (ProcessStopAll (plName p))
   mapM_ plEnable added
   -- A plugin switched on hears about what is open already, as it would
-  -- have at startup (ADR-51).
+  -- have at startup (ADR plugin-api).
   ed <- get
   let greeting = map (PE.BufferOpened . docId) (allDocuments ed) <> [PE.BufferEntered (docId (edDoc ed))]
   sequence_ [plEvent p ev | p <- added, ev <- greeting]
@@ -227,7 +227,7 @@ switchPlugins old new = do
   housekeeping new
 
 -- | Carry out the effects the key's action requested that need the config
--- (ADR-23). An action run this way may request more; a chain is cut off
+-- (ADR effects-and-runtime). An action run this way may request more; a chain is cut off
 -- after a few rounds so a loop cannot hang the editor.
 runEffects :: Config -> Command.EditorM ()
 runEffects config = go (8 :: Int)
@@ -273,7 +273,7 @@ runEffects config = go (8 :: Int)
       PluginCommand (Just _) -> pure ()
       ClipboardSet c vs -> Register.clipboardSet (cfgClipboardProviders config) c vs
       ClipboardGet c use -> Register.clipboardGet (cfgClipboardProviders config) c use
-      -- Every plugin, on or off; ret switches the chosen ones (ADR-51).
+      -- Every plugin, on or off; ret switches the chosen ones (ADR plugin-api).
       PluginCommand Nothing ->
         let on = map plName (cfgPlugins config)
             item p

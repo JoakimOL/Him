@@ -62,7 +62,7 @@ listFiles opts root = do
 -- target only once and never one that contains the link (a cycle). It
 -- stops after the limit and returns how many files it found.
 --
--- Directories are read by a pool of worker threads (ADR-24), and entry
+-- Directories are read by a pool of worker threads (ADR streaming-file-picker), and entry
 -- types come from @readdir@ itself, so most entries cost no @stat@.
 -- Killing the calling thread stops the workers too.
 walkFiles :: WalkOptions -> FilePath -> ([FilePath] -> IO ()) -> IO Int

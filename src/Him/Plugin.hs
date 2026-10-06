@@ -1,4 +1,4 @@
--- | The plugin API (ADR-51): the one module a plugin imports. A plugin is
+-- | The plugin API (ADR plugin-api): the one module a plugin imports. A plugin is
 -- a 'PluginSpec': its actions, @:@ commands and keys, and what it does
 -- when something happens ('Event'). Its code runs in 'PluginM', which can
 --

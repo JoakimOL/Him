@@ -1,4 +1,4 @@
--- | Directory listings (ADR-22): a directory opens as a read-only document
+-- | Directory listings (ADR directory-documents): a directory opens as a read-only document
 -- whose lines are its entries, like Emacs's dired. The ordinary motions
 -- and search work on it; the keys of the 'Him.Mode.Directory' layer open
 -- entries ("Him.Actions.Directory").

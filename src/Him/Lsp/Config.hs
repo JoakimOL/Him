@@ -1,5 +1,5 @@
 -- | Which language server serves a language, and how to find a project's
--- root (ADR-29). Built in for now; a config file can extend it later.
+-- root (ADR lsp-client). Built in for now; a config file can extend it later.
 module Him.Lsp.Config
   ( ServerConfig (..)
   , ServerTable

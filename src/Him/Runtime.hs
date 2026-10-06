@@ -1,4 +1,4 @@
--- | The runtime (ADR-23): runs the background jobs actions ask for
+-- | The runtime (ADR effects-and-runtime): runs the background jobs actions ask for
 -- ("Him.Effect"), each on its own thread, and posts their results to the
 -- main loop's event channel. At most one job per 'JobKey' runs; starting
 -- another cancels the old one.
@@ -135,7 +135,7 @@ perform rt = \case
       provider : _ -> do
         -- The session is kept across turns (and replaced when the configured
         -- provider changes). A finished turn is not cancelled: for Claude
-        -- Code that would end the process (ADR-42); only ChatCancel does.
+        -- Code that would end the process (ADR claude-code-provider); only ChatCancel does.
         session <- modifyMVar (rtChats rt) $ \m -> case Map.lookup doc m of
           Just e | ceProvider e == cpName provider -> pure (m, ceSession e)
           old -> do

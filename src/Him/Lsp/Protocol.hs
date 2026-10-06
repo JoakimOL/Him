@@ -1,4 +1,4 @@
--- | The pure part of the LSP client (ADR-29): message framing, file URIs,
+-- | The pure part of the LSP client (ADR lsp-client): message framing, file URIs,
 -- position encodings, and building and reading the messages him uses.
 module Him.Lsp.Protocol
   ( -- * Framing

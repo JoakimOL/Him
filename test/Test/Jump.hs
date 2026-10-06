@@ -1,4 +1,4 @@
--- | The jumplist (ADR-47): the pure list, and @C-o@ / @tab@ / @C-s@ /
+-- | The jumplist (ADR jumplist): the pure list, and @C-o@ / @tab@ / @C-s@ /
 -- @space j@ through the default keys.
 module Test.Jump
   ( jumpTests

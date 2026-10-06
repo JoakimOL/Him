@@ -42,7 +42,7 @@ data DocKind
     ReplDoc !ReplState
   | -- | An AI chat's transcript and input (see "Him.Chat").
     ChatDoc !ChatState
-  | -- | Read-only text a plugin shows, by name (ADR-51).
+  | -- | Read-only text a plugin shows, by name (ADR plugin-api).
     ScratchDoc !Text
   deriving stock (Eq, Show)
 

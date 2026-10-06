@@ -1,4 +1,4 @@
--- | The language-server client in the editor (ADR-29): attaching documents
+-- | The language-server client in the editor (ADR lsp-client): attaching documents
 -- to servers, keeping the server's copy of the text current, asking
 -- questions (hover, definition, references) and applying the answers, and
 -- diagnostics. Messages are built and read as pure data; the runtime only
@@ -42,7 +42,7 @@ import Him.Actions.Lsp.Navigation
 import Him.Actions.Lsp.Edits
 import Him.Actions.Lsp.Completion
 
--- | The language-server client (ADR-29) as a plugin (ADR-35).
+-- | The language-server client (ADR lsp-client) as a plugin (ADR git-and-lsp-as-plugins).
 lspPlugin :: Plugin
 lspPlugin =
   (plugin "lsp" "Language servers: diagnostics, hover, go to, completion, rename, format, code actions")

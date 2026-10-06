@@ -72,7 +72,7 @@ history nothingMsg step = do
   case step (Snapshot (docBuffer d) (docSelection d)) (docHistory d) of
     Nothing -> info nothingMsg
     -- In a REPL or chat buffer, undo may change the input only (output
-    -- that came since is not undone away, ADR-44).
+    -- that came since is not undone away, ADR transcripts).
     Just (Snapshot buf _, _) | not (transcriptKept d buf) -> failWith transcriptMessage
     Just (Snapshot buf sel, h) ->
       modifyDoc $ \doc ->

@@ -79,8 +79,8 @@ Some developer-experience files are worth adding on day one:
 - **`hie.yaml`:** an explicit Stack cradle for HLS.
 - **`fourmolu.yaml`** and **`.hlint.yaml`:** formatting and lint settings.
 - **`Makefile`:** short `build` / `run` / `test` / `watch` targets.
-- **`docs/PLAN.md`:** a living design document. It lists the assumptions, records every
-  architecture decision ("ADR"), and has a milestone checklist with a "where to pick up"
+- **`docs/PLAN.md`:** a living design document. It lists the assumptions, indexes the
+  architecture decisions ("ADRs", one file each in `docs/adr/`), and has a milestone checklist with a "where to pick up"
   section.
 
 A test framework would be the one Hackage dependency we'd want, so we write a 50-line
@@ -131,7 +131,7 @@ withRawTerminal action = bracket enter leave (const action)
 The alternate screen (`?1049h`) is why Vim's screen disappears when you quit, and your
 shell history comes back.
 
-> **Pitfall (ADR-7b).** Never call `hSetBuffering stdin` or `hSetEcho` while in raw mode.
+> **Pitfall ([ADR input-from-fd](adr/input-from-fd.md)).** Never call `hSetBuffering stdin` or `hSetEcho` while in raw mode.
 > GHC then saves the termios state itself and restores *that* state at exit. That state
 > is already raw, so it undoes your restore. Read from the file descriptor directly
 > instead (`fdRead stdInput`). We found this by comparing `stty -g` before and after a
@@ -146,7 +146,7 @@ loop throw an exception and check with `stty -a` that the terminal is still fine
 ordinary key. To suspend the editor, give the terminal back exactly as you found it,
 then stop yourself with `raiseSignal sigTSTP`. The call returns when the shell sends
 `SIGCONT` (`fg`). At that point, set raw mode again and redraw everything: the screen
-belongs to whatever ran meanwhile (ADR-31).
+belongs to whatever ran meanwhile ([ADR suspend](adr/suspend.md)).
 
 ### 1.2 Escape sequences as pure builders
 
@@ -243,7 +243,7 @@ arrow keys and a lone ESC. Test it with the harness:
 `Him.Terminal.Input` and `test/Spec.hs`.
 
 **Checkpoint.** A loop that draws `~` on every row and shows the name of the last decoded
-key at the bottom works, including resize (milestones 2–4 in `docs/PLAN.md`).
+key at the bottom works, including resize (the raw mode, output and input milestones in `docs/PLAN.md`).
 
 ---
 
@@ -295,7 +295,7 @@ line, and replace the lines in between.
 Positions are `Pos { posLine, posCol }`, where the column is a character index. Ord is
 document order. `posCol == lineLength` addresses the line end, i.e. the newline.
 
-The central idea of Helix (ADR-1, ADR-5b): **every cursor is a selection**. A `Range`
+The central idea of Helix ([ADR selection-first-editing](adr/selection-first-editing.md), [ADR selection-model](adr/selection-model.md)): **every cursor is a selection**. A `Range`
 has an anchor and a head, and covers every character between them *inclusive*. A "plain
 cursor" selects the one character under it.
 
@@ -424,7 +424,7 @@ data Mode = Normal | Insert | Select | CmdLine
 
 ### 3.2 Everything is a named command
 
-This is the main extension point (ADR-5):
+This is the main extension point ([ADR command-registry](adr/command-registry.md)):
 
 ```haskell
 type EditorM = StateT Editor IO
@@ -535,7 +535,7 @@ exCommands =
   , ... ]
 ```
 
-### 3.6 From commands to actions (ADR-17)
+### 3.6 From commands to actions ([ADR actions](adr/actions.md))
 
 Names alone cannot say "move down **5** lines" or "insert `// `". Commands therefore
 became *actions*. An action is a stable name plus typed parameters, and a binding is
@@ -578,7 +578,7 @@ binding has no arguments and the action's first parameter is `int "count"`, the 
 passed in as that argument. The decision is made once, in `bindInvocation`, which stores
 a `boundCounted :: Maybe (Int -> EditorM ())` next to `boundRun`.
 
-That design paid off later: the config file (ADR-32) is little more than a TOML reader
+That design paid off later: the config file ([ADR toml-config](adr/toml-config.md)) is little more than a TOML reader
 that produces the same `Bindings` pairs, plus `him --dump-default-config`, which prints
 the defaults through the same tables.
 
@@ -587,7 +587,7 @@ double-quoted strings with `\"` and `\\`) and its inverse, and test that they
 round-trip.
 
 **Checkpoint.** You can open a file, move with `hjkl`/`w b e`, select with `x`/`v`, edit
-in insert mode, and `:wq` (milestones 5–9).
+in insert mode, and `:wq` (the milestones from loading a buffer to Helix's selection actions).
 
 ---
 
@@ -660,7 +660,7 @@ by the screen edge is drawn as a blank, so the terminal never draws half of one.
 and has four tests. The gutter width follows the line count, so `layout` depends on the
 editor.
 
-### 4.4 Themes: borrow a format, get 219 themes (ADR-33)
+### 4.4 Themes: borrow a format, get 219 themes ([ADR helix-themes](adr/helix-themes.md))
 
 Highlighting (5.9) produces *scopes* with Helix's names (`keyword.control.import`). So
 reading Helix's theme files, rather than inventing a format, makes every Helix theme
@@ -705,7 +705,7 @@ ramp, and keep the closer one.
 
 ## Part 5: Undo, registers, and search
 
-### 5.1 Undo with snapshots (ADR-9)
+### 5.1 Undo with snapshots ([ADR snapshot-undo](adr/snapshot-undo.md))
 
 Because the buffer is a persistent data structure, a snapshot of `(Buffer, Selection)`
 shares almost all of its memory with the current state. So undo can simply keep
@@ -723,7 +723,7 @@ editor is in insert mode**. So `c foo esc` (delete, type, leave) is one undo ste
 exactly like Helix. Undoing back to the saved text clears the `[+]` marker, because the
 document remembers `docSavedBuffer`.
 
-### 5.2 Registers and linewise paste (ADR-10)
+### 5.2 Registers and linewise paste ([ADR registers-in-editor](adr/registers-in-editor.md))
 
 `y`, `d` and `c` store the selection in register `"`. Text ending in a newline (what
 `x` selects) pastes as whole lines: `p` puts it below the current line, `P` above. One
@@ -766,7 +766,7 @@ from several blocks plus edits.
 
 ---
 
-### 5.4 Many cursors (ADR-18)
+### 5.4 Many cursors ([ADR bottom-up-multi-range-edits](adr/bottom-up-multi-range-edits.md))
 
 Every motion already worked on all ranges, so multiple selections only needed edits to
 do the same. The usual approach maps every position through every change. Instead, him
@@ -792,7 +792,7 @@ matches inside the selection) reuses the search's block scanner and its incremen
 preview. `C` copies each range onto the next line where it fits, and `A-s` splits ranges
 into lines.
 
-### 5.5 Buffers, menus, and pickers (ADR-19, ADR-20)
+### 5.5 Buffers, menus, and pickers ([ADR buffer-zipper](adr/buffer-zipper.md), [ADR menus-as-data](adr/menus-as-data.md))
 
 **Buffers without touching `edDoc`.** Dozens of functions read `edDoc`. Instead of
 replacing it with a list and an index, the other documents sit on either side of it, as
@@ -830,7 +830,7 @@ result with a fresh render. With the line removed, the test fails.
 The fuzzy score is the number of characters skipped between the first and last match,
 and every start position is tried, so `ab` matches `src/ab.hs` before `src/a/long/b.hs`.
 
-### 5.6 Ignore files and a directory viewer (ADR-21, ADR-22)
+### 5.6 Ignore files and a directory viewer ([ADR gitignore-matcher](adr/gitignore-matcher.md), [ADR directory-documents](adr/directory-documents.md))
 
 **Gitignore without a regex engine.** A pattern compiles to a few tokens, and a
 backtracking matcher walks the path:
@@ -861,7 +861,7 @@ holding the old name. `d` collects the entries under *every* selection, so the
 multiple-selection tools from 5.4 double as dired's marks. One detail is worth a test of
 its own: deleting a symlink to a directory must unlink it, not delete what it points to.
 
-### 5.7 Effects, background jobs, and a picker that never blocks (ADR-23, ADR-24)
+### 5.7 Effects, background jobs, and a picker that never blocks ([ADR effects-and-runtime](adr/effects-and-runtime.md), [ADR streaming-file-picker](adr/streaming-file-picker.md))
 
 Everything so far ran on the main thread, and that was fine, since a key costs well
 under a millisecond. A file picker over 200,000 files is different: the walk takes
@@ -894,7 +894,7 @@ What remained was about 75 ms when every item matches. So instead of more micro-
 large pickers rank in a background job and keep showing their last results until the
 new ones arrive. Typing never waits.
 
-### 5.8 Git signs and staging lines (ADR-25)
+### 5.8 Git signs and staging lines ([ADR git](adr/git.md))
 
 Git is two diffs away. The index and HEAD versions of a file come from
 `git show :path` and `git show HEAD:path`, run in a background job. Two diffs follow:
@@ -921,7 +921,7 @@ Reverting the selected changes is the same as applying the unselected ones. The 
 index version goes in with `git hash-object -w --stdin` and `git update-index
 --cacheinfo`. No patches are built, so partial hunks cannot produce an invalid patch.
 
-### 5.9 Highlighting: one interface, tree-sitter behind it (ADR-26–28)
+### 5.9 Highlighting: one interface, tree-sitter behind it ([ADR syntax-providers](adr/syntax-providers.md), [ADR tree-sitter](adr/tree-sitter.md), [ADR regex-engine](adr/regex-engine.md))
 
 The requirement was "the code shouldn't care whether it is tree-sitter or TextMate".
 In Haskell that is a record of functions:
@@ -951,7 +951,7 @@ elsewhere is part of your program's memory safety. him now builds its own gramma
 (`him --build-grammars`, with `-fno-strict-aliasing`) instead of trusting prebuilt
 ones.
 
-### 5.10 A language-server client without blocking (ADR-29)
+### 5.10 A language-server client without blocking ([ADR lsp-client](adr/lsp-client.md))
 
 LSP is JSON-RPC over a pipe. The design question is where the waiting happens, and the
 answer is: never on the main thread. Three pieces cooperate:
@@ -1003,7 +1003,7 @@ are too many. So a picker can have a *source*. A `ServerQuery` picker sends each
 change of its query to the server, keeps showing the last answer, and drops answers to
 older queries, the same staleness rule as everywhere else.
 
-### 5.11 Splits and a REPL beside the code (ADR-37, ADR-38)
+### 5.11 Splits and a REPL beside the code ([ADR window-splits](adr/window-splits.md), [ADR repl](adr/repl.md))
 
 **Splits** keep the old state for the focused window: `edDoc` and `edView` are still
 "what you are editing". The other windows are only `Window { winDoc, winView,
@@ -1051,7 +1051,7 @@ some output text, insert the text at `p`. Then move every cursor at or after `p`
 that one at the end of the typed input stays at the end. Test it with output that has
 no newline, and with output that has two.
 
-### 5.12 Text objects and an AI chat (ADR-40, ADR-41)
+### 5.12 Text objects and an AI chat ([ADR match-mode](adr/match-mode.md), [ADR ai-chat](adr/ai-chat.md))
 
 **Match mode** (`m`) is small once selections are pure:
 - `m i w` and `m a (` ask `Him.TextObject.textObject` for a range around the cursor:
@@ -1067,7 +1067,7 @@ no newline, and with output that has two.
   streams events back, so the tests drive the whole flow with a scripted provider.
 
 The interesting part is the model's edits. They are *proposed*, all in one turn, and
-reviewed like staged hunks (ADR-43):
+reviewed like staged hunks ([ADR change-review](adr/change-review.md)):
 - A document under review keeps its text from before the chat's first change (the
   base). The proposed changes are simply the diff from the base to the buffer.
 - Approving one applies it to the base, the way `git add -p` stages a hunk, and writes
@@ -1075,7 +1075,7 @@ reviewed like staged hunks (ADR-43):
 - The text area draws extra rows for each change: a header, and the removed lines.
   These rows are not in the buffer.
 
-The chat buffer is laid out like an editor's chat panel (ADR-45, `Him.Chat.Transcript`).
+The chat buffer is laid out like an editor's chat panel ([ADR chat-panel](adr/chat-panel.md), `Him.Chat.Transcript`).
 Output goes *above* the prompt, so the input box stays at the bottom. The transcript
 only ever grows at its last line, so a line's number never changes: what each line is
 (your message, a code block, a tool line) is kept in a map by line number, and the
@@ -1085,7 +1085,7 @@ re-wrapping just the last line with each new chunk.
 The history sent to the model is append-only. The assistant's messages go back exactly
 as they came, thinking blocks included, which the API requires.
 
-With **Claude Code** as the provider (ADR-42), the model runs its own loop, so him's
+With **Claude Code** as the provider ([ADR claude-code-provider](adr/claude-code-provider.md)), the model runs its own loop, so him's
 tools reach it over MCP. `him --mcp-bridge` is a tiny MCP server that Claude Code
 starts; it forwards each tool call through a named pipe to the running editor, and
 waits. The editor answers an edit only after you decide, so the model's turn simply
@@ -1095,7 +1095,7 @@ pauses until then.
 of characters of the same kind (word, punctuation, blank) around it. Then make `m a w`
 include the blanks after the word, or before it at the end of a line.
 
-### 5.13 A plugin API, and writing a plugin (ADR-48, ADR-50–51)
+### 5.13 A plugin API, and writing a plugin ([ADR picker-actions](adr/picker-actions.md), [ADR plugin-building-blocks](adr/plugin-building-blocks.md), [ADR plugin-api](adr/plugin-api.md))
 
 Everything so far was compiled in, and so are plugins: like xmonad, him has no plugin
 loader. Instead, `Him.Plugin` is one module that a plugin imports, and the **contrib
@@ -1194,7 +1194,7 @@ Each optimization below follows the same loop: **measure, find the real cost, fi
 that, measure again.** Some guesses turned out to be wrong, and those are worth
 reading too.
 
-### 7.1 Render once per batch of input (ADR-11)
+### 7.1 Render once per batch of input ([ADR render-per-batch](adr/render-per-batch.md))
 
 **Finding.** 2000 queued `j` presses produced 2000 full renders. Vim skips redraws while
 typeahead is pending.
@@ -1280,7 +1280,7 @@ implemented by *reversing the whole input*, so every chunk was copied twice, and
 lines ended up as slices of the copies. `T.dropWhileEnd` and `T.takeWhileEnd` scan from
 the end and return slices.
 
-**The real fix (ADR-12).** Even with all of that fixed, live data was about 24 MB: 14 MB
+**The real fix ([ADR rope-buffer](adr/rope-buffer.md)).** Even with all of that fixed, live data was about 24 MB: 14 MB
 of text plus about 10 MB of *line objects*. Every line in `Seq Text` costs a `Text`
 constructor and finger-tree nodes, about 50 bytes, 200,000 times over. And the copying
 GC has to copy all of them, which doubles the space. So the buffer became a **rope of
@@ -1317,7 +1317,7 @@ cost latency.
 | open 14 MB file | 38.6 MB | **24.1 MB** | 37.2 MB |
 | edit and save | 88.5 MB | **35.4 MB** | 37.1 MB |
 
-### 7.5 Search: scan blocks, anchor on the rarest byte (ADR-13, ADR-14)
+### 7.5 Search: scan blocks, anchor on the rarest byte ([ADR c-byte-loops](adr/c-byte-loops.md), [ADR literal-search](adr/literal-search.md))
 
 Searching per line would mean 200,000 calls. With the rope, a whole block, thousands of
 lines joined by their original newlines, is one contiguous byte range. A needle never
@@ -1361,7 +1361,7 @@ code was the same, so the cause was the CPU: the `powersave` governor parks idle
 at 800 MHz, and a search that arrives after a pause starts on a slow core. All editors
 pay this, but it explains why tight-loop numbers and real latency differ.
 
-### 7.6 Rendering: write only what changed (ADR-15)
+### 7.6 Rendering: write only what changed ([ADR row-reuse-and-scrolling](adr/row-reuse-and-scrolling.md))
 
 Comparing bytes per `n` (a jump of 1,000 lines) was revealing: Vim wrote 748 bytes,
 Helix 1,867, and him **5,681**. Neighbouring matches look nearly identical on screen,
@@ -1383,7 +1383,7 @@ and Vim and Helix only send the cells that changed. Four fixes followed:
 
    `prevRowOf` looks the row up *by line* (`screenRow + top - prevTop`), so rows survive
    scrolling. (The key is a row *and* a column since splits put windows side by side,
-   ADR-37.)
+   [ADR window-splits](adr/window-splits.md).)
 3. **Terminal scrolling.** When the view moves by less than a screen, the diff sets a
    scroll region over the text area and scrolls it (`ESC[1;38r`, `ESC[1S`). It then
    compares the new frame with the *shifted* old one, so a `j` that scrolls writes one
@@ -1413,7 +1413,7 @@ tied on `n`. Every fix below was measured in isolation first. The full log is in
    and sums the hits with `_mm_sad_epu8`. A block's line-start array is a lazy field, so
    it is only built when the block is shown or searched. The first paint only needs the
    count.
-3. **Zero copy (ADR-16).** A regular file is read into one pinned array of exactly its
+3. **Zero copy ([ADR lazy-file-loading](adr/lazy-file-loading.md)).** A regular file is read into one pinned array of exactly its
    size. If the bytes are valid UTF-8, that array *is* the `Text`. There is no decode
    step and no copy. Invalid files and pipes still take the lenient and chunked paths,
    and tests force both.

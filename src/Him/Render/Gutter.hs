@@ -28,7 +28,7 @@ import Him.View (View (..))
 -- numbers are off), and one column of padding.
 gutterWidth :: Editor -> Int
 gutterWidth ed = case docKind (edDoc ed) of
-  -- The chat has no line numbers: a column for its bars (ADR-45).
+  -- The chat has no line numbers: a column for its bars (ADR chat-panel).
   ChatDoc _ -> 1
   _ -> signLane ed + numbers + 1
   where
@@ -45,7 +45,7 @@ drawGutter theme ed rect frame0 = case docKind (edDoc ed) of
   _ -> foldl' drawDisplayRow frame0 (zip [0 ..] rows)
   where
     -- The same rows as the text area: a review's removed lines get a minus,
-    -- the lines it adds a plus (ADR-43).
+    -- the lines it adds a plus (ADR change-review).
     review = reviewFor ed (docId doc)
     rows = displayRows review (lineCount (docBuffer doc)) top (rectHeight rect)
     added = addedLines review
@@ -59,7 +59,7 @@ drawGutter theme ed rect frame0 = case docKind (edDoc ed) of
     current = posLine (rangeHead (primary (docSelection doc)))
     lane = signLane ed
     digits = rectWidth rect - 1 - lane
-    -- Plugins' signs (git's among them, ADR-50).
+    -- Plugins' signs (git's among them, ADR plugin-building-blocks).
     signs = signsIn (docId doc) top (top + rectHeight rect - 1) (edPluginUI ed)
     -- Diagnostics win over git signs: the most severe on each line.
     diagnostics =

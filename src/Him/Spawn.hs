@@ -1,4 +1,4 @@
--- | Processes plugins start (ADR-50): output and errors in one stream,
+-- | Processes plugins start (ADR plugin-building-blocks): output and errors in one stream,
 -- read on a thread and handed on a line at a time; input written on
 -- request. Like the REPL's ("Him.Repl.Process"), for any program.
 module Him.Spawn

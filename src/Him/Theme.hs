@@ -1,4 +1,4 @@
--- | Themes in Helix's format (ADR-33): a TOML table from scopes to styles,
+-- | Themes in Helix's format (ADR helix-themes): a TOML table from scopes to styles,
 -- with an optional @[palette]@ of named colours and @inherits = "name"@.
 --
 -- @

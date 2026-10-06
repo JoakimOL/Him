@@ -1,4 +1,4 @@
--- | The tree-sitter syntax provider (ADR-27). It exports one value,
+-- | The tree-sitter syntax provider (ADR tree-sitter). It exports one value,
 -- 'treeSitter', of the common provider type ("Him.Syntax"); nothing else
 -- in the editor knows tree-sitter is involved.
 --

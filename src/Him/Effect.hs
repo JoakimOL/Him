@@ -1,5 +1,5 @@
 -- | Effects: what an action asks for beyond changing the editor state
--- (ADR-23). Actions only queue them ('Him.EditorM.request'), so they stay
+-- (ADR effects-and-runtime). Actions only queue them ('Him.EditorM.request'), so they stay
 -- state changes that tests can inspect; the main loop carries them out.
 --
 -- Some are handled right after the key with the config at hand
@@ -54,7 +54,7 @@ data Effect
     OpenConfig
   | -- | Use the theme of this name; 'Nothing' shows which one is used.
     ChangeTheme !(Maybe Text)
-  | -- | Switch a plugin on or off (ADR-35); 'Nothing' lists them.
+  | -- | Switch a plugin on or off (ADR git-and-lsp-as-plugins); 'Nothing' lists them.
     PluginCommand !(Maybe (Text, Bool))
   | -- | Stop every language server (the LSP plugin was switched off).
     LspStopAll
@@ -77,7 +77,7 @@ data Effect
     ClipboardSet !Char ![Text]
   | -- | Read the clipboard into its register, then use it.
     ClipboardGet !Char !RegisterUse
-  | -- | Start a program for a plugin (ADR-50): key (@plugin:name@; one
+  | -- | Start a program for a plugin (ADR plugin-building-blocks): key (@plugin:name@; one
     -- running with the same key is stopped first), command, arguments,
     -- directory. Its lines come back as 'ProcessLine'.
     ProcessStart !Text !FilePath ![String] !(Maybe FilePath)

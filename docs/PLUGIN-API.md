@@ -1,6 +1,6 @@
 # Plugin API: design and plan
 
-*2026-10-05, branch `plugin-api`. Phases 0–4 are done (ADR-48, ADR-50 to ADR-52). Not done
+*2026-10-05, branch `plugin-api`. Phases 0–4 are done ([ADR picker-actions](adr/picker-actions.md), [ADR plugin-building-blocks](adr/plugin-building-blocks.md), [ADR plugin-api](adr/plugin-api.md), [ADR personal-builds](adr/personal-builds.md)). Not done
 yet: `him --update`, and a real run of a personal build, which needs the network.* The goal is for users to write their own
 plugins **in Haskell** and switch them on and off with the `:plugin` commands. A plugin
 builds its UI from building blocks (pickers, status line segments, …) and can see the
@@ -28,7 +28,7 @@ editor's state and loaded buffers, much as Vim plugins can.
 |---|---|---|
 | Registering actions, keys and `:` commands | The `Plugin` record (`Him.Config`): `plActions`, `plBindings`, `plExCommands`, `plPrefixNames` | None. |
 | Switching on and off | `:plugins`, `:plugin-enable`, `:plugin-disable`, `[plugins]` in the TOML. `App.setPlugin` rebuilds the `Config` and runs `plEnable`/`plDisable`. | Every plugin is on unless the TOML says otherwise. Contrib plugins need to be off by default. |
-| Pickers | ADR-48: items plus named primary/secondary actions, marks, `PickValue` payloads, `openPicker` | None, apart from the final API shape. |
+| Pickers | [ADR picker-actions](adr/picker-actions.md): items plus named primary/secondary actions, marks, `PickValue` payloads, `openPicker` | None, apart from the final API shape. |
 | Status line | Hard-coded segments (`Render.StatusLine`) | No plugin segments. |
 | Gutter signs, virtual text | `plSigns` only reserves the lane; git and diagnostics drawing is hard-coded | No generic signs or annotations. |
 | Messages, popups | `info`/`failWith`, `edPopup` (`InfoBox`) | Timed notifications (later). |
@@ -84,7 +84,7 @@ data PluginSpec s = PluginSpec
     where git and the REPL already poll.
 - **UI building blocks (declarative, owned by the core):**
   - **Picker:** `openPicker PickerSpec { title, items :: [Item], primary, secondary }`.
-    Here `primary`/`secondary` name the plugin's actions (ADR-48), `Item` carries a
+    Here `primary`/`secondary` name the plugin's actions ([ADR picker-actions](adr/picker-actions.md)), `Item` carries a
     `PickValue` payload, and the choice arrives as `PickerChose`.
   - **Status line segments:** `setStatus [Segment { side, priority, text, style }]` per
     plugin (or per buffer). The core lays them out with the built-in segments. Git's
@@ -131,7 +131,7 @@ data PluginSpec s = PluginSpec
   REPL and chat, and false for contrib. `enabledPlugins` (UserConfig) uses it instead of
   "always on".
 - **`:plugins` lists every plugin:** on or off, built-in or contrib, with its `plDoc`.
-  A picker over them (ADR-48) can toggle one: `ret` switches it on or off, `tab` marks
+  A picker over them ([ADR picker-actions](adr/picker-actions.md)) can toggle one: `ret` switches it on or off, `tab` marks
   several.
 - **Rules for a contrib plugin:**
   - it imports `Him.Plugin` only;
@@ -174,7 +174,7 @@ data PluginSpec s = PluginSpec
 
 ## Phases
 
-0. **Done:** picker actions and marks (ADR-48).
+0. **Done:** picker actions and marks ([ADR picker-actions](adr/picker-actions.md)).
 1. **Core building blocks**, with no public API yet, each with tests:
    - the event list and its delivery
    - plugin status segments

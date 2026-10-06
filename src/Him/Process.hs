@@ -1,4 +1,4 @@
--- | Running external programs (git; ADR-23): feed stdin, collect stdout and
+-- | Running external programs (git; ADR effects-and-runtime): feed stdin, collect stdout and
 -- stderr as bytes. Both outputs are read concurrently, so a program that
 -- writes a lot to one of them cannot block on a full pipe.
 module Him.Process

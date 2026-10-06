@@ -1,4 +1,4 @@
--- | Building tree-sitter grammars for him (ADR-27): @him --build-grammars@.
+-- | Building tree-sitter grammars for him (ADR tree-sitter): @him --build-grammars@.
 --
 -- Prebuilt grammars from other editors are not loaded. Many were generated
 -- with an old @tree_sitter/array.h@ whose @array_push@ writes through a

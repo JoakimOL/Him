@@ -1,4 +1,4 @@
--- | The jumplist in the editor (ADR-47): @C-o@ / @C-i@ walk it, @C-s@
+-- | The jumplist in the editor (ADR jumplist): @C-o@ / @C-i@ walk it, @C-s@
 -- saves the selection, @space j@ lists it. Actions that jump wrap their
 -- work in 'jumping', which remembers where the cursor was. The list
 -- itself is "Him.Jumplist".

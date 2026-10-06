@@ -1,5 +1,5 @@
 -- | What the main loop needs to turn keys into actions, and how it is built
--- from bindings written as text (see ADR-17 in docs/PLAN.md).
+-- from bindings written as text (see ADR actions in docs/PLAN.md).
 --
 -- A config file parser only has to produce 'Bindings': it can then call
 -- @'buildConfig' actions ('overrideBindings' user defaults)@ and report the
@@ -61,10 +61,10 @@ data Config = Config
   -- in the fields above already).
   , cfgAllPlugins :: [Plugin]
   -- ^ Every plugin this build has, on or off: the built-in ones, contrib,
-  -- and a personal build's own ("Him.Main", ADR-52).
+  -- and a personal build's own ("Him.Main", ADR personal-builds).
   }
 
--- | A feature that can be switched off (ADR-35): git signs and staging,
+-- | A feature that can be switched off (ADR git-and-lsp-as-plugins): git signs and staging,
 -- the language-server client. Everything it adds to the editor is named
 -- here; a disabled plugin adds nothing, and its hooks do not run. Its
 -- state lives in the editor and documents as before (so tests and
@@ -78,9 +78,9 @@ data Plugin = Plugin
   , plExCommands :: [ExCommand]
   , plPrefixNames :: [([Key], Text)]
   , plOptions :: [(Text, Text)]
-  -- ^ Its settings under @[plugins.<name>]@: key and what it does (ADR-51).
+  -- ^ Its settings under @[plugins.<name>]@: key and what it does (ADR plugin-api).
   , plDefaultOn :: Bool
-  -- ^ On unless the config says otherwise (contrib plugins are off, ADR-51).
+  -- ^ On unless the config says otherwise (contrib plugins are off, ADR plugin-api).
   , plSigns :: Bool
   -- ^ It draws in the gutter's sign lane (the lane is left out when no
   -- enabled plugin does).
@@ -92,7 +92,7 @@ data Plugin = Plugin
   -- ^ Every background job result (it picks out its own).
   , plEvent :: Event -> EditorM ()
   -- ^ Buffers opened, changed, saved, closed, entered; mode changes;
-  -- output of its processes (ADR-50).
+  -- output of its processes (ADR plugin-building-blocks).
   , plEnable :: EditorM ()
   -- ^ Switched on while running: e.g. look every document up again.
   , plDisable :: EditorM ()

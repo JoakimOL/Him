@@ -52,7 +52,7 @@ drawPicker theme ed area f = case edPicker ed of
           -- Labels are padded to a common width so details line up.
           labelW = min (inner `div` 2) (pkLabelWidth p)
           rowStyle i = if i == sel then themePopupSelected theme else themePopup theme
-          -- A marked item (ADR-48) has a dot before it.
+          -- A marked item (ADR picker-actions) has a dot before it.
           row i item = (rowStyle i, fit ((if isMarked p item then "●" else " ") <> clip item))
           -- A label too long for its column, when a detail follows, is cut
           -- so the detail does not cover it: a search hit's path from the

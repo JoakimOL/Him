@@ -72,7 +72,7 @@ ensureCursorVisible ed = ed {edView = reviewed (scrollToCursor (height, rectWidt
     scrolloff = optScrolloff (edOptions ed)
     line = posLine (rangeHead (primary (docSelection (edDoc ed))))
     cursor = (line, cursorDisplayCol ed)
-    -- A review's extra rows (ADR-43) take screen rows too: scroll further
+    -- A review's extra rows (ADR change-review) take screen rows too: scroll further
     -- until the cursor's line is drawn above the margin.
     reviewed v = case reviewFor ed (docId (edDoc ed)) of
       Nothing -> v

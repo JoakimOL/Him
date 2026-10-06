@@ -1,4 +1,4 @@
--- | Text edits from language servers (ADR-29): formatting results, renames
+-- | Text edits from language servers (ADR lsp-client): formatting results, renames
 -- and code actions all arrive as edits, per file.
 module Him.Lsp.Edit
   ( TextEdit (..)

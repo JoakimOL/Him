@@ -34,14 +34,14 @@ import Him.Options (Options (..))
 actions :: [Action]
 actions =
   [ simple "file_picker" GBuffers "Open a file from the working directory" $ do
-      -- The picker opens at once and fills as the scan streams in (ADR-24).
+      -- The picker opens at once and fills as the scan streams in (ADR streaming-file-picker).
       gen <- gets edNextId
       modify' (\e -> e {edNextId = gen + 1})
       open (newPicker "files" []) {pkGeneration = gen, pkLoading = True}
       o <- gets edOptions
       request (StartJob (ScanFiles gen (walkOptions o) "."))
   , simple "global_search" GSearch "Search the files of the working directory for text" $ do
-      -- Each query starts a search that streams its hits in (ADR-46).
+      -- Each query starts a search that streams its hits in (ADR global-search).
       gen <- gets edNextId
       modify' (\e -> e {edNextId = gen + 1})
       open (newPicker "search" []) {pkGeneration = gen, pkSource = GrepQuery}
@@ -126,7 +126,7 @@ onPicker :: (Picker -> Picker) -> EditorM ()
 onPicker f = modify' (\e -> e {edPicker = f <$> edPicker e})
 
 -- | Change the query. A large picker keeps showing its last matches
--- (marked stale) while a background job ranks the items (ADR-24).
+-- (marked stale) while a background job ranks the items (ADR streaming-file-picker).
 changeQuery :: (T.Text -> T.Text) -> EditorM ()
 changeQuery f =
   gets edPicker >>= \case

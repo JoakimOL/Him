@@ -61,7 +61,7 @@ data RowKey = RowKey
   , rkDiagnostics :: ![(Int, Int, Int)]
   -- ^ Underlined ranges and their severity.
   , rkAnnotations :: ![Annotation]
-  -- ^ Plugins' text after the line's end (ADR-50).
+  -- ^ Plugins' text after the line's end (ADR plugin-building-blocks).
   }
   deriving stock (Eq, Show)
 

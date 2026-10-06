@@ -1,4 +1,4 @@
--- | Talking to git (ADR-25), through the @git@ program. These run in
+-- | Talking to git (ADR git), through the @git@ program. These run in
 -- background jobs ("Him.Runtime").
 module Him.Git
   ( loadBase

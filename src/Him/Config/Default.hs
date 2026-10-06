@@ -55,8 +55,8 @@ import Him.Mode (Mode (..))
 import Him.Syntax (SyntaxProvider)
 import Him.Syntax.TreeSitter (treeSitter)
 
--- | Every plugin there is (ADR-35): the built-in ones, then the contrib
--- collection (ADR-51), in the order their hooks run.
+-- | Every plugin there is (ADR git-and-lsp-as-plugins): the built-in ones, then the contrib
+-- collection (ADR plugin-api), in the order their hooks run.
 plugins :: [Plugin]
 plugins = [Git.gitPlugin, Lsp.lspPlugin, Repl.replPlugin, Chat.chatPlugin] <> contribPlugins
 
@@ -321,11 +321,11 @@ configWithPlugins every enabled user = do
       , cfgAllPlugins = every
       }
 
--- | Chat providers (ADR-41); @[chat] provider@ names the one used.
+-- | Chat providers (ADR ai-chat); @[chat] provider@ names the one used.
 chatProviders :: [ChatProvider]
 chatProviders = [claudeCodeProvider, anthropicProvider]
 
--- | Highlighters, tried in order for each language (ADR-26). A TextMate
+-- | Highlighters, tried in order for each language (ADR syntax-providers). A TextMate
 -- provider would be added here, and nowhere else.
 syntaxProviders :: [SyntaxProvider]
 syntaxProviders = [treeSitter]

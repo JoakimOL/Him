@@ -1,4 +1,4 @@
--- | A contrib plugin (ADR-51): the files opened lately, remembered
+-- | A contrib plugin (ADR plugin-api): the files opened lately, remembered
 -- between runs, in a picker (@space o@). @ret@ opens the chosen files
 -- (@tab@ marks several), @del@ forgets them. An example of a picker with
 -- a secondary action, settings and a state file.

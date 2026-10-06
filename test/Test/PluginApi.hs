@@ -1,4 +1,4 @@
--- | What plugins build on (ADR-50): events, their processes, status line
+-- | What plugins build on (ADR plugin-building-blocks): events, their processes, status line
 -- segments, gutter signs and annotations.
 module Test.PluginApi
   ( pluginApiTests
@@ -64,7 +64,7 @@ pluginApiTests = do
   -- As the editor starts: housekeeping before the first key.
   _ <- settle config =<< typeKeys "i x esc" =<< execStateT (housekeeping config) start
   events <- readIORef seen
-  -- The contrib plugins, switched on by a config file (ADR-51).
+  -- The contrib plugins, switched on by a config file (ADR plugin-api).
   uc <- either (fail . T.unpack . T.unlines) pure (parseUserConfig "[plugins]\nrecent-files = true\n[plugins.wordcount]\nenabled = true\nmax-lines = 3\n")
   contrib <- either (fail . T.unpack) pure (applyUserConfig uc)
   dir <- getTemporaryDirectory

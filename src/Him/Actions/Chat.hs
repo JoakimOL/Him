@@ -1,4 +1,4 @@
--- | The AI chat plugin (ADR-41, ADR-43, ADR-45). @space c c@ opens the
+-- | The AI chat plugin (ADR ai-chat, ADR change-review, ADR chat-panel). @space c c@ opens the
 -- chat in a window beside the code; type a message in the box at the
 -- bottom and @ret@ sends it (@A-ret@ is a line break, @up@ / @down@ recall
 -- earlier messages). The transcript shows your messages, the answers, and
@@ -353,7 +353,7 @@ applyChatResult = \case
   ChatReply i ev -> case ev of
     ChatText t -> say i t
     ChatActivity t -> sayLines i MarkTool ["◦ " <> t]
-    -- A tool Claude Code waits for (ADR-42): answered at once, an edit as
+    -- A tool Claude Code waits for (ADR claude-code-provider): answered at once, an edit as
     -- proposed.
     ChatToolCall call -> runCall i call >>= \(isError, text) -> request (ChatAnswer i (tcId call) isError text)
     ChatFailed e -> do
@@ -543,7 +543,7 @@ decideAtCursor approve = do
 -- the buffer had unsaved edits by hand before the chat's first change, the
 -- file differs from the review's base: the change is moved onto the file's
 -- text past them, and they stay unsaved ('approveOnto'). A change that
--- overlaps one of them is refused (ADR-43).
+-- overlaps one of them is refused (ADR change-review).
 decide :: Bool -> Review -> Hunk -> EditorM Bool
 decide approve rv h = do
   chat <- gets (fmap (docId . fst) . chatOf)

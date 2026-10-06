@@ -37,7 +37,7 @@ drawTextArea :: Theme -> Bool -> Maybe Frame -> Editor -> Rect -> Frame -> Frame
 drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (zip [0 ..] rows)
   where
     -- A document under review also shows each proposed change's header
-    -- and removed lines (ADR-43).
+    -- and removed lines (ADR change-review).
     review = reviewFor ed (docId doc)
     rows = displayRows review (lineCount buf) top (rectHeight rect)
     drawDisplayRow f (r, row) = case row of
@@ -81,7 +81,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
       DirectoryDoc entries
         | line == 0 -> 1
         | (e : _) <- drop (line - 1) entries, deIsDir e -> 2
-      -- The chat (ADR-45): the input box (empty, empty while the model
+      -- The chat (ADR chat-panel): the input box (empty, empty while the model
       -- works, or with a message), and the transcript's lines by mark.
       ChatDoc cs
         | line >= posLine (csInput cs) ->
@@ -90,7 +90,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
         | otherwise -> 4
       _ | any (\(a, b) -> a <= line && line < b) pending -> 3
       _ -> 0 :: Int
-    -- Lines a proposed change adds (ADR-43).
+    -- Lines a proposed change adds (ADR change-review).
     pending = addedLines review
     pendingStyle = packStyle (themeText theme `patchStyle` themeHighlight theme)
     -- The chat's lines.
@@ -210,7 +210,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
                 then [Cell c style, Cell continuation style]
                 else map (`Cell` style) (glyphs c w)
         -- Plugins' annotations follow the line's end, a space apart, as far
-        -- as the row goes (ADR-50).
+        -- as the row goes (ADR plugin-building-blocks).
         annotate cs
           | null annotations || banded cls = cs
           | otherwise =
@@ -248,6 +248,6 @@ cursorPosition ed rect = case rowOfLine rows line of
     View top left = edView ed
     doc = edDoc ed
     line = posLine (rangeHead (primary (docSelection doc)))
-    -- The rows on screen (a review's extra rows included, ADR-43).
+    -- The rows on screen (a review's extra rows included, ADR change-review).
     rows = displayRows (reviewFor ed (docId doc)) (lineCount (docBuffer doc)) top (rectHeight rect)
     col = cursorDisplayCol ed - left

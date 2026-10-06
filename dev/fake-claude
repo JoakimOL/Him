@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # A stand-in for `claude -p` with no model behind it, for checking the chat's
-# Claude Code provider by hand (ADR-42). Put it first on PATH as `claude`:
+# Claude Code provider by hand (ADR claude-code-provider). Put it first on PATH as `claude`:
 #   mkdir -p /tmp/fc && cp dev/fake-claude /tmp/fc/claude
 #   printf 'one\ntwo\nthree\nfour\n' > a.txt
 #   PATH=/tmp/fc:$PATH FAKE_CLAUDE_LOG=/tmp/fc.log him a.txt

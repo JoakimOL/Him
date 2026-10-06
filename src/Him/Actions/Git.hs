@@ -1,4 +1,4 @@
--- | Git in the editor (ADR-25): keeping each document's git state current,
+-- | Git in the editor (ADR git): keeping each document's git state current,
 -- moving between changes, and staging, unstaging or resetting the selected
 -- lines.
 module Him.Actions.Git
@@ -31,8 +31,8 @@ import Him.Mode (Mode (..))
 import Data.IntMap.Strict qualified as IntMap
 import Him.PluginUI (Face (..), GutterSign (..), PluginUI (..), Segment (..), Side (..), SignSpan (..), face)
 
--- | Git signs in the gutter, change navigation and line staging (ADR-25),
--- as a plugin (ADR-35).
+-- | Git signs in the gutter, change navigation and line staging (ADR git),
+-- as a plugin (ADR git-and-lsp-as-plugins).
 gitPlugin :: Plugin
 gitPlugin =
   (plugin "git" "Signs for changed lines, ] g / [ g, staging selected lines (space g)")
@@ -168,7 +168,7 @@ gitHousekeeping = do
     setTracking t = modifyDoc (\doc -> doc {docGit = GitTracked t})
 
 -- | Show each document's changes as signs, and its branch in the status
--- line (ADR-50); only when they changed since they were last shown.
+-- line (ADR plugin-building-blocks); only when they changed since they were last shown.
 syncUI :: Editor -> Editor
 syncUI ed
   | fmap (\ui -> (puSigns ui, puSegments ui)) (Map.lookup "git" (edPluginUI ed)) == Just (signs, segments) = ed

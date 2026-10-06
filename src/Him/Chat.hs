@@ -1,4 +1,4 @@
--- | The AI chat (ADR-41): one interface for chat providers, and the state
+-- | The AI chat (ADR ai-chat): one interface for chat providers, and the state
 -- of a chat buffer. Pure. The provider for the Claude API is
 -- "Him.Chat.Anthropic"; the tools the model may call and the edits it
 -- proposes are "Him.Chat.Tools"; the plugin is "Him.Actions.Chat".
@@ -28,7 +28,7 @@ import Him.Position (Pos (..))
 
 -- | Something that answers a conversation: the Claude API, Claude Code, or
 -- a fake in the tests. Each chat buffer gets its own session ('cpStart'),
--- like a highlighter (ADR-26), so a provider can keep a process or a
+-- like a highlighter (ADR syntax-providers), so a provider can keep a process or a
 -- conversation of its own.
 data ChatProvider = ChatProvider
   { cpName :: Text
@@ -100,7 +100,7 @@ data ChatStatus
     ChatWaiting
   deriving stock (Eq, Show)
 
--- | A document with changes the model proposed (ADR-43): its text before
+-- | A document with changes the model proposed (ADR change-review): its text before
 -- the first of them (the base, which is also what is on disk for an
 -- approved state), and the proposed changes, the diff from the base to the
 -- buffer. Approving a change applies it to the base and writes the base;

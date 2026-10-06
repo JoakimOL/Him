@@ -27,7 +27,7 @@ drawStatusLine theme focused ed rect =
     . putText row (rectCol rect) (if focused then themeMode theme (keymapMode ed) else style) mode
     . fillRect rect style
   where
-    -- Plugins' segments (ADR-50), each followed by two spaces, best first
+    -- Plugins' segments (ADR plugin-building-blocks), each followed by two spaces, best first
     -- while they fit beside the rest (a file name keeps up to 16 cells).
     fitting = takeFitting (rectWidth rect - T.length mode - T.length right - min 16 (T.length (displayName doc)) - T.length bufs - T.length dirty - 2) (segmentsFor (docId doc) (edPluginUI ed))
     takeFitting free = \case
@@ -68,7 +68,7 @@ drawStatusLine theme focused ed rect =
     sels
       | rangeCount sel > 1 = T.pack (show (primaryIndex sel + 1) <> "/" <> show (rangeCount sel) <> " sels  ")
       | otherwise = ""
-    -- Proposed changes waiting in this buffer (ADR-43).
+    -- Proposed changes waiting in this buffer (ADR change-review).
     review = case maybe 0 (length . rvHunks) (reviewFor ed (docId doc)) of
       0 -> working
       n -> T.pack (show n) <> " to review  "

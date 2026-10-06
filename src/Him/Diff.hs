@@ -1,4 +1,4 @@
--- | Line diffs (ADR-25): which lines changed between two versions of a
+-- | Line diffs (ADR git): which lines changed between two versions of a
 -- text, as hunks. Used for the git signs in the gutter and for staging.
 --
 -- Myers' O(ND) algorithm, after trimming the common prefix and suffix, so

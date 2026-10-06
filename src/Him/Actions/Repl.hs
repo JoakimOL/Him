@@ -1,4 +1,4 @@
--- | The REPL plugin (ADR-38): a REPL for the file's language in a window
+-- | The REPL plugin (ADR repl): a REPL for the file's language in a window
 -- beside it. Type into it like any buffer (@ret@ in insert mode sends the
 -- line), or send the selection from a file (@space e@). @space E@ reloads
 -- the project, which also happens after saving a file of its language

@@ -1,4 +1,4 @@
--- | What plugins show (ADR-50): status line segments, gutter signs and
+-- | What plugins show (ADR plugin-building-blocks): status line segments, gutter signs and
 -- annotations at the end of lines. A plugin sets them as data; the core
 -- draws them, so rendering stays pure and plugins cannot draw over each
 -- other. Pure.

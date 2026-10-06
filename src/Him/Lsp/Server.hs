@@ -1,4 +1,4 @@
--- | Running language servers (ADR-29): the process, a reader thread that
+-- | Running language servers (ADR lsp-client): the process, a reader thread that
 -- splits its output into messages, a writer thread with a queue (so the
 -- editor never blocks on a busy server), automatic replies to the server's
 -- own requests, and the initialize handshake.

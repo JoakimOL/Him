@@ -1,4 +1,4 @@
--- | What the editor knows about language servers (ADR-29): pure data, kept
+-- | What the editor knows about language servers (ADR lsp-client): pure data, kept
 -- in the 'Him.Editor.Editor' and each document; the processes themselves
 -- live in the runtime.
 module Him.Lsp.State
@@ -142,7 +142,7 @@ shownDiagnostics st doc buf = shownDiagnosticsIn st doc buf 0 maxBound
 
 -- | The same for the lines @[from, to)@ only (what is on screen): the
 -- others are skipped before any column is converted, so a frame costs the
--- visible diagnostics, not all of them (ADR-39).
+-- visible diagnostics, not all of them (ADR per-key-work).
 shownDiagnosticsIn :: LspState -> DocLsp -> Buffer -> Int -> Int -> [ShownDiagnostic]
 shownDiagnosticsIn st doc buf from to = case doc of
   LspAttached (Attachment server path _ _ _ _) ->

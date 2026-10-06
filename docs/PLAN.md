@@ -17,8 +17,8 @@ Goals:
   should mean adding code in one obvious place, without changing the core loop.
 - **Testable.** The editing logic is pure, and the IO layer is thin.
 
-Non-goals (for now): a GUI (the core is frontend-free, ADR-36, so one could be added),
-plugins loaded at run time (plugins are compiled in and switched on or off, ADR-35),
+Non-goals (for now): a GUI (the core is frontend-free, [ADR module-names](adr/module-names.md), so one could be added),
+plugins loaded at run time (plugins are compiled in and switched on or off, [ADR git-and-lsp-as-plugins](adr/git-and-lsp-as-plugins.md)),
 Windows support.
 
 ## 2. Assumptions
@@ -26,7 +26,7 @@ Windows support.
 - Linux or another POSIX system, with a terminal that understands xterm/ANSI escape sequences
   (alternate screen, SGR colours, cursor-shape `DECSCUSR`).
 - The terminal and the files are UTF-8. Invalid bytes are decoded leniently (replacement char).
-- Files fit in memory (a rope of blocks; a 14 MB file costs about 15 MB, ADR-16).
+- Files fit in memory (a rope of blocks; a 14 MB file costs about 15 MB, [ADR lazy-file-loading](adr/lazy-file-loading.md)).
 - There is one user, one process, and no concurrent editing of the same file.
 - Toolchain: **GHC 9.10.3** via Stack snapshot **LTS 24.60**, and
   **haskell-language-server 2.14** (it ships a 9.10.3 binary). These must be bumped together.
@@ -35,1361 +35,66 @@ Windows support.
 
 ## 3. Architecture decisions
 
-Each entry lists the decision, why it was made, and the alternatives considered.
-
-**ADR-1: Helix-style selection-first editing.**
-Every motion produces a selection, and actions operate on selections. This makes the result
-of a command visible before it is applied, and multiple cursors fall out naturally.
-*Alternative:* Vim's verb→object grammar. It is simpler at first, but retrofitting
-selections onto it later is harder.
-
-**ADR-2: GHC boot libraries only.**
-Allowed: `base`, `unix`, `bytestring`, `text`, `containers`, `transformers`, `directory`,
-`filepath`, `stm`, `array`, `process`. (`process` since milestone 21, for git and
-language servers; `filepath` since milestone 19.) **Amended by ADR-27:** the
-tree-sitter C runtime is vendored in `cbits/tree-sitter`; it is the one C dependency
-beyond the small shims. (`filepath` is used since milestone 19.) Each one is added to `package.yaml` only when a module first uses
-it (`-Wunused-packages` enforces this).
-*Alternatives:* `vty`/`brick` (large and opinionated), `text-rope` (see ADR-3).
-
-**ADR-3 (superseded by ADR-12): `Seq Text` line buffer behind an abstract interface.**
-`Him.Buffer` exposes operations (`lineCount`, `getLine`, `insertAt`, `deleteRange`, …) and
-hides its representation. `Data.Sequence` gives O(log n) splitting and indexing by line,
-which is plenty for normal files.
-*Alternative:* a rope. It can replace the internals later without changing any callers.
-
-**ADR-4: Pure core, thin IO shell.**
-Buffers, motions, edits, selections, keymap resolution, and rendering to a `Frame` are all
-pure. Only `Him.Terminal.*`, `Him.File`, and `Him.App` perform IO.
-
-**ADR-5: Commands are named values in a registry. Keymaps are tries of command names.**
-*(Commands became actions with arguments; see ADR-17.)*
-`Command { cmdName, cmdDoc, cmdRun :: EditorM () }` with `EditorM = StateT Editor IO`.
-Keys are bound to command *names*, so bindings can later be loaded from a config file.
-The trie supports multi-key chords (`g g`, `space f`). Resolving a key sequence gives
-`Found | NeedMore | NoMatch`.
-*Alternative:* pattern-matching on keys in one big `case`. It is fast to write but does not
-extend or rebind.
-
-**ADR-6: Render to a pure `Frame`, then diff.**
-Components (`TextArea`, `Gutter`, `StatusLine`, `CommandLine`) each draw into a `Rect`.
-The new frame is compared row by row with the previous one, and only changed rows are
-written, in one `Builder` per frame. This avoids flicker and keeps redraws cheap.
-
-**ADR-7: Terminal size through a C shim.**
-The `unix` package does not expose `ioctl(TIOCGWINSZ)`. `cbits/winsize.c` wraps it in a
-single function, and `SIGWINCH` triggers a resize event.
-*Alternative:* the cursor-position-report trick (`ESC[999C ESC[6n`). It is slower and racy.
-
-**ADR-7b: Read input from the file descriptor, never through the `stdin` Handle.**
-If `hSetBuffering stdin` or `hSetEcho` is called on a tty, GHC saves the termios state
-itself and restores *that* state when the program exits. When those calls happen after
-we enter raw mode, the saved state is already raw, so it undoes our restore. We found this
-in milestone 2. Input is read with `System.Posix.IO.ByteString.fdRead` on `stdInput`
-(after `threadWaitRead`, which keeps it interruptible for timeouts).
-
-**ADR-5b: Details of the selection model.**
-Ranges are *inclusive* (a cursor covers the character under it), and `col == lineLength`
-addresses the line end (the newline). In insert mode the head is read as a gap: text is
-inserted before the character at the head. Edits apply to every range (ADR-18).
-
-**ADR-6b: Components are `Theme -> Editor -> Rect -> Frame -> Frame`.**
-This replaces the `[DrawOp]` lists in the original plan: composing frame transformers is
-simpler and just as modular. The mode `Command` was renamed `CmdLine` because it clashed
-with the `Command` type.
-
-**ADR-9: Undo with snapshots, committed outside insert mode.**
-`edit` records the state before the first edit of a change. After every key, the main loop
-commits it if the editor is not in insert mode. So `c foo esc` undoes in one step, as in
-Helix. Snapshots are cheap because `Seq` shares structure. `docSavedBuffer` lets undo
-back to the saved text clear the `[+]` marker.
-*Alternative:* inverse change sets, which are smaller and needed for an undo tree or
-collaboration. They can come later behind the same `Him.History` interface.
-
-**ADR-10: Registers live in the `Editor`, and pasting is linewise when the text ends
-with a newline.**
-This is the Helix/Vim convention. `selectionText` adds the implicit newline when `x`
-selects the last line, so yank/delete/paste of lines behaves the same everywhere.
-
-**ADR-11: Render once per batch of input.**
-The input thread queues all keys decoded from one read on a `TChan` (from `stm`). The
-main loop handles every queued event (up to 512) before rendering once. That's what
-makes typeahead (pastes, key repeat) cheap. Components write whole rows
-(`putCells`) instead of single cells.
-
-**ADR-12: The buffer is a rope of multi-line blocks.**
-A `Block` is one UTF-8 `Text` holding many lines, plus an array of `Word32` line starts.
-Blocks live in a weight-balanced tree that caches line counts (`Him.Buffer.Rope`).
-- **Loading:** a file loads as a few large blocks, one per 1 MB read chunk.
-- **Edits:** splitting a block is O(1) slicing; changed lines become a small new block.
-- **Why:** with `Seq Text`, each of the 200,000 lines of the test file cost about
-  50 bytes of heap objects. The copying GC also had to copy all of them.
-- **Search:** blocks make search fast, because a whole block is scanned with one C call.
-- **Interface:** `Him.Buffer`'s interface did not change. A randomized test compares
-  thousands of edits against a list model.
-
-**ADR-13: Hot byte loops in C, called with `unsafe` FFI on the `Text`'s array.**
-`cbits/text.c` scans newlines (`memchr`) and searches (`memmem`, SSE2 two-byte scan).
-`unsafe` calls cannot be interrupted by the GC, so the unpinned arrays can be passed
-directly (`UnliftedFFITypes`). This keeps the editor to boot libraries plus two small C
-files.
-
-**ADR-14: Search is literal, smart case, and anchored on the rarest byte.**
-- **Matching:** there is no regex engine, since none ships with GHC. A pattern
-  without upper-case letters matches ASCII letters case-insensitively.
-- **Exact matches:** these use glibc `memmem`.
-- **Case-insensitive matches:** these scan for the needle byte that is rarest in a
-  4 KB sample of each block, in both cases, 16 bytes at a time, and verify each
-  candidate.
-- **Why not Boyer–Moore–Horspool:** it was tried. It was 4× slower when the first
-  byte was rare, and only slightly faster when it was common.
-- **Incremental preview:** this runs once per input batch (`edPreviewPending`), not
-  once per key.
-
-**ADR-15: The renderer reuses rows and lets the terminal scroll.**
-`render` takes the previous frame. Text-area rows are keyed (`RowKey`: line, text,
-selection spans, cursors, scroll, width) and copied when unchanged, looked up by line so
-scrolling keeps them. When the view moved less than a screen, `diffFrames` scrolls the
-terminal's region (`DECSTBM` + `SU`/`SD`) and diffs against the shifted old frame. It
-writes only changed cell runs and clears trailing blanks with `EL`. Tests replay the
-output on a small terminal model with scroll regions and compare cell by cell.
-
-**ADR-16: Load files without copying, and index blocks lazily.**
-A regular file is read into one pinned array of its size. If it is valid UTF-8, that
-array becomes the buffer's `Text` directly, so nothing is decoded or copied.
-- **Fallbacks:** invalid bytes get a lenient decode. Files of unknown size (pipes
-  report 0) are read in chunks.
-- **Lazy offsets:** a block's line starts are built on first use. Only the line count,
-  an SSE2 newline count, is needed up front.
-- **Testing:** the chunked path is checked through `loadDocumentChunked`.
-
-**ADR-17: Keys bind to actions: named, grouped, with typed arguments (supersedes the
-`Command` registry of ADR-5).**
-An `Action` (`Him.Action`) has a stable snake_case name, a group, a doc string, and typed
-positional parameters. A binding is text: the action's name plus arguments, such as
-`move_line_down 5`, `goto_line 12`, `insert_text "// "` or `ex "w"`.
-- **Names are the stable interface.** Bindings, and later config files, refer to the flat
-  name. Helix uses the same flat names, so they stay familiar. The group (movement,
-  selection, modes, editing, clipboard, history, search, prompt, misc) is metadata for
-  help and docs only, so moving an action between groups breaks nothing. Renaming an
-  action is a breaking change: keep the old name as a second action if it ever happens.
-- **Arguments are typed, and are checked when the keymap is built.** Parameters are
-  described with a small applicative (`int`, `text`, `choice`, `optional`). The same
-  value lists the parameters (`actParams`, for help or a config UI) and converts the text
-  arguments. Binding produces a `Bound` (the invocation plus the `EditorM ()` to run). So
-  a key press neither looks anything up nor parses anything, and a bad binding is an
-  error at startup that names the mode, the keys and the problem. Every error is
-  reported, not only the first.
-- **Keymaps are generic.** `Keymap a` is a trie of any binding type: `Keymap Text` while
-  parsing and `Keymap Bound` at run time.
-- **Prepared for a config file.** `Bindings = Map Mode [(keys, invocation)]`.
-  `overrideBindings user defaults` puts user bindings on top, and `no_op` disables a key.
-  `buildConfig actions bindings fallback` validates and builds everything. Select mode
-  inherits normal mode's bindings, the user's included (`inheritsFrom`). A config parser
-  only has to produce `Bindings` and call `Him.Config.Default.configWith`.
-- **Invocation syntax.** Words are separated by spaces. A double-quoted argument may
-  contain spaces and the escapes `\"`, `\\`, `\n` and `\t`. `renderInvocation` is the
-  inverse.
-*Alternatives:* separate names per argument value (`move_line_down_5`), which does not
-scale. A `Value` sum type checked inside each action at run time, which reports errors
-only when the key is pressed. Arguments stored per key in the keymap and passed on each
-press, which is the same thing with an extra lookup.
-**Counts** (`5 j`, `1 2 j`, `2 w`): in normal and select mode, digits typed before a key
-sequence build `edCount`, which the status line shows. A binding without arguments
-whose action's first parameter is `int "count"` runs with the count (`boundCounted`).
-Other bindings ignore it, as does a binding that already gives arguments
-(`move_line_down 20`). `0` only continues a count, and a digit that the keymap binds
-keeps its binding. The count is capped at 1,000,000.
-*Later:* `:` could gain a command that runs any action by its invocation text.
-
-**ADR-18: Multi-range edits are applied from the bottom up, and positions are kept
-relative to the end.**
-`Him.Edit.applyEdits` runs an ordinary single-range `Edit` on each range, from the last
-range to the first. An edit only changes text around its own range, which lies before
-every range already edited. So each result is kept as (lines from the last line,
-characters from the end of its line). Those two numbers are unaffected by any change
-earlier in the buffer, and they turn back into positions at the end. That avoids
-change sets and position mapping, and every existing `Edit` works with many cursors
-unchanged. A single range takes a direct path, so typing costs what it did before.
-- **Normalizing:** `Selection.fromRanges` sorts the ranges and merges overlapping ones.
-  It runs before edits and after motions, so the bottom-up order is well defined.
-- **Registers:** a register holds one value per range. Pasting with as many values
-  as ranges gives each range its own value; otherwise every range gets all of them,
-  joined. Named registers, `_`, and the clipboard as `+` / `*` are in ADR-49.
-- **Adjacent ranges:** an edit may reach just outside its own range. A backspace
-  deletes the character before the cursor, and deleting the last lines takes the line
-  break before them. Either can touch the text of the range before it, but only after
-  that range's start, so that range's positions stay valid when its turn comes. The
-  stored results of later ranges lie after the change, so they are not affected either.
-  Randomized model tests cover inserts, backspaces, forward deletes, and range deletes
-  with ranges right next to each other. Cursors that end up on the same position are
-  merged. (An earlier version of this ADR listed adjacent cursors as a known limit.
-  That was wrong: the tests show the same results as the string model.)
-*Alternative:* change sets with position mapping (as in Helix). They are more general,
-and needed for an undo tree or collaboration, but they are much more code.
-
-**ADR-19: Buffers are a zipper around the current document.**
-The `Editor` keeps the current document in `edDoc` (with `edView`), as before, plus
-`edBefore` (nearest first) and `edAfter`: the other buffers, each with its own view.
-Code that works on the current document did not change. Switching moves documents
-between the lists (`switchBuffer`, `gotoBuffer`), `:open` inserts after the current
-buffer, and closing the only buffer leaves a scratch buffer. Each document keeps its
-own selection and undo history. `:open` compares canonical paths, so a file that is
-already open is switched to rather than loaded twice. `:q` refuses while any buffer is
-modified.
-*Alternative:* a `Seq Document` plus an index. That would change every `edDoc` access.
-
-**ADR-20: Menus are data computed after every key; popups invalidate the rows they
-cover.**
-- **Info box:** after each event, `Him.Info.refreshInfo` sets `edInfo :: Maybe InfoBox`
-  from the editor and the config. After a prefix (`g`, `space`), the box lists the keys
-  below it in the keymap trie and each action's doc. Prefix titles come from
-  `cfgPrefixNames`. On the `:` line it lists the matching ex commands (`cfgExCommands`).
-  The box is derived from state, never edited, so it cannot go stale. Rendering
-  (`Him.Render.Info`) only draws it.
-- **Completion:** `tab` on the `:` line completes the command name, or a path for
-  commands whose `exArgs` is `PathArgs`. With several candidates it extends the line to
-  their common prefix and lists them (`edCompletions`, cleared when the line is
-  edited). Another `tab` (or `S-tab`) cycles through the candidates as in Helix,
-  highlighting the one on the line; when the common prefix adds nothing, the first
-  `tab` already puts the first candidate on the line. While the line reads
-  `:theme <name>`, the screen is drawn in that theme if it loads (`previewedTheme`,
-  checked by the main loop before each frame); `esc` goes back, `ret` keeps it.
-- **Pickers:** a `Picking` mode with its own keymap, and a fallback that types into the
-  query. `Him.Picker` is pure: items carry a `PickTarget` (a file or a buffer index)
-  rather than an action, so the editor state stays plain data. The fuzzy score counts
-  the characters skipped between the first and last match, from the best start; ties
-  go to the shorter label.
-- **Row cache:** a popup draws over text-area rows, and the next frame could copy those
-  rows (popup included) from the cache (ADR-15). So every popup deletes the row keys of
-  the rows it covers. A test renders a frame with a box, then one without, and
-  compares it with a fresh render.
-
-**ADR-21: Our own gitignore matcher, applied while walking.**
-`Him.Ignore` parses `.gitignore` / `.ignore` files with git's syntax:
-- comments, `!` to re-include, and a trailing `/` for directories only;
-- a `/` at the start or in the middle anchors the pattern to the file's directory;
-- globs `*`, `?`, `[a-z]` / `[!a-z]`, and `**` (`**/x`, `x/**`, `a/**/b`).
-
-Rule sets are scoped to the directory of their file, and the last match of the most
-specific set wins. `.ignore` is read after `.gitignore` in the same directory, so it wins
-there. `Him.FileTree.listFiles` reads each directory's files as it descends, and never
-enters an ignored directory, so (as in git) nothing inside one can be re-included. It
-also applies the ignore files of the walk root's ancestors, up to the enclosing git
-repository, and `.git/info/exclude`.
-- **Differences from ripgrep/Helix:** `.gitignore` is honoured outside git
-  repositories too, and the global gitignore (`core.excludesFile`) is not read.
-- **Hidden entries** are still skipped, as Helix does by default.
-
-*Alternative:* translate patterns to a regex engine. There is none in the boot
-libraries, and a direct backtracking matcher over path strings is about 40 lines.
-
-**ADR-22: A directory is a read-only document, plus a keymap layer.**
-`:open dir` (or `him dir`, `space d`, `space D`) loads a listing, as in Emacs's dired.
-- **The document:** a `Document` whose `docKind` is `DirectoryDoc entries`. Line 0 is the
-  path, line 1 is `../`, then subdirectories (ending in `/`) and files, sorted. The
-  entries are kept in the kind, so a line maps to its entry even when a name contains
-  odd characters. Since it is an ordinary buffer, motions, counts, search and the
-  buffer commands work unchanged.
-- **The keys:** in normal mode on a listing, `keymapMode` selects the `Directory` layer,
-  which inherits normal mode like select mode does. It adds `ret` (enter a directory in
-  the same buffer, or open a file as a new buffer), `-` / `backspace` (the parent, with
-  the cursor on the directory just left) and `g r` (list again). The status line shows
-  `DIR`.
-- **Read-only:** `edit` / `editEach` and `setMode Insert` refuse in a read-only document,
-  and `:w` refuses to write a listing.
-- **Colours:** the header and directories have their own styles. The row key gained
-  the line's class (`rkClass`), so a cached row is never reused with the wrong colour.
-
-- **File operations** (milestone 20): `a` (new file; a trailing `/` makes a directory,
-  and missing parents are created), `+` (new directory), `r` (rename or move; the
-  prompt starts with the current name) and `d` (delete). `d` deletes every entry the
-  selections cover, so `x x d` or `% s` work, and asks for `y` first. Directories are
-  deleted recursively, but a symlink is only unlinked, never followed (tested). The
-  names are typed on the command line through a `FilePrompt` with a `FileAction`, so
-  editing the name uses the ordinary command-line keys. After a rename, buffers showing
-  the old path (or something inside a renamed directory) take the new path.
-- **Dotfiles** are hidden by default, like the file picker. The header counts them,
-  and `g .` (`edShowHidden`, shared by all listings) shows them.
-
-*Alternatives:* a separate directory UI component, which would have to reimplement
-movement and search. Editing the listing text and applying the difference (as Emacs's
-wdired and oil.nvim do) would allow batch renames, but it needs a careful diff and
-confirmation; prompts were simpler and safer first. Or a real editor mode, which every `setMode Normal` would have to
-know about.
-
-**ADR-23: Effects as data, and a runtime for background jobs.**
-Actions are state changes (`EditorM = StateT Editor IO`). The `Editor` is plain data
-and holds no handles, and actions cannot see the config.
-- **Requests:** to ask for more, an action queues an `Effect` (`Him.Effect`) with
-  `request`.
-- **Immediate effects:** `handleEvent` carries out `RunAction` (run another action by
-  its `Invocation`; used by the palette and `:action`) and `OpenPalette` right after the
-  key, with the config at hand. A chain of them is capped at 8 rounds.
-- **Background effects:** `StartJob` / `CancelJob` are left for the main loop, which
-  owns the `Runtime` (`Him.Runtime`). The runtime runs each `Job` on its own thread, at
-  most one per `JobKey` (starting one cancels the old one with `killThread`), and posts
-  each `JobResult` as an `EvJob` event on the same channel as the keys. So results are
-  handled by `handleEvent` like any input, batched with it (ADR-11), and drawn once.
-- **Stale results:** documents have a `docId` (assigned when opened) and a `docVersion`
-  (bumped by edits, undo/redo and `replaceText`). Pickers have a generation. Every
-  result names what it was computed for, and a stale one is dropped.
-- **Testing:** tests can assert the effects an action requested. The `settle` helper in
-  `test/Spec.hs` runs jobs on a real runtime, as the main loop does.
-- **`Him.Process`** runs external programs (stdin in; stdout and stderr read
-  concurrently), and `Him.Json` is a small JSON library. Both are for the git and LSP
-  phases.
-
-*Alternative:* `ReaderT Env (StateT Editor IO)`, which would give actions the handles
-directly. Every action would change, and tests would need a full runtime.
-
-**ADR-24: The file picker streams, and large pickers filter in the background.**
-- **Walk:** `Him.FileTree.walkFiles` reads directories with a pool of up to 8 workers
-  over an STM queue. It takes entry types from `readdir` (`unix`'s
-  `readDirStreamWith`), so only links and unknown types are `stat`ed. Directory links
-  are followed (as in Helix), each target once, and never a link that contains itself.
-  On 200k files the walk went from 732 to about 370 ms (log 22).
-- **Streaming:** `space f` opens the picker at once, and a `ScanFiles` job sends files
-  in batches (every 5000 files or 100 ms). The count shows `…` while loading.
-- **Ranking:** each item has a precomputed lower-case key, file name and length. An
-  in-order character check rejects non-matches before scoring. Matches are bucketed by
-  rank, and only the best 1000 are kept, plus a total count (log 21). It still costs
-  about 75 ms when 200k items all match. So a picker of more than 20k items, with a
-  non-empty query, ranks in a `FilterPicker` job, and keeps showing its last matches
-  until the answer arrives. An answer for an older query is dropped.
-- **Ties:** among equal fuzzy scores, an exact first word or file name wins
-  (`goto_line` before `goto_line_end`), then the shorter label.
-
-**ADR-25: Git through the `git` program; the diff in-process.**
-- **Base texts:** a document's git state (`docGit`, `Him.GitState`) holds its file's
-  index and HEAD versions. They are loaded by a `GitLoad` job running `git rev-parse`,
-  `ls-files --stage` and `show :path` / `show HEAD:path` (`Him.Git` through
-  `Him.Process`). This happens when the document becomes current, after a save, and
-  after staging. An untracked file has an empty index version, so every line shows as
-  added. Outside a repository there is no state.
-- **Diffs:** `Him.Diff` is Myers' algorithm after trimming the common prefix and suffix.
-  A middle that needs more than 1000 edits becomes one hunk. Unstaged hunks are
-  index → buffer. Staged hunks are HEAD → index, with their new side moved onto buffer
-  lines by `mapLine` through the unstaged hunks. One `GitDiff` job runs per document at
-  a time; when it answers for an older version, the next event asks again. On 200k
-  lines a diff costs 5–53 ms, on a background thread (`bench/DiffBench.hs`).
-- **Gutter:** a one-column sign lane in front of the line numbers. Added and changed
-  lines get `▎`, a removal gets `▁` on the line above; staged signs are dimmer, and
-  unstaged ones win.
-- **Staging is one pure function.** `applySelected old new hunks selected` applies the
-  selected changes. In a changed hunk, old and new lines are paired by position, so a
-  single line can be taken. The extra new lines count as additions, and the extra old
-  lines as a removal attached to the hunk's last line. With it:
-  - staging is applying index → buffer;
-  - unstaging is applying the *unselected* HEAD → index changes, which reverts the
-    selected ones;
-  - resetting is the same on the buffer, as one undoable change.
-  The new index version is written with `git hash-object -w --stdin --path=` and
-  `git update-index --cacheinfo`. Staging writes what the buffer shows, even unsaved,
-  as `git add -p` does with the work tree.
-
-*Alternatives:* parsing `git diff` output. That only sees saved files, and a patch for
-partial hunks is fragile; computing the diff ourselves sees every keystroke. Linking
-libgit2 is not a boot library.
-
-**ADR-26: One syntax-highlighting interface, with injected providers.**
-- **The interface:** the editor knows only `Him.Syntax`. A `SyntaxProvider` has
-  `spStart :: Language -> IO (Maybe SyntaxSession)`, and a session has `ssUpdate`
-  (version, buffer, edits if known), `ssHighlight` (spans for a range of lines) and
-  `ssClose`.
-- **Spans:** spans are per line, carrying dotted scope names
-  (`keyword.control.import`), which both tree-sitter captures and TextMate scopes use.
-  The theme resolves a scope by its longest known prefix (`scopeStyle`).
-- **Configuration:** providers are listed in `cfgSyntaxProviders` and tried in order.
-  `Him.Language` detects the language (file name, extension, shebang) and maps it to
-  each provider's grammar name.
-- **Jobs:** sessions live in the runtime. A `SyntaxStart` job picks the provider; then
-  `Highlight` jobs, at most one per document in flight, return spans for the view plus
-  100 lines either side. The document keeps the last spans (`docSyntax`), so typing
-  shows at most one burst of staleness. The row key includes the spans.
-- **Adding a provider** (e.g. TextMate) means one module that builds the record, plus
-  one entry in `syntaxProviders` in `Him.Config.Default`. Nothing else changes. Tests
-  inject a fake provider, which proves the editor works against the interface alone.
-
-**ADR-27: Tree-sitter: vendored runtime, grammars built for him.**
-- **Runtime:** the C runtime (v0.26.9, MIT) is in `cbits/tree-sitter`, copied unchanged
-  from the local cargo registry (no download). It is compiled through
-  `cbits/ts_runtime.c`, which sets the feature macros for that unit only.
-  `cbits/ts_shim.c` runs one query over a byte range and returns every capture in one
-  array.
-- **Provider:** `Him.Syntax.TreeSitter` dlopens `grammars/NAME.so` and reads
-  `queries/LANG/highlights.scm`. It resolves `; inherits:` in place, and evaluates
-  `#eq?`, `#match?`, `#any-of?` (and negations, plus `#lua-match?`) in Haskell.
-  Unknown predicates drop the match; directives and `#is?`/`#is-not?` are ignored.
-- **Precedence:** the innermost node wins; on the same node the *last* pattern wins.
-  That is Helix's documented rule, which its queries are written for.
-- **Grammars are built by him, not borrowed.** Many grammar repositories ship an old
-  `tree_sitter/array.h`. Its `array_push` reallocates through an `(Array *)` cast and
-  then writes through the typed pointer. Under strict aliasing at `-O3`, the compiler
-  may keep the old pointer. Helix's `haskell.so` (GCC 16) corrupted the heap on ordinary
-  files. This was reproduced in plain C and located with AddressSanitizer
-  (`scanner.c:651`, `advance`). 168 of 198 grammar sources here use that `array.h`.
-  So only grammars from `$HIM_RUNTIME` or `~/.config/him/runtime` are loaded.
-  `him --build-grammars [SOURCES] [NAMES]` compiles grammar sources (by default Helix's
-  `runtime/grammars/sources`) with `-O2 -fno-strict-aliasing` into
-  `~/.config/him/runtime/grammars`; 299 of 301 built here. Queries still come from
-  Helix's runtime.
-- **Cost** (`bench/HighlightBench.hs`, log 24): a 7,241-line Rust file parses in 22 ms,
-  and a 260-line window highlights in 3 ms. Loading a grammar and its query takes
-  30–160 ms, once per document. All of it runs in jobs. Every edit re-parses fully for
-  now; incremental parsing (roadmap 3b) would use the edits.
-
-*Alternative:* the Hackage `tree-sitter` package. It is not a boot library, was last
-tested with GHC 9.2, bundles an old runtime and its own grammars, and targets AST
-extraction, not highlight queries.
-
-**ADR-28: A small regex engine of our own.** `Him.Regex` is a backtracking matcher:
-literals and escapes, `.`, classes with `\d \w \s`, anchors and `\b`, groups
-(including `(?:…)`), alternation, and greedy or lazy `* + ? {m,n}`. Lua patterns are
-translated (`compileLua`). There are no backreferences or lookaround. It is used for
-query predicates; all 205 `#match?` patterns in Helix's queries compile. It is the
-starting point for regex search.
-
-**ADR-29: The LSP client: processes in the runtime, protocol as pure data.**
-- **Pure protocol:** `Him.Lsp.Protocol` covers Content-Length framing (tested at every
-  split point), file URIs, columns in UTF-8/16/32, building and classifying JSON-RPC
-  messages, and reading diagnostics, locations, hover contents and completion items
-  (snippets reduced to plain text).
-- **Processes:** `Him.Lsp.Server` runs one server process with:
-  - a reader thread that splits its output into messages;
-  - a writer thread with a queue, so the main loop never blocks on a busy server;
-  - a drain for stderr;
-  - automatic answers to the server's own requests (configuration, progress,
-    registration);
-  - the initialize handshake, which advertises UTF-8 positions.
-
-  The runtime starts one server per (command, project root) on demand (`LspEnsure`).
-  Roots come from markers in `Him.Lsp.Config`. The runtime forwards `LspSend` effects
-  and stops the servers on quit.
-- **Editor side:** the state is pure (`Him.Lsp.State`):
-  - documents attach to a server (`docLsp`);
-  - requests are remembered as `Pending` values by id, so a reply is applied by a pure
-    function;
-  - diagnostics are kept by absolute path, and converted to character columns against
-    the current text when drawn.
-- **Sync** (milestone 25, `Him.Lsp.Sync`): it runs once per input batch, just before
-  drawing (`lspFlush`), and before every request.
-  - **Incremental changes:** `didChange` sends one range edit, computed by
-    `Buffer.changeBetween` from the text last sent. Shared storage blocks are skipped
-    with a memory comparison, then lines, then characters. A one-character edit in a
-    196,000-line buffer is found in under 1 ms, where the whole text was 14 MB per
-    batch before. This covers any kind of change, undo included. Servers that ask for
-    full sync get the whole text; an undo back to the sent text sends nothing.
-  - **The server's copy** is the buffer plus the file's final line break, which edits
-    never touch, so buffer positions are valid in it.
-  - **Saves and closes:** `didSave` follows a save (`docSaves`), and `didClose` follows
-    `:bc`.
-- **Server commands:** `:lsp-start`, `:lsp-stop`, `:lsp-restart` and `:lsp-info`.
-  `LspStop` removes the server from the runtime before stopping it, and an exiting
-  server is only reported if it is still the one registered under its key, so a
-  restart cannot be undone by the old server's exit. Stopping drops the server's
-  attachments, diagnostics and pending requests; restarting re-attaches its documents.
-- **Edits** (`Him.Lsp.Edit`): text edits apply from the last to the first, so
-  positions stay valid, and insertions at the same place keep the server's order.
-  Workspace edits change open buffers in place; files that are not open are opened and
-  left modified, and the current buffer stays current.
-- **Features:**
-  - diagnostics: a gutter sign over git signs, an underline in the severity's colour,
-    the cursor line's message in the bottom row, `] d` / `[ d`, and `space x`;
-  - `space k` hover, in a popup at the cursor;
-  - `g d` definition and `g r` references (one location jumps, several open a picker);
-  - completion in insert mode, automatic or on `C-x`, in a `Completing` keymap layer
-    over insert mode.
-  - since milestone 25:
-    - `space r` rename (a prompt starting with the word);
-    - `:format`;
-    - `space a` code actions. The request sends the selected lines' diagnostics back
-      raw. Picking one applies its edit, runs its command, or resolves it first.
-      Servers that apply edits through `workspace/applyEdit` (clangd's tweaks) are
-      handled.
-    - signature help after the server's trigger characters (above the cursor, until
-      `)`);
-    - `space s` document symbols, `g y` type definition, `g i` implementation;
-    - jumps convert the server's columns exactly.
-  - since milestone 26:
-    - `space S` workspace symbols. The picker's source is `ServerQuery`, so each
-      change of the query asks the server again; stale answers are dropped.
-    - completion imports. Items' `additionalTextEdits` are applied with the insertion,
-      moving the cursor down with lines added above it. Items without them are
-      resolved (`completionItem/resolve`, advertised through `resolveSupport`), and the
-      edits are applied if the text is unchanged.
-    - references are on `g r`.
-- **Tests:** against clangd when it is installed (attach, diagnostics, hover, `g d`,
-  fixing an error, completion), plus the pure protocol tests.
-
-*Alternatives:* `ReaderT` handles in actions (rejected in ADR-23), or blocking request
-calls from actions, which would freeze the editor while a server thinks.
-
-**ADR-30: Pickers preview where an item points.**
-- **What has a preview:** an item that is a place (a file, a buffer, a position from a
-  language server). It shows beside the list when the box is at least 60 columns wide:
-  the file around the item's line, with that line highlighted and line numbers.
-- **Where the text comes from** (`previewFor` in `Him.Editor`, pure):
-  - an open buffer gives its own text, unsaved changes included;
-  - any other file is read by a `LoadPreview` job (one per path) and cached in
-    `edPreviews` while the picker is open; the cache is dropped when the picker closes.
-- **What is not shown:** binary files (a NUL in the first 8 KB) and files over 20 MB
-  show a note instead.
-- **Drawing:** the box keeps one border, with a divider between the list and the
-  preview; the preview's rows are dropped from the row cache, like every popup.
-
-*Alternative:* opening the file in a hidden buffer. That loads more than needed and
-mixes previews into the buffer list.
-
-**ADR-31: Ctrl-Z suspends the editor.** Raw mode turns off the terminal's own signal
-keys (`ISIG`), so Ctrl-Z arrives as a key. It is bound to `suspend`, which queues a
-`Suspend` effect. The main loop then:
-1. calls the suspend action that `withRawTerminal` hands it: leave the alternate
-   screen, restore the original terminal attributes, and stop the process with
-   `SIGTSTP` (the default action stops every thread);
-2. when the shell continues the process (`fg`), sets raw mode again and re-enters the
-   alternate screen;
-3. marks the editor `edRepaint`, so the next frame is drawn without diffing against the
-   old one, and reads the window size again in case it changed meanwhile.
-
-**ADR-32: The config file is TOML, layered on the defaults.**
-`~/.config/him/config.toml` (or `$XDG_CONFIG_HOME/him/config.toml`, or `$HIM_CONFIG`)
-has three sections:
-- `[editor]` and its sub-tables: every setting (ADR-34) and `theme` (ADR-33).
-- `[keys.<mode>]`: `"keys" = "action invocation"`. The modes are normal, select,
-  insert, command, picker, directory and completion.
-- `[language-server.<language>]`: `command`, `args`, `roots`, `language-id` and
-  `enabled`.
-
-How it is read:
-- **Format:** TOML, because Helix users know it. `Him.Toml` reads the subset a config
-  needs into the JSON value type, and its errors name the line.
-- **Keys:** the action layer (ADR-17) did most of the work. Bindings are the same
-  `Bindings` text as the defaults, put on top of them with `overrideBindings` and
-  validated with them, so a bad key or action is reported with mode and keys.
-  `no_op` unbinds a key.
-- **Strict checking:** unknown sections, modes and settings are errors, because a
-  silently ignored typo is worse. Every error is collected.
-- **Failure:** a broken file starts the defaults, and the status row names the first
-  problem, so the user can fix it in him (`:config-open`).
-- **Defaults to start from:** `him --dump-default-config` prints every default as a
-  config file: the bindings per mode, commented with what they do; the servers; and a
-  list of all actions with their parameters. Read back, it equals the defaults
-  (tested).
-- **Changing it while running:** `:config-open` opens the file, pre-filled with the
-  defaults if missing; saving creates the directory. `:config-reload` replaces the
-  loop's config, the runtime's server table and the editor settings.
-
-*Alternative:* a custom `keys = action` line format. It is simpler to parse, but it
-leaves no room to grow and is unfamiliar.
-
-**ADR-33: Themes are Helix theme files.**
-`[editor] theme = "onedark"` in the config, or `:theme <name>` while running (`tab`
-completes the name; `:theme` alone names the current one). Why Helix's format:
-- **The scope names were already Helix's** (ADR-26), so its themes colour him's
-  highlighting as they are. All 219 installed themes load without a warning (checked
-  with a throwaway script).
-- **Users can switch editors** without redoing their colours, and write their own the
-  same way.
-
-How it works:
-- **Lookup:** a theme is `<name>.toml` in `themes/` next to the config file, then in each
-  runtime directory's `themes/` (`Him.Paths.themeDirs`), and the first match wins.
-  `default` is built in (`Him.Theme.defaultThemeText`, written in the same format), but
-  a file of that name replaces it. A theme that inherits its own name (a user's tweak
-  of a Helix theme) gets the next file of that name.
-- **Format (`Him.Theme`, pure):**
-  - `inherits`: the child's entries replace the parent's whole, palettes merge by name,
-    and the merged palette colours both, as Helix does.
-  - Colours: palette names (they may chain), `#rrggbb`, `#rgb`, `"110"` (a palette
-    index), the 16 terminal colour names, `default`.
-  - Modifiers: bold, dim, italic, underlined, reversed, crossed_out.
-  - Underlines: `{ color, style = line|curl|double_line|dotted|dashed }`.
-  - Anything not understood is skipped and logged, not fatal (rainbow brackets, blink).
-- **Reader:** `Him.Toml` gained inline tables (`{ fg = "red" }`, also spanning lines, as
-  some themes write them). It now skips `#` inside literal strings when joining lines.
-- **Styles are layered (`patchStyle`, Helix's patch):** text, then syntax, then a
-  diagnostic underline, then the selection, then a cursor. A selection that only sets
-  a background keeps the text's colour. The primary selection uses
-  `ui.selection.primary`.
-- **What `Style` holds:** dim, strikethrough, an underline kind and an underline colour
-  (SGR `4:3` and `58;2;…`). `PackedStyle` is now a `Word64` plus a `Word32` (the
-  underline colour), still unpacked into each cell.
-- **UI from scopes (`Him.Render.Theme.fromScopes`):** the render components keep
-  their record fields, filled once per theme from Helix's UI scopes:
-  - `ui.text`, `ui.selection(.primary)`, `ui.cursor`, `ui.linenr(.selected)`,
-    `ui.gutter`, `ui.virtual`;
-  - `ui.statusline` and `ui.statusline.normal|insert|select`;
-  - `ui.popup`, `ui.menu.selected`, `ui.text.inactive|focus|directory`;
-  - `error|warning|info|hint`, `diagnostic.*`, `diff.plus|minus|delta`.
-  him's own scopes fall back to those: `ui.statusline.command` and `.picker` (to
-  `.normal`), `ui.popup.key`, and `diff.*.staged` (to the same colour, dimmed). Lookups
-  fall back by prefix, as Helix's do.
-- **Background:** `ui.background` (with `ui.text`'s foreground) becomes the
-  terminal's *default* colours through OSC 11/10, carried in `frameColors` and sent
-  when they change. Cleared areas, scrolled-in rows and blank cells then show the theme
-  without the diff ever writing a background. Leaving or suspending resets them (OSC
-  111/110). The alternative, painting every cell, would defeat the blank-tail and
-  scroll-region optimizations of ADR-15.
-- **Older terminals:** without `COLORTERM=truecolor|24bit`, 24-bit colours are mapped
-  to the nearest of the 256-colour palette (the cube or the grey ramp) when the theme
-  is loaded.
-- **Switching:** the theme lives in the main loop beside the config (an `IORef`).
-  `ChangeTheme` is an effect the loop carries out, like `ReloadConfig`. The loop's
-  effects now run in order with one `foldM`. A switch repaints everything, because
-  cached rows hold the old colours. `:config-reload` loads the theme again too.
-
-**ADR-34: Settings are one table.**
-Every setting is an `OptionSpec` in `Him.Options.optionSpecs`, holding:
-- its key (`tab-width`, or `search.smart-case` for `[editor.search]`);
-- its doc;
-- a setter that checks the value's type and range;
-- a printer for the default.
-
-Three things use that one table: checking the config file (`setOption`; an unknown key
-lists the known keys of its table), applying it (`userOptions`), and the
-`--dump-default-config` section. They cannot drift apart. The values live in
-`edOptions :: Options` on the editor (which replaced `edScrolloff` and `edShowHidden`),
-so actions and render components read them like any state. The settings are:
-- `[editor]`: `scrolloff`, `show-hidden-files`, `tab-width`, `expand-tab`,
-  `line-number` (absolute / relative / off), `escape-timeout` (read at startup only);
-- `[editor.cursor-shape]`: normal, insert, select, command;
-- `[editor.lsp]`: `auto-completion`, `completion-trigger-len`, `auto-signature-help`,
-  `hover-lines`;
-- `[editor.search]`: `smart-case`, `wrap-around`;
-- `[editor.file-picker]`: `hidden`, `git-ignore`, `ignore`, `follow-symlinks`,
-  `max-files`;
-- `[editor.picker]`: `preview`, `preview-min-width`, `preview-max-size`.
-
-Names follow Helix where it has the same setting. Pure code that needed a value now
-takes it as a parameter: `layoutLine`/`displayCol`/`charIndexAtCol` (tab width),
-`lineBy` (tab width), `compileNeedle` (smart case), `findMatch` (wrap), and
-`walkFiles` (a `WalkOptions` carried by the `ScanFiles` job).
-
-Still constants, on purpose: undo levels, gutter glyphs, the language table, the LSP
-start timeout, and the internal tuning values (`maxBatch`, `chunkSize`, `mergeGap`,
-`syncLimit`, `matchLimit`, `maxEdits`, the scan batching, `highlightMargin`).
-
-**ADR-35: Git and the LSP client are plugins.**
-A `Plugin` (in `Him.Config`) names everything a feature adds:
-- its actions, default bindings, `:` commands and key-prefix titles;
-- whether it draws in the gutter's sign lane;
-- hooks: housekeeping after every event, `plBeforeRender` once per input batch, and
-  `plJobResult` for every job result;
-- `plEnable` / `plDisable` for switching it while running.
-
-The core folds over `cfgPlugins` (the enabled ones) where it used to call git and LSP
-code by name: `App.housekeeping`, the job-result dispatch, and the per-batch flush.
-`Config.Default.configWith enabled userBindings` builds the config:
-- the core's actions and bindings, plus those of the enabled plugins;
-- the user's bindings on top, minus those that name a switched-off plugin's actions
-  (they come back with the plugin, rather than failing the config).
-
-How plugins are switched:
-- **At startup:** `[plugins] git = false` (all are on by default).
-- **While running:** `:plugin-enable` / `:plugin-disable <name>` (`tab` completes the
-  names; `ExArgs` gained `NameArgs`), and `:plugins` lists them. The loop keeps the
-  `UserConfig`, makes the config again with the new set, and runs the hooks of the
-  plugins that came and went (`switchPlugins`; `:config-reload` uses it too).
-  - Switching git off resets every document's git state, so no signs are left.
-    Switching it on looks every document up again.
-  - Switching the LSP off sends `LspStopAll`, which the runtime turns into stopping
-    every server. It also clears `edLsp`, the attachments, the completion menu and
-    the popups.
-- **Gutter:** the sign lane exists only while a sign-drawing plugin is on
-  (`edSignLane`).
-
-Coupling that remains, on purpose:
-- Plugin state still lives in `Document` (`docGit`, `docLsp`) and `Editor` (`edLsp`).
-- `Effect`, `Job` and `JobResult` keep their plugin constructors.
-- Rendering reads that state directly. With the plugin off, the state is empty, so
-  nothing is drawn.
-- A few core actions call LSP functions: the rename prompt, code-action and
-  workspace-symbol pickers. They are only reachable through LSP actions.
-
-Making these generic (state as `Dynamic`, plugin-provided gutter lanes) would cost
-type safety for no user-visible gain yet. Syntax highlighting could become a plugin the
-same way.
-
-**ADR-36: Module names say what modules hold (2026-10-02).**
-Since ADR-17, the modules under `Him.Commands.*` hold *actions*, and `Him.Command`
-holds the `EditorM` monad and its helpers. They are now `Him.Actions.*` and
-`Him.EditorM`. The same pass made three more cuts:
-- `Him.App` became the terminal frontend, and `Him.Session` the frontend-free event
-  handling.
-- `Him.Actions.Lsp` was split by feature.
-- One `changeDocument` / `replaceBuffer` helper replaced four hand-built undoable
-  replacements.
-
-The old names stay in the older ADRs and log entries, which describe the code as it
-was then.
-
-**ADR-37: Splits are a tree of windows; the focused one is the editor's state.**
-Helix's model, without Vim's tabs (the buffer list stays as it was):
-- **Layout (`Him.Window`, pure):** `Layout` is a tree, `Leaf windowId | Split Axis
-  [Layout]`, where the axis is `Beside` (`:vsplit`) or `Stacked` (`:hsplit`).
-  - Splitting inside a split along the same axis adds a sibling; otherwise the window
-    is split in two.
-  - Closing collapses a split that is left with one child.
-  - `boxes` shares a split's space evenly, with a one-column border between windows
-    side by side.
-  - `neighbour` finds the nearest window on a side that overlaps across, preferring
-    the one most in line.
-- **State:** the *focused* window is still `edDoc` + `edView`, so no action changed.
-  The other windows are `Window { winDoc, winView, winSelection }` in `edWindows`.
-  - Focusing a window stashes the focused one as a `Window`, then makes the other's
-    document current (the buffer zipper's `gotoBuffer`) with its view and selection,
-    clamped in case the text changed meanwhile.
-  - Each window therefore keeps its own cursor and scroll position, even on the same
-    document. Edits are not mapped through an unfocused window's selection; clamping
-    keeps it valid.
-- **Rendering:** each window gets its own gutter, text area and status line. An
-  unfocused window is drawn by the same components through `windowEditor`, the editor
-  as that window shows it (normal mode, no popups).
-  - Unfocused windows draw their primary cursor as a cell, use
-    `ui.statusline.inactive`, and show no mode.
-  - Borders use `ui.window`.
-  - Row-cache keys are now keyed by `(row, column)`, since windows side by side share
-    rows.
-  - The terminal-scroll optimization (ADR-15) applies only when the focused window
-    spans the full width, because scrolling moves whole rows.
-- **Highlighting** asks for the lines visible in every window on the current document
-  when they are within 2000 lines of each other; otherwise only for the focused one.
-- **Keys:** Helix's, after `C-w` or `space w`:
-  - `v` / `s` split side by side / stacked;
-  - `w` next window;
-  - `h j k l` (also with `C-` and arrows) focus a neighbour;
-  - `H J K L` swap;
-  - `q` close, `o` only;
-  - `n v` / `n s` split with a new scratch buffer.
-- **Commands:** `:vsplit` / `:vs [files]`, `:hsplit` / `:hs [files]`, `:vnew`,
-  `:hnew`.
-- **Quitting:** `:q` / `:q!` / `:wq` close the focused window, and quit with the last
-  one, as in Helix. `:qa` quits everything.
-- **Paging** (`C-f`, `C-d`, …) moves by the focused window's height.
-
-**ADR-38: A REPL is a buffer with a process behind it (the `repl` plugin).**
-`:repl` opens the REPL of the file's language in a window beside it.
-- **Typing:** in the REPL buffer you type as anywhere, and `ret` in insert mode sends
-  the line. This is the `Repl` keymap layer, `[keys.repl]`, which inherits insert
-  mode; `C-c` interrupts.
-- **From a file:** `space e` sends the selection, or the line when only one character
-  is selected. Code of several lines is wrapped in the REPL's markers (ghci's
-  `:{ … :}`; a blank line for Python). The focus stays in the file.
-- **Reloading:** `space E` reloads the project (`:reload`). It also happens by itself
-  after a file of the language is saved, when `reload-on-save` is set (the ghci
-  default).
-- **Commands:** `:repl-send <text>`, `:repl-reload`, `:repl-interrupt`, `:repl-stop`,
-  `:repl-restart`.
-
-How it is built:
-- **The transcript (`Him.Repl.Transcript`, pure).** A REPL buffer is a document of
-  kind `ReplDoc ReplState`, whose `rsInput` is where the next input starts.
-  - Output is inserted just before the input, and cursors at or after that point move
-    with it. Output arriving while you type never splits your line.
-  - Output is not an edit: no undo step, never dirty.
-  - `ret` takes the text after `rsInput` and closes it with a line break.
-  - REPLs reading a pipe do not echo, so the editor shows sent code itself, as if
-    typed.
-  - Escape sequences and carriage returns are removed from output.
-- **The process (`Him.Repl.Process`).** stdout and stderr share one pipe. The process
-  runs with `TERM=dumb` and in its own process group, so `C-c` interrupts the REPL,
-  not the editor. A streaming UTF-8 decoder handles characters split across reads.
-  - The pipe's ends are close-on-exec. A language server started at the same time
-    inherited the write end, so a REPL's exit was never seen. A test caught this:
-    with pylsp starting for `t.py`.
-- **Starting.** The runtime starts the REPL as soon as it performs the effect, not as
-  a job, so text sent straight after reaches it. It runs in the project root, found
-  from `roots` markers (like language servers), so `stack ghci` loads the project.
-  The runtime holds the REPL table (`setReplTable` on `:config-reload`) and the
-  processes by buffer id.
-- **Windows.** If the REPL buffer is not shown, a split opens beside the current
-  window. Unfocused windows on a REPL buffer follow its end as output arrives.
-- **Highlighting.** The transcript is highlighted as its language.
-- **Config:** `[repl.<language>]` sets `command`, `args`, `roots`,
-  `multiline = [start, end]` (or `[]`), `reload`, `reload-on-save` and `enabled`.
-  Built in:
-  - haskell: `stack ghci`, `:{ :}`, `:reload` on save;
-  - python: `python3 -i -q -u`;
-  - javascript: `node -i`.
-
-*Testing while developing:* point the Haskell REPL at the library and the test suite
-(`args = ["ghci", "him:lib", "him:test:him-test"]`). Then `:repl-send main` runs the
-suite. Selecting an expression (a test, or a call into the module being written) and
-pressing `space e` evaluates it. Saving reloads. See the tutorial, §5.11.
-
-**ADR-39: Per-key work follows what is visible or settled (2026-10-02).**
-These are the low-hanging fixes from the 2026-10-02 benchmark:
-- **Diagnostics are converted per frame for the drawn lines only**
-  (`shownDiagnosticsIn`). A server can publish thousands of them.
-- **The git diff is debounced:** the job waits 50 ms, and a newer version's job
-  replaces it. Typing in a large tracked file therefore diffs once per pause instead
-  of once per key, and the gutter catches up 50 ms after typing stops.
-- **The built-in theme is parsed once,** and the TOML reader skips the character walks
-  on lines that cannot need them.
-
-Not done, on purpose:
-- Moving diagnostic parsing off the main loop. It is rare (one publish per server
-  pass), and doing it would need a second representation of the state.
-- Writing the default theme as Haskell values, which would give two sources for one
-  theme.
-
-**ADR-40: Match mode, as in Helix.**
-- `m m` jumps to the matching bracket.
-- `m s c` / `m r c d` / `m d c` add, replace and delete the pair around each selection.
-- `m i x` / `m a x` select inside / around a text object.
-
-The pure part is `Him.TextObject`:
-- **Words:** `w` is a run of word characters (or of punctuation, or of blanks); `W` is
-  a run of non-blanks. Around takes the blanks after it, or the blanks before it at the
-  end of a line.
-- **Paragraphs:** `p` is the run of non-blank (or blank) lines; around adds the blank
-  lines after it.
-- **Pairs:** brackets nest, found by scanning lazily backwards and forwards through the
-  lines. Quotes pair up within a line, in order.
-- **`m`:** the innermost pair of any kind.
-
-The commands that need a character wait for the next key the way `f` does: `Await`
-gained constructors, and `Him.Actions.Match.awaitedMatchKey` handles them. Surround
-edits go through `applyEdits` (each range's pair is next to it). Tree-sitter objects
-(`f`, `t`, `a` in Helix) are not done.
-
-`I` and `A` arrived with it: insert after the line's indentation, and at its end.
-
-**ADR-41: An AI chat, with edits approved in the editor.**
-- **A provider interface** (`Him.Chat.ChatProvider`), like the syntax one.
-  - `cpSend config request emit` starts a request and returns a cancel action.
-  - Events come back through `emit`: text as it streams, then `ChatFinished` (stop
-    reason, the assistant message exactly as returned, the tool calls) or
-    `ChatFailed`.
-  - The runtime keeps one request per chat buffer and posts the events as
-    `ChatReply` jobs.
-  - Tests use a scripted provider. Nothing in the test suite talks to a model (the
-    user tests live models).
-- **The Claude API provider** (`Him.Chat.Anthropic`).
-  - There is no Haskell SDK and only boot libraries are allowed, so it uses raw HTTP
-    through `curl`. The whole request (the key header and the body) goes to curl's
-    stdin as a config file: no key in the process list, no temporary file.
-  - The request: `claude-opus-5-5`, adaptive thinking at `[chat] effort` (default
-    `high`), streaming, `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`),
-    `max_tokens` 64000, and `eager_input_streaming` on every tool. Tool inputs
-    are therefore parsed and checked here: an invalid one is answered with an
-    `INVALID_JSON` error result, and nothing runs.
-  - Credentials: `$ANTHROPIC_API_KEY`, `$ANTHROPIC_AUTH_TOKEN`, or
-    `ant auth print-credentials --access-token` (Bearer plus the OAuth beta header).
-  - The event stream is parsed purely (`streamStep` / `streamEnd`). Each block is
-    rebuilt from its start and deltas, thinking signatures included, so the assistant
-    message goes back into the history unchanged.
-- **The history is append-only:** user messages, assistant messages as returned, tool
-  results. Earlier turns are never edited, as preserved thinking requires.
-  - A refused or cut-off turn gets error results for its tool calls, and they never
-    run.
-- **Tools** (`Him.Chat.Tools`):
-  - `read_file` (the buffer's text if the file is open) and `list_files` run at once.
-  - `edit_file` (one exact occurrence of `old_text`) and `write_file` become **pending
-    edits**. Each is applied to the file's buffer in the editor window as an undoable
-    change of whole lines, highlighted with `ui.highlight`, and summarized as a diff in
-    the chat.
-  - Paths must stay inside the project.
-- **Deciding edits:** `space c a` / `space c d` approve or deny the next edit, and
-  `A` / `D` do all of them.
-  - Approving keeps the edit and saves the file.
-  - Denying puts the old lines back.
-  - When every edit of a turn is decided, the tool results go back in the order of the
-    calls, and the model continues.
-- **The chat buffer** is a transcript like the REPL's (`Him.Transcript`, shared since
-  then): `ret` sends, `A-ret` makes a line break, and `C-c` stops the answer. Each
-  message is prefixed with the file and line the user is looking at.
-- **Transcripts never count as unsaved** (`Document.unsaved`), so `:q` does not refuse
-  over a REPL or chat buffer.
-- **`Runtime` now takes the `Config`** (`newRuntime config post`, `reconfigure`), instead
-  of one argument and one setter per table.
-
-**ADR-42: Claude Code as a chat provider, with him's tools over MCP.**
-`[chat] provider = "claude-code"` is the default. It uses the `claude` program you are
-logged in to, so no API key is needed, and it keeps the approve-before-writing design
-of ADR-41.
-
-- **Sessions.** Providers now start a session per chat buffer (`cpStart` →
-  `ChatSession { sessSend, sessAnswer, sessClose }`), like syntax providers. The API
-  provider's session is stateless. Claude Code's keeps one `claude -p` process with
-  streaming JSON in and out.
-  - A cancelled turn ends the process, and the next turn uses `--resume <session id>`.
-  - A conversation that starts over (`:chat-new`) starts a new session.
-- **Tools.** Claude Code's own editing and command tools are off: `--tools Grep,Glob`
-  (read-only search) and `--permission-mode dontAsk` (anything not allowed is denied,
-  never asked). Its file tools are him's, served over MCP:
-  `--mcp-config` names `him --mcp-bridge DIR`, and `--strict-mcp-config` ignores the
-  user's other MCP servers.
-- **The bridge.** Claude Code starts MCP servers itself, over stdio, so the server can't
-  be the running editor. `Him.Mcp` is a small bridge that speaks MCP (newline-delimited
-  JSON-RPC: `initialize`, `ping`, `tools/list`, `tools/call`) and forwards each tool
-  call to the editor. `mcpStep` is the pure part.
-- **Bridge ↔ editor.** Two named pipes in a temporary directory: `calls` and `answers`,
-  one JSON object per line. The boot libraries have no sockets, and `unix` has named
-  pipes.
-  - GHC opens files non-blocking. On a named pipe, that makes a write-open fail with
-    no reader, and a read-open see end-of-file at once.
-  - So the editor opens both pipes **read-write** (Linux allows it; it never blocks),
-    before Claude Code starts. The bridge's opens always find this end, and a bridge
-    restart is invisible to the editor.
-  - Call ids carry the bridge's process id, so an answer left behind by a bridge that
-    died is ignored by the next.
-- **Live tool calls.** A call arrives during the turn as `ChatToolCall`.
-  - Reads are answered at once.
-  - An edit becomes a pending edit (ADR-41) and is answered when you approve or deny
-    it. Claude Code waits meanwhile and goes on by itself afterwards, in the same turn.
-  - The batch path of the API provider (tool calls with the finished reply, results
-    with the next request) is unchanged. Both share `runCall`.
-- **Output.** Text streams from `stream_event` lines (`--include-partial-messages`). The
-  use of its own tools shows as `[Grep]`, and the `result` line ends the turn (or
-  fails it).
-- **Not tried against the live service** (the user tests live models). The tests cover:
-  - Claude Code's output shapes;
-  - the MCP messages;
-  - a real round trip, client → bridge → named pipes → editor → answer;
-  - the live approve flow with a fake session that waits for answers like Claude Code.
-
-  `him --mcp-bridge` was also checked by hand, with a scripted MCP handshake.
-- **The first live run (by the user) found three faults.** Claude Code's session
-  transcripts (`~/.claude/projects/…/*.jsonl`) showed that it did call
-  `mcp__him__edit_file`; the faults were on him's side:
-  1. **Every message ended the `claude` process.** The runtime cancelled the previous
-     turn before each send, and for this provider cancelling means ending the process.
-     Each message was then a new process resuming the session, which looks "one-shot".
-     Only `ChatCancel` cancels now.
-  2. **Approving did not work while typing.** After `ret` the chat is in insert mode,
-     where `space c a` types text. When edits arrive, the chat now leaves insert mode.
-  3. **An unanswered edit stayed in the buffer** once its turn died, and `read_file`
-     (which reads buffers) showed it to the next turn as if it had been made. A turn
-     that fails or is cancelled now undoes its undecided edits.
-- **Checking it without a model.** `dev/fake-claude` stands in for `claude` with no
-  model behind it. It starts the bridge from `--mcp-config`, calls `edit_file`, waits
-  for the answer, and reports. With it, the real binary was driven in tmux through
-  the whole flow: the edit is shown, approved straight after sending, saved only then,
-  and a second message goes to the same process.
-
-**ADR-43: Proposed changes are reviewed like staged hunks, in any order.**
-This replaces the approve-before-continuing flow of ADR-41/42. The user asked for all
-proposed edits at once, decided in any order with the cursor on one, and for edits
-that are easier to understand.
-
-- **Proposals do not block.** Every tool call is answered at once. An edit is answered
-  "proposed: the user reviews after your turn; go on as if applied". So the model
-  makes all its changes in one turn, with Claude Code (MCP, ADR-42) and the API alike.
-  The `ChatDeciding` state and the per-call bookkeeping are gone.
-- **A review per document** (`Him.Chat.Review`):
-  - **The base** is the document's text before the chat's first change.
-  - **The proposed changes** are the diff from the base to the buffer (`Him.Diff`),
-    recomputed in the plugin's housekeeping when the buffer's version changes. This
-    is the git-signs idea (ADR-25), so changes that touch or follow each other, and
-    edits by hand in between, need no line bookkeeping.
-  - **Approving** one change applies it to the base (`applyHunks`, as staging does)
-    and writes the base to the file.
-  - **Denying** applies the reverse to the buffer.
-  - A review with no changes left is done.
-- **Deciding:** `space c a` / `space c d` act on the change under the cursor
-  (`hunkAtLine`: its new lines, or for a removal the line after it), and `space c A`
-  / `D` act on all of them. `] c` / `[ c` move between changes, and `space c l` lists
-  them in a picker with a preview. When a turn ends with proposals, the editor window
-  takes the focus, in normal mode, with the cursor on the first change.
-- **Your own unsaved edits are kept out of approvals** (`approveOnto`). Approving
-  writes the file *as it is on disk* with the one change applied. If you had unsaved
-  edits before the chat's first change, the file differs from the base: the change is
-  moved onto the file's text past your edits (`mapLine` over the base-to-file diff),
-  and they stay unsaved in the buffer. A change that overlaps one of them, or meets
-  it at an insertion, is refused ("save it (:w) or undo it first"), because which
-  lines are whose is not clear. Approving all goes change by change, from the last,
-  with the same check.
-- **Telling the model:** decisions are collected and put before the user's next
-  message, with what still waits ("[The user reviewed your proposed changes: approved
-  a.txt:2 (-1 +2) …] [Still waiting for review: …]").
-- **Showing a change** (`Him.Review.displayRows`): the text area and the gutter draw
-  rows, not just buffer lines.
-  - Above each change's new lines there is a header row ("change 1/2 (-1 +2) space
-    c a/d: approve/deny ] c: next") and its removed lines (red, from the base, with
-    `-` in the gutter).
-  - The new lines are highlighted with `+` in the gutter.
-  - These extra rows are never in the buffer. The cursor, `cursorPosition` and the
-    scrolling (`ensureCursorVisible` scrolls further while extra rows push the cursor
-    below the margin) count them.
-  - Row caching is unaffected (a cached row is copied only when its key, its
-    content, matches). The terminal-scroll shortcut stays correct, because the diff
-    compares cells.
-  - The status line shows "N to review".
-- **The chat transcript is easier to read:** `you>` and `claude>` lines are styled, and
-  notes in brackets are dimmed.
-- **Checked with the real binary** and `dev/fake-claude` (which now proposes two
-  changes in one turn): approving the second change wrote only it, denying the first
-  restored it, and the next message carried the review note.
-
-**ADR-44: REPL and chat buffers are transcripts, not text to edit.**
-They should feel like a REPL. Everything before the input is read-only, and so is the
-prompt; you can still move, select and yank anywhere.
-
-- **One guard, where all editing passes.** `EditorM.editAll` is used by every typing,
-  delete, change, paste and surround action. It applies the edit, asks
-  `Buffer.changeBetween` for the first position that differs (cheap: shared blocks are
-  skipped), and refuses the edit if that position is before the input: "only the
-  input after the prompt can be changed (select and y copy from anywhere)". Edits
-  that change nothing before the input go through as usual (with undo).
-  - Undo is checked the same way. It may take back typing in the input, but not
-    output that arrived since, because that would rewrite the transcript.
-  - Output from the REPL or the model doesn't pass the guard: it is inserted by
-    `Him.Transcript`, not by an edit.
-- **Typing goes to the input.** Entering insert mode with the cursor up in the
-  transcript (`i`, `a`, `o`, …) moves it to the end of the input, as typing in a
-  terminal does (`EditorM.setMode`).
-- **What is the transcript** is the document's input position (`inputPos`): REPL and
-  chat buffers have one, other documents don't, so nothing else changes for them.
-
-**ADR-45: The chat looks and works like an editor's chat panel (VS Code's).**
-The transcript of `you>` / `claude>` lines and `[…]` notes was hard to read in a narrow
-split. Its long lines ran off the edge, and the review hints were scattered. The chat
-is now laid out as blocks, with an input box at the bottom (`Him.Chat.Transcript`,
-pure).
-- **Layout.** The buffer is the transcript, then the prompt `› ` and the message being
-  typed.
-  - Output goes on the transcript's last line, *above* the prompt, so the box stays
-    at the bottom while the answer streams, and what you type moves down with it.
-  - The transcript only grows at its last line, so lines keep their numbers. What
-    each line is (`ChatMark`: You, your text, the context, Claude, a tool line, a
-    proposed change, the review summary, a note, an error, a code fence or code) is
-    kept in `csMarks` by line number.
-  - The model's prose has no mark. The text area styles inline `code`, `**bold**`
-    and headings in it (`inlineSpans`).
-- **Wrapping.** Prose is wrapped at spaces to the chat window's width as it arrives:
-  the last line is re-wrapped with each chunk, and list items wrap under their text.
-  Code blocks are not wrapped (copying code must give the code).
-  - This is hard wrapping: a window resized later keeps the old width. Soft wrapping
-    would mean wrapping in the renderer, cursor movement and the review rows, which
-    is too big for this.
-- **Drawing.**
-  - No line numbers: the gutter is one column, with a bar beside your messages and
-    the code, review and input boxes.
-  - Code blocks, the review summary and the input are drawn across the whole width
-    (`ui.cursorline.primary` or `ui.popup` backgrounds).
-  - An empty input shows a placeholder: the keys, or "Claude is working… (C-c stops
-    it)" while the model answers. The status line says `working…` too.
-- **What the model did** is shown as it happens:
-  - `◦ Read a.txt`, `◦ Listed the project's files`;
-  - Claude Code's own tools, through a new `ChatActivity` event: `◦ Searched the
-    code` (Grep), `◦ Looked for files` (Glob);
-  - `✎ a.txt +2 −1` for each proposed change.
-  - At the end of the turn, a summary of the changes per file, with the keys.
-- **Words.** Proposed changes are *kept* or *discarded*, as in VS Code (its "Undo"
-  would be confused with `u`). The keys and the action names stay
-  (`chat_approve` / `chat_deny`), and `:chat-keep` / `:chat-discard` are new aliases.
-  Messages to the model still say "approved" and "rejected".
-- **Input.** `up` / `down` recall the messages sent (on the input's first / last
-  line; elsewhere they move a line), and `C-l` (or `space c n`) starts a new
-  conversation. `space c y` copies the code block under the cursor (or the last one)
-  into the register. A new chat shows a short welcome with the keys.
-- **Smaller fixes found on the way:**
-  - The view scrolls back to column 0 when the cursor returns to a column that fits
-    (`scrollToCursor`). Before, it stopped with the cursor at the left edge.
-  - The focused chat window follows the end of the transcript while its cursor is
-    in the input.
-
-**ADR-46: A global search picker (`space /`) that searches as you type.**
-Helix's `space /` and VS Code's search panel: lines of the project's files that contain
-the query, in a picker with a preview.
-- **Pattern:** literal text with smart case, the same needle as `/` (`Him.Search`), not
-  a regex. Regex search is a separate item (§8), and `Him.Regex` is a backtracking
-  engine on strings, too slow to run over a project.
-- **Search** (`Him.Grep`, pure apart from reading a file): each file is read whole and
-  scanned in C (`Him.Native.findForward`), one hit per line: the line number, the
-  column of the first match, and the line (cut to 300 characters and copied, so a hit
-  does not keep its file alive). Files over 20 MB and binary files (a NUL in the first
-  8 KB, as for the preview) are skipped.
-- **Job:** the picker's source is `GrepQuery`. Every change of the query starts a
-  `GrepFiles` job (one `GrepJob` at a time, so the last one cancels the one before).
-  - The job waits 80 ms first, so typing a word searches once.
-  - It walks the files as `space f` does (`walkFiles`, the `[editor.file-picker]`
-    options), searching each directory's files in the walk's worker threads.
-  - Hits go out in batches (`GrepFound`, every 50 ms or 500 hits), only until the
-    picker holds `matchLimit` (1000) of them; after that only the count grows.
-    `GrepFinished` ends it.
-  - Results name their generation and query; others are dropped.
-- **Picker:** items are `path:line` with the line as the detail, and `PickPosition`
-  targets, so the preview and `ret` go to the match. While a new query runs, the last
-  hits stay, marked stale, until its first batch replaces them. The count is the
-  number of matching lines found (not `matches/items`). A label too long for its
-  column is cut so the detail does not cover it (search hits from the left, keeping
-  the file name and line).
-- **Speed:** on `/usr/include` (49k files, 600 MB, warm cache) the search takes about
-  0.6 s and the first hits show within about 0.2 s. Reading the files is most of it.
-  The editor runs on one capability (no `-N`), so the walk's workers overlap
-  I/O but do not search in parallel; `-N4` changed little in a benchmark.
-- **Not done:** open buffers' unsaved text is not searched (the files on disk are);
-  matches are not highlighted in the list or the preview; files are searched in walk
-  order, not sorted.
-
-*Alternatives:* running `rg` / `grep` (fast, but an outside program the editor would
-depend on, and its ignore rules would differ from the file picker's); searching only
-after `ret` (Helix's old behaviour), which loses the "search as you type" the user
-asked for.
-
-**ADR-47: A jumplist per window, as in Helix, with entries you add and remove.**
-The user asked for Helix's jumplist as the baseline, plus deleting entries from its
-picker and adding entries by hand.
-- **The list** (`Him.Jumplist`, pure) is Helix's: at most 30 jumps, oldest first,
-  and a current index that equals the length when you are not walking the list.
-  - `push` drops the jumps after the current one, does not repeat the last jump,
-    and drops the oldest when the list is full.
-  - `backward` (`C-o`) first pushes where the cursor is when you are not walking the
-    list yet, so `forward` (`C-i`, `tab`) can come back to it. A jump to where the
-    cursor already is gets skipped. Both take a count.
-- **Per window:** `edJumps` maps window ids to lists. A new split starts with an empty
-  list, and a closed window's list is dropped.
-- **What jumps:** an action wraps its work in `jumping`, which pushes the place
-  before if the cursor moved or the document changed. Helix's set: `g g` (and
-  `<count> g g`, `goto_line`), `g e`, `%`, `g d` / `g y` / `g i` / `g r` (via `openAt`),
-  `] d` / `[ d`, `] g` / `[ g`, and switching documents (`g n` / `g p`, `:o`,
-  accepting any picker that goes to a place). Searches (`/`, `?`, `n`, `N`) are
-  jumps too, as in Vim.
-- **By hand:** `C-s` (`save_selection`) pushes the selection. `space j` lists the
-  jumps, newest first, with a preview. `ret` goes to an entry as a jump of its own,
-  so picking never cuts the list short, and `del` removes an entry
-  (`picker_secondary`, see below).
-- **Following edits:** a jump stores a document id and a selection. `edJumpTexts`
-  keeps, for each document with jumps, the version and text the positions refer
-  to. After every event (`syncJumps`, in housekeeping) and before the list is used,
-  a document whose version changed has its jumps moved through
-  `Buffer.changeBetween` (one span; positions inside it go to its start) and clamped.
-  So edits from anywhere (typing, undo, a language server, the chat) are followed
-  without each edit path knowing about jumps. Jumps into closed documents are
-  dropped.
-- **`picker_secondary`** (`del` in pickers) is a picker's second action on the
-  selected item. For the jumplist it removes the entry. ADR-48 makes it part of every
-  picker.
-
-*Alternatives:* keeping the positions in each document and mapping them inside every
-edit path (more exact for several edits in one event, but every path would have to
-take part); clamping only, as unfocused windows' selections do (ADR-37), which sends
-`C-o` to the wrong line after edits above it.
-
-**ADR-48: Every picker has a primary and a secondary action, and items can be marked.**
-The user asked for a common picker API: two actions on two keys, so the file picker can
-open several files and the jumplist can jump or remove. The longer aim is for the picker
-to be a component of a public plugin API.
-- **Named actions.** A picker names its actions: `pkPrimary` (default `picker_open`)
-  and `pkSecondary` (`Maybe`). `ret` (`picker_accept`) and `del` (`picker_secondary`)
-  run them as `RunAction` invocations. The named action reads the chosen items with
-  `chosenItems` and closes the picker itself. A plugin gets picker actions by adding
-  ordinary actions to `plActions`, nothing more. Pickers can't hold functions because
-  `Editor` derives `Eq`/`Show` and `EditorM` can't see the `Config`.
-- **Marks are generic.** `tab` (`picker_mark`) marks or unmarks the selected item and
-  selects the next. The actions act on the marked items in list order, or on the
-  selected one if none are marked. A mark is kept by the item's `piId`, its position in
-  `pkItems`, so marks survive a new query. A picker that replaces its items (a search's
-  new query, workspace symbols) clears them. The row shows `●` and the count adds
-  "k marked".
-- **`picker_open`** goes to every chosen file, buffer or position inside one
-  `jumping` and ends on the last. Commands, code actions and jumplist entries use the
-  first chosen item only. `jumplist_remove` removes every chosen entry, the last first.
-- **`PickValue Text`** is a payload for a plugin's own actions; `picker_open` ignores
-  it. `openPicker` (in `Him.EditorM`) is the one way to show a picker.
-
-*Alternatives:* a registry of handler functions in `Config`, keyed by a picker kind
-(more machinery for what named actions already give); marking as a per-picker secondary
-(the jumplist couldn't remove several entries); `tab` as the secondary, as first
-suggested (moving to the next item would lose `tab`).
-
-**ADR-49: Registers as in Vim and Helix, and the clipboard behind one provider API.**
-The user asked for yanking to and pasting from the system clipboard as `+`, and for
-named registers that don't overwrite each other, `:registers` and a way to clear them.
-- **Picking a register.** `"` (`select_register`) waits for a key (`AwaitRegister`) and
-  stores it in `edSelectedRegister`. The next command uses it, and `Him.Session` clears
-  it after any bound command (or a key that matches nothing). `y`, `d`, `c`, `p`, `P`
-  use it (`selectedRegister`), else `"`. As in Helix (not Vim), a named yank writes only
-  that register. Any character names a register; it is created when yanked to.
-- **Special registers.** `_` discards (`" _ d` deletes without touching `"`). `/` is
-  the last search. `+` is the clipboard, `*` the primary selection. Insert mode's
-  `C-r` + a register inserts it. `space y` / `space p` / `space P` are `" + y/p/P`.
-  `R` replaces each selection with the register (Helix's `replace_with_yanked`; it
-  leaves select mode), and `space R` replaces it with the clipboard.
-  The status line shows a picked register, and the info box lists the registers while
-  `"` or `C-r` waits.
-- **The clipboard API** (`Him.Clipboard`): a `ClipboardProvider` record (`cbName`,
-  `cbAvailable`, `cbGet`, `cbSet`) for the clipboard or the primary selection.
-  `cfgClipboardProviders` lists them (tests use an in-memory one), and
-  `[editor] clipboard-provider` names one, or `auto` takes the first available in
-  Helix's order: `pasteboard` (macOS), `wayland` (`wl-copy` / `wl-paste`), `x-clip`,
-  `x-sel`, `tmux`, `termcode` (OSC 52: it copies, also over ssh, but can't be read).
-  `none` keeps `+` inside him. The copy programs' output goes to `/dev/null`, because
-  `wl-copy` and `xclip` stay in the background and would hold a captured pipe open.
-  Both directions time out after 2 s.
-- **Through effects.** Actions can't see the `Config`, so writing `+` / `*` caches the
-  values in `edRegisters` and queues `ClipboardSet`. Reading queues `ClipboardGet reg
-  use` (`RegisterUse`: paste after/before, insert, refresh, show). Both are immediate
-  effects that `Him.Session` performs with the config's providers
-  (`Register.clipboardSet` / `clipboardGet`). When the clipboard holds what him copied
-  (the values joined, one per line), the register keeps one value per range, so a
-  multi-cursor yank pastes back range by range. When it can't be read, the cached
-  value is used.
-- **`:registers`** (`:reg`, also the `show_registers` action) reads `+` / `*` again if
-  they exist, then shows a popup of every register with the start of its text (`⏎` for
-  line breaks, `[n]` for several values). **`:clear-register [names]`** forgets the
-  named ones, or all of them. Clearing `+` forgets him's copy only; the system
-  clipboard stays as it is.
-
-*Alternatives:* Vim's rule that every yank also fills `"` (the user wanted named
-registers that leave the others alone); keeping the provider in `Editor` (it holds
-functions, and `Editor` derives `Eq`/`Show`); reading the clipboard on every
-`getRegister` (blocking IO in pure-looking code, and tests would touch the real
-clipboard).
-
-**ADR-50: What plugins build on: events, processes, segments, signs, annotations.**
-This is phase 1 of the plugin API (`docs/PLUGIN-API.md`). The pieces are all core and
-pure where they can be, and they are meant to be what `Him.Plugin` exposes.
-- **UI as data** (`Him.PluginUI`): each plugin has a `PluginUI` in `edPluginUI`
-  (by plugin name) holding status line `Segment`s, gutter `SignSpan`s and end-of-line
-  `Annotation`s by document. The renderer draws them, so a plugin never draws into the
-  frame.
-  - **Faces:** a `Face` names a theme scope, with an optional dimmed fallback to its
-    parent (git's staged signs use `diff.plus.staged`). `faceStyle` turns a face into
-    a style.
-  - **Segments** come left after the file name or right before the position. They are
-    shown best priority first while they fit, and the file name keeps up to 16 cells.
-  - **Signs:** where signs overlap, the higher priority wins, and diagnostics win over
-    all of them.
-  - **Annotations** are part of the row cache key.
-  - **Clean-up:** a closed document's entries are dropped, and a plugin that is
-    switched off loses its `PluginUI`.
-- **Events** (`Him.PluginEvent`) cover a buffer being opened, closed, entered,
-  changed or saved, a mode change, and the cursor moving (`CursorMoved`, added with
-  ADR-51). Housekeeping compares the documents (version,
-  saves), the mode and the focused document with `edSeen`, instead of each code path
-  raising them. They reach `plEvent` of every enabled plugin, then the effects those
-  handlers ask for run. At startup, every document is "opened".
-- **Processes** (`Him.Spawn`): `ProcessStart key cmd args dir`, `ProcessSend`,
-  `ProcessStop`, `ProcessStopAll owner`.
-  - The key is `plugin:name`. Output and errors arrive line by line as `ProcessLine`
-    and are routed to the owner's `plEvent` as `ProcessOutput name line`, then
-    `ProcessExited name code`.
-  - A process that is replaced or stopped says nothing more, guarded by a `Unique`.
-  - Switching the plugin off stops its processes.
-- **Git on top of it:** the git plugin sets its signs from the hunks (`gitSignSpans`;
-  `GitState.gitSigns` is gone) and a branch segment for each document in a repository.
-  `loadBase` reads the branch in the same `rev-parse` call (`gbBranch`). The branch is
-  updated whenever the base reloads (save, staging).
-
-*Alternatives:* raising events at each place a buffer opens, changes or saves (many
-paths, easy to miss one); a plugin drawing into the frame itself (impure, and plugins
-could overwrite each other); signs per line instead of spans (a long untracked file
-would mean a map entry per line on every diff).
-
-**ADR-51: `Him.Plugin`, the public plugin API, and the contrib collection.**
-These are phases 2 and 3 of `docs/PLUGIN-API.md`. Plugins are compiled in, as in
-xmonad. Releases include a contrib collection that is off until switched on.
-- **`PluginSpec s`** describes a plugin. It has:
-  - its name, doc and `psInitial` state;
-  - `psDefaultOn`;
-  - actions (`action`, `actionWith` with the `ArgSpec` combinators);
-  - `:` commands (`command`);
-  - default keys and prefix names;
-  - `psOptions` (its settings);
-  - `psSigns`;
-  - `psOnEvent`, `psStart` and `psStop`.
-
-  `Him.Plugin.Host.hostPlugin` turns it into the `Plugin` record. Switching a plugin
-  off also drops its state.
-- **`PluginM s`** is `ReaderT (Ctx s) EditorM`, with `MonadIO`. Its operations:
-  - **Queries:** `BufferInfo`/`WindowInfo` views, `bufferText`, `bufferLine`, `cursor`,
-    `selections`, `mode`, `options`, `diagnostics`.
-  - **Changes:** `openFile` (a jump), `focusBuffer`, `setCursor`, `replaceRange` (one
-    undoable change; the selections move through it with `mapThroughChange`),
-    `runAction`, `notify`/`warn`.
-  - **Processes** (ADR-50): `spawn`, `sendInput`, `stopProcess`.
-  - **UI:** `setSegments`, `setSigns`, `setAnnotations`, `showPopup`, `openScratch`
-    (a new read-only `ScratchDoc`, made once and then replaced), `openPicker` with
-    `Item`s whose `Target` is a value, a file or a position (files and positions get a
-    preview and work with `picker_open`), `chosenItems`, `closePicker`.
-  - **Settings:** `option`, `optionText`/`Int`/`Bool`, read from `[plugins.<name>]`.
-  - **Files kept between runs:** `stateFile`, under `Him.Paths.stateDir`
-    (`$HIM_STATE`, `$XDG_STATE_HOME/him`, `~/.local/state/him`).
-  - **Escape hatch:** `Him.Plugin.Internal.liftEditor`, for built-in code only.
-- **State** of any type lives in the editor as a `Dynamic` per plugin
-  (`Him.PluginState`). Its `Eq`/`Show` instances look only at which plugins have
-  state, which keeps `Editor`'s instances. Keeping state in the editor rather than in
-  a global `IORef` means each editor, and each test, has its own.
-- **Config:**
-  - A plugin is on by default if its `plDefaultOn` says so. `[plugins]` takes
-    `name = true|false`, or a `[plugins.name]` table with `enabled` and the plugin's
-    settings (TOML has no room for both). Unknown settings are errors.
-  - `defaultConfig` has the built-in plugins on.
-  - The dumped config lists every plugin and the settings it takes.
-- **Switching on while running:** a plugin switched on while the editor runs gets
-  `BufferOpened` for every open buffer, then `BufferEntered` for the focused one, as
-  it would have at startup. Without this, `wordcount` ignored buffers that were
-  already open.
-- **`:plugins`** opens a picker of every plugin, on or off, with its doc. `ret`
-  (`plugin_toggle`) switches the chosen ones; `tab` marks several.
-- **Contrib** (`Him.Contrib`): plugins import only `Him.Plugin`. There are two so far.
-  - **`wordcount`:** a segment per buffer, recounted on change, with `max-lines`
-    (default 10000) because counting follows every change.
-  - **`recent-files`:** `space o` / `:recent` opens a picker of the files entered
-    lately, kept in its state file, with `max` (default 100). `ret` opens the chosen
-    files and `del` forgets them.
-- **Not done:** no built-in plugin moved onto the API. git, LSP, REPL and chat depend
-  on their own jobs and document fields, so a port would mostly be `liftEditor`. The
-  contrib plugins exercised the API instead, and the missing `CursorMoved` event came
-  out of writing the tutorial's task.
-
-*Alternatives:* a global `IORef` per plugin (state shared between editors and tests);
-`.so` loading or plugin processes (ruled out in `docs/PLUGIN-API.md`); a typed options
-record per plugin (more machinery than reading `Value`s with defaults).
-
-**ADR-52: Personal builds, as in xmonad: `himMain`, `him --rebuild`, and a template
-repository.**
-This is phase 4 of `docs/PLUGIN-API.md`, for plugins outside the contrib collection.
-- **The program is a library function.** `Him.Main.himMain :: [Plugin] -> IO ()` is
-  the whole command line, and `app/Main.hs` is `himMain []`. The list of every plugin
-  is threaded through:
-  - `cfgAllPlugins`;
-  - `configWithPlugins`, `parseUserConfigWith`, `applyUserConfigIn` and
-    `defaultConfigTextFor`;
-  - `Session.loadConfigWith` and `App.runWith`.
-
-  So `[plugins]`, `:plugins`, `:plugin-enable` and the dumped config know a personal
-  build's own plugins. Two plugins with the same name stop `himMain`.
-- **`him --rebuild`** (`Him.Rebuild`) reads `~/.config/him/plugins.toml`:
-  - `[him]` says where him's source is: git and ref, or a path. The default is
-    `github.com/JoakimOL/Him` at `v<version>`.
-  - Each `[plugins.<name>]` gives git and ref (or a path), `package`, `module` and
-    `spec`.
-
-  It writes a stack project in `<state dir>/build` on him's own snapshot (`himSnapshot`;
-  a test keeps it equal to `stack.yaml`). The project is a `.cabal` file and a
-  `Main.hs` of `himMain [hostPlugin M.spec, …]`. It runs `stack build`, which copies
-  the result to `<state dir>/bin/him`. An empty list builds nothing.
-- **The released him starts a personal build:** when `<state dir>/bin/him` exists, is
-  not itself, and is not older, it `exec`s it. An older one (built before an update)
-  is not started, and the editor says so at startup.
-- **Template repository** (`templates/him-config/`): `plugins.toml`, a README, and a
-  GitHub Actions workflow. The workflow builds him at the repository variable
-  `HIM_REF` (or the latest tag), runs `him --rebuild` in CI and publishes the binary
-  as a release. The user downloads it to `<state dir>/bin/him`. There is no
-  `him --update` yet.
-- **Not tried:** the build itself. Running it fetches him and plugins from the
-  network, which needs the user's go-ahead. The tests cover the list, the generated
-  files and the snapshot.
-- **Needs from the user:** release tags `v<version>`; none exist yet, and the default
-  `ref` and the workflow assume them. The repository must also be reachable (public)
-  for CI and for git-based personal builds.
-
-*Alternatives:* loading `.so` files or running plugins as separate programs (ruled
-out); a global plugin registry set at startup (hidden state that tests could see
-half-set); the release including every plugin there is (that is contrib, and it needs
-review).
-
-**ADR-8: No test framework.**
-The tests live in `test/Test/<Area>.hs` (Text, Formats, Config, Git, Lsp, Syntax,
-Render, Integration, with helpers in `Test.Util`), and `test/Spec.hs` runs them.
-`test/Test/Harness.hs` is about 50 lines and does `test`, `group`, `assertEqual`, and
-`runTests`, which keeps us within the boot libraries. hspec/tasty can be adopted later
-if needed.
+Each decision is a file in `docs/adr/`, named by a short slug: the decision, why it
+was made, and the alternatives considered. Code and docs cite one as `ADR <slug>`
+(in Markdown, a link to the file). A new decision gets a new file and a line here;
+there are no numbers, so branches that add decisions do not conflict.
+
+- [selection-first-editing](adr/selection-first-editing.md): Helix-style selection-first editing
+- [boot-libraries-only](adr/boot-libraries-only.md): GHC boot libraries only
+- [seq-text-buffer](adr/seq-text-buffer.md): `Seq Text` line buffer behind an abstract interface *(superseded)*
+- [pure-core](adr/pure-core.md): Pure core, thin IO shell
+- [command-registry](adr/command-registry.md): Commands are named values in a registry. Keymaps are tries of command names
+- [frame-diff-rendering](adr/frame-diff-rendering.md): Render to a pure `Frame`, then diff
+- [terminal-size-shim](adr/terminal-size-shim.md): Terminal size through a C shim
+- [input-from-fd](adr/input-from-fd.md): Read input from the file descriptor, never through the `stdin` Handle
+- [selection-model](adr/selection-model.md): Details of the selection model
+- [render-components](adr/render-components.md): Components are `Theme -> Editor -> Rect -> Frame -> Frame`
+- [snapshot-undo](adr/snapshot-undo.md): Undo with snapshots, committed outside insert mode
+- [registers-in-editor](adr/registers-in-editor.md): Registers live in the `Editor`, and pasting is linewise when the text ends with a newline
+- [render-per-batch](adr/render-per-batch.md): Render once per batch of input
+- [rope-buffer](adr/rope-buffer.md): The buffer is a rope of multi-line blocks
+- [c-byte-loops](adr/c-byte-loops.md): Hot byte loops in C, called with `unsafe` FFI on the `Text`'s array
+- [literal-search](adr/literal-search.md): Search is literal, smart case, and anchored on the rarest byte
+- [row-reuse-and-scrolling](adr/row-reuse-and-scrolling.md): The renderer reuses rows and lets the terminal scroll
+- [lazy-file-loading](adr/lazy-file-loading.md): Load files without copying, and index blocks lazily
+- [actions](adr/actions.md): Keys bind to actions: named, grouped, with typed arguments (supersedes the `Command` registry of [ADR command-registry](adr/command-registry.md))
+- [bottom-up-multi-range-edits](adr/bottom-up-multi-range-edits.md): Multi-range edits are applied from the bottom up, and positions are kept relative to the end
+- [buffer-zipper](adr/buffer-zipper.md): Buffers are a zipper around the current document
+- [menus-as-data](adr/menus-as-data.md): Menus are data computed after every key; popups invalidate the rows they cover
+- [gitignore-matcher](adr/gitignore-matcher.md): Our own gitignore matcher, applied while walking
+- [directory-documents](adr/directory-documents.md): A directory is a read-only document, plus a keymap layer
+- [effects-and-runtime](adr/effects-and-runtime.md): Effects as data, and a runtime for background jobs
+- [streaming-file-picker](adr/streaming-file-picker.md): The file picker streams, and large pickers filter in the background
+- [git](adr/git.md): Git through the `git` program; the diff in-process
+- [syntax-providers](adr/syntax-providers.md): One syntax-highlighting interface, with injected providers
+- [tree-sitter](adr/tree-sitter.md): Tree-sitter: vendored runtime, grammars built for him
+- [regex-engine](adr/regex-engine.md): A small regex engine of our own
+- [lsp-client](adr/lsp-client.md): The LSP client: processes in the runtime, protocol as pure data
+- [picker-preview](adr/picker-preview.md): Pickers preview where an item points
+- [suspend](adr/suspend.md): Ctrl-Z suspends the editor
+- [toml-config](adr/toml-config.md): The config file is TOML, layered on the defaults
+- [helix-themes](adr/helix-themes.md): Themes are Helix theme files
+- [settings-table](adr/settings-table.md): Settings are one table
+- [git-and-lsp-as-plugins](adr/git-and-lsp-as-plugins.md): Git and the LSP client are plugins
+- [module-names](adr/module-names.md): Module names say what modules hold (2026-10-02)
+- [window-splits](adr/window-splits.md): Splits are a tree of windows; the focused one is the editor's state
+- [repl](adr/repl.md): A REPL is a buffer with a process behind it (the `repl` plugin)
+- [per-key-work](adr/per-key-work.md): Per-key work follows what is visible or settled (2026-10-02)
+- [match-mode](adr/match-mode.md): Match mode, as in Helix
+- [ai-chat](adr/ai-chat.md): An AI chat, with edits approved in the editor
+- [claude-code-provider](adr/claude-code-provider.md): Claude Code as a chat provider, with him's tools over MCP
+- [change-review](adr/change-review.md): Proposed changes are reviewed like staged hunks, in any order
+- [transcripts](adr/transcripts.md): REPL and chat buffers are transcripts, not text to edit
+- [chat-panel](adr/chat-panel.md): The chat looks and works like an editor's chat panel (VS Code's)
+- [global-search](adr/global-search.md): A global search picker (`space /`) that searches as you type
+- [jumplist](adr/jumplist.md): A jumplist per window, as in Helix, with entries you add and remove
+- [picker-actions](adr/picker-actions.md): Every picker has a primary and a secondary action, and items can be marked
+- [registers-and-clipboard](adr/registers-and-clipboard.md): Registers as in Vim and Helix, and the clipboard behind one provider API
+- [plugin-building-blocks](adr/plugin-building-blocks.md): What plugins build on: events, processes, segments, signs, annotations
+- [plugin-api](adr/plugin-api.md): `Him.Plugin`, the public plugin API, and the contrib collection
+- [personal-builds](adr/personal-builds.md): Personal builds, as in xmonad: `himMain`, `him --rebuild`, and a template repository
+- [no-test-framework](adr/no-test-framework.md): No test framework
 
 ## 4. Module map
 
@@ -1400,187 +105,187 @@ Pure modules are marked *(pure)*.
 
 | Module | Responsibility |
 |---|---|
-| `Him.Buffer`, `Him.Buffer.Rope` | Text storage: a weight-balanced tree of blocks with lazy line starts (ADR-12…16); insert, delete, ranges, search hooks *(pure)*. |
-| `Him.Clipboard` | The system clipboard behind `+` / `*`: one `ClipboardProvider` API, backends for wl-clipboard, xclip, xsel, pbcopy, tmux, OSC 52 (ADR-49). |
+| `Him.Buffer`, `Him.Buffer.Rope` | Text storage: a weight-balanced tree of blocks with lazy line starts ([ADR rope-buffer](adr/rope-buffer.md), [ADR c-byte-loops](adr/c-byte-loops.md), [ADR literal-search](adr/literal-search.md), [ADR row-reuse-and-scrolling](adr/row-reuse-and-scrolling.md), [ADR lazy-file-loading](adr/lazy-file-loading.md)); insert, delete, ranges, search hooks *(pure)*. |
+| `Him.Clipboard` | The system clipboard behind `+` / `*`: one `ClipboardProvider` API, backends for wl-clipboard, xclip, xsel, pbcopy, tmux, OSC 52 ([ADR registers-and-clipboard](adr/registers-and-clipboard.md)). |
 | `Him.Native` + `cbits/text.c` | `unsafe` FFI on text arrays: newline scans (SSE2), forward/backward search. |
 | `Him.Position`, `Him.Selection` | Positions; Helix selections: ranges with anchor and head, a primary *(pure)*. |
-| `Him.Motion`, `Him.Edit` | Motions and edits applied to every range (ADR-18) *(pure)*. |
-| `Him.TextObject` | Match mode's objects (`m i w`, `m a (`), the pair around a position, the matching bracket (ADR-40) *(pure)*. |
-| `Him.Search`, `Him.Regex` | Literal search with smart case and wrap-around; the regex subset used by highlight queries (ADR-28) *(pure)*. |
-| `Him.Grep` | The global search: the lines of a text (or a file) that contain a needle (ADR-46). |
-| `Him.Jumplist` | Helix's jumplist: push, back, forward, remove, and moving positions through a change (ADR-47) *(pure)*. |
+| `Him.Motion`, `Him.Edit` | Motions and edits applied to every range ([ADR bottom-up-multi-range-edits](adr/bottom-up-multi-range-edits.md)) *(pure)*. |
+| `Him.TextObject` | Match mode's objects (`m i w`, `m a (`), the pair around a position, the matching bracket ([ADR match-mode](adr/match-mode.md)) *(pure)*. |
+| `Him.Search`, `Him.Regex` | Literal search with smart case and wrap-around; the regex subset used by highlight queries ([ADR regex-engine](adr/regex-engine.md)) *(pure)*. |
+| `Him.Grep` | The global search: the lines of a text (or a file) that contain a needle ([ADR global-search](adr/global-search.md)). |
+| `Him.Jumplist` | Helix's jumplist: push, back, forward, remove, and moving positions through a change ([ADR jumplist](adr/jumplist.md)) *(pure)*. |
 | `Him.History` | Undo/redo snapshots *(pure)*. |
 | `Him.TextWidth`, `Him.View` | Display columns (tabs, wide and control characters); scrolling with scrolloff *(pure)*. |
 | `Him.Document` | A buffer with its selection, path, history, kind (text, directory listing, REPL, chat), git/LSP/syntax state; `changeDocument`, `replaceBuffer`, `unsaved` *(pure)*. |
-| `Him.Transcript` | REPL and chat buffers: output before the input, `ret` takes the input (ADR-38, ADR-41) *(pure)*. |
+| `Him.Transcript` | REPL and chat buffers: output before the input, `ret` takes the input ([ADR repl](adr/repl.md), [ADR ai-chat](adr/ai-chat.md)) *(pure)*. |
 | `Him.File`, `Him.Directory`, `Him.FileTree`, `Him.Ignore` | Loading and saving files (zero-copy for valid UTF-8); directory listings; the ignore-aware parallel file walk; gitignore rules. |
 
 **Editor state, actions and keys**
 
 | Module | Responsibility |
 |---|---|
-| `Him.Editor` | The whole editor state: the focused document and view, the buffer zipper, windows (ADR-37), popups, plugin state; `windowEditor`, `pendingEditLines` *(pure)*. |
-| `Him.Window` | The layout tree of windows, boxes, neighbours (ADR-37) *(pure)*. |
-| `Him.Chat.Transcript` | The chat buffer's layout: blocks above the prompt, marks per line, wrapping, code blocks, the input (ADR-45) *(pure)*. |
+| `Him.Editor` | The whole editor state: the focused document and view, the buffer zipper, windows ([ADR window-splits](adr/window-splits.md)), popups, plugin state; `windowEditor`, `pendingEditLines` *(pure)*. |
+| `Him.Window` | The layout tree of windows, boxes, neighbours ([ADR window-splits](adr/window-splits.md)) *(pure)*. |
+| `Him.Chat.Transcript` | The chat buffer's layout: blocks above the prompt, marks per line, wrapping, code blocks, the input ([ADR chat-panel](adr/chat-panel.md)) *(pure)*. |
 | `Him.Mode`, `Him.Key`, `Him.Keymap` | Modes and keymap layers (directory, completion, REPL, chat); keys; keymap tries. |
 | `Him.EditorM` | The monad actions run in and its helpers (`edit`, `motion`, `request`, `info`). |
-| `Him.Action`, `Him.Invocation` | Named actions with typed parameters; invocations as text (ADR-17). |
+| `Him.Action`, `Him.Invocation` | Named actions with typed parameters; invocations as text ([ADR actions](adr/actions.md)). |
 | `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`, `Jump` (the jumplist and `jumping`); the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
-| `Him.Plugin` (+ `.Types`, `.Host`, `.Internal`), `Him.PluginState`, `Him.Contrib` (+ `.WordCount`, `.RecentFiles`) | The public plugin API, plugins' state, the contrib collection (ADR-51). |
-| `Him.PluginUI`, `Him.PluginEvent`, `Him.Spawn` | What plugins show (segments, signs, annotations); events found by comparing with what was seen; plugin processes (ADR-50) *(the first two pure)*. |
-| `Him.Main`, `Him.Rebuild` | The program as `himMain [Plugin]`; `him --rebuild` and starting a personal build (ADR-52). |
+| `Him.Plugin` (+ `.Types`, `.Host`, `.Internal`), `Him.PluginState`, `Him.Contrib` (+ `.WordCount`, `.RecentFiles`) | The public plugin API, plugins' state, the contrib collection ([ADR plugin-api](adr/plugin-api.md)). |
+| `Him.PluginUI`, `Him.PluginEvent`, `Him.Spawn` | What plugins show (segments, signs, annotations); events found by comparing with what was seen; plugin processes ([ADR plugin-building-blocks](adr/plugin-building-blocks.md)) *(the first two pure)*. |
+| `Him.Main`, `Him.Rebuild` | The program as `himMain [Plugin]`; `him --rebuild` and starting a personal build ([ADR personal-builds](adr/personal-builds.md)). |
 | `Him.Ex`, `Him.Info`, `Him.Palette`, `Him.Picker` | `:` commands; the info box after a prefix; the command palette; pickers and fuzzy ranking. |
-| `Him.Config`, `Him.Config.Default` | `Config` and the `Plugin` record (ADR-35); the default bindings, actions and plugins; `configWith`. |
-| `Him.Options`, `Him.UserConfig`, `Him.Toml`, `Him.Paths` | Settings (ADR-34); the config file (ADR-32); the TOML reader; where files live. |
+| `Him.Config`, `Him.Config.Default` | `Config` and the `Plugin` record ([ADR git-and-lsp-as-plugins](adr/git-and-lsp-as-plugins.md)); the default bindings, actions and plugins; `configWith`. |
+| `Him.Options`, `Him.UserConfig`, `Him.Toml`, `Him.Paths` | Settings ([ADR settings-table](adr/settings-table.md)); the config file ([ADR toml-config](adr/toml-config.md)); the TOML reader; where files live. |
 
 **Running it**
 
 | Module | Responsibility |
 |---|---|
 | `Him.App` | The terminal frontend: raw mode, input, the loop (batching, rendering, loop-only effects), themes. |
-| `Him.Session` | Events to state changes without a frontend: keys, job results, effects, housekeeping, plugins (ADR-36). |
-| `Him.Effect`, `Him.Event`, `Him.Runtime` | Effects and jobs as data; events; the runtime that runs jobs, language servers, REPLs and chat requests (ADR-23). |
+| `Him.Session` | Events to state changes without a frontend: keys, job results, effects, housekeeping, plugins ([ADR module-names](adr/module-names.md)). |
+| `Him.Effect`, `Him.Event`, `Him.Runtime` | Effects and jobs as data; events; the runtime that runs jobs, language servers, REPLs and chat requests ([ADR effects-and-runtime](adr/effects-and-runtime.md)). |
 | `Him.Process`, `Him.Json`, `Him.Log` | Running programs; JSON; debug logging. |
 | `Him.Terminal.*` | Raw mode, input decoding, output, size, escape sequences (incl. OSC 10/11 colours). |
-| `Him.Render`, `Him.Render.*` | Layout per window and the components: `Gutter`, `TextArea`, `StatusLine`, `CommandLine`, `Info`, `Picker`, `Completion`; `Frame` and `Diff` (ADR-15). |
-| `Him.Theme`, `Him.Theme.Load`, `Him.Render.Theme` | Helix theme files *(pure)*; finding and loading them; the render-side theme (ADR-33). |
+| `Him.Render`, `Him.Render.*` | Layout per window and the components: `Gutter`, `TextArea`, `StatusLine`, `CommandLine`, `Info`, `Picker`, `Completion`; `Frame` and `Diff` ([ADR row-reuse-and-scrolling](adr/row-reuse-and-scrolling.md)). |
+| `Him.Theme`, `Him.Theme.Load`, `Him.Render.Theme` | Helix theme files *(pure)*; finding and loading them; the render-side theme ([ADR helix-themes](adr/helix-themes.md)). |
 
 **Subsystems**
 
 | Module | Responsibility |
 |---|---|
-| `Him.Syntax`, `Him.Syntax.Span`, `Him.Syntax.TreeSitter`, `Him.Language`, `Him.GrammarBuild` + `cbits/ts_*.c`, `cbits/tree-sitter` | Highlighting: the provider interface (ADR-26), tree-sitter (ADR-27), languages, `him --build-grammars`. |
-| `Him.Diff`, `Him.GitState`, `Him.Git` | Line diffs, a document's git state and signs *(pure)*; running git (ADR-25). |
-| `Him.Lsp.*` | The LSP client: protocol, state, sync, edits *(pure)*, server processes, the server table (ADR-29). |
-| `Him.Repl`, `Him.Repl.Process` | REPL config and state *(pure)*; the process (ADR-38). |
-| `Him.Review` | Reviewing proposed changes: approve / deny one change, the change at a line, the rows a text area shows (header, removed lines) (ADR-43) *(pure)*. |
-| `Him.Chat`, `Him.Chat.Tools`, `Him.Chat.Anthropic`, `Him.Chat.ClaudeCode`, `Him.Mcp` | The chat provider interface (sessions) and state, the model's tools and pending edits *(pure)*; the Claude API provider over curl (ADR-41); the Claude Code provider and the MCP bridge (`him --mcp-bridge`) that serves him's tools to it (ADR-42). |
+| `Him.Syntax`, `Him.Syntax.Span`, `Him.Syntax.TreeSitter`, `Him.Language`, `Him.GrammarBuild` + `cbits/ts_*.c`, `cbits/tree-sitter` | Highlighting: the provider interface ([ADR syntax-providers](adr/syntax-providers.md)), tree-sitter ([ADR tree-sitter](adr/tree-sitter.md)), languages, `him --build-grammars`. |
+| `Him.Diff`, `Him.GitState`, `Him.Git` | Line diffs, a document's git state and signs *(pure)*; running git ([ADR git](adr/git.md)). |
+| `Him.Lsp.*` | The LSP client: protocol, state, sync, edits *(pure)*, server processes, the server table ([ADR lsp-client](adr/lsp-client.md)). |
+| `Him.Repl`, `Him.Repl.Process` | REPL config and state *(pure)*; the process ([ADR repl](adr/repl.md)). |
+| `Him.Review` | Reviewing proposed changes: approve / deny one change, the change at a line, the rows a text area shows (header, removed lines) ([ADR change-review](adr/change-review.md)) *(pure)*. |
+| `Him.Chat`, `Him.Chat.Tools`, `Him.Chat.Anthropic`, `Him.Chat.ClaudeCode`, `Him.Mcp` | The chat provider interface (sessions) and state, the model's tools and pending edits *(pure)*; the Claude API provider over curl ([ADR ai-chat](adr/ai-chat.md)); the Claude Code provider and the MCP bridge (`him --mcp-bridge`) that serves him's tools to it ([ADR claude-code-provider](adr/claude-code-provider.md)). |
 
 ## 5. Development goals / milestones
 
 Each milestone ends with something runnable, and with this file updated.
 
-- [x] **1. Project setup & DX.** Stack/LTS 24.60 pinned; `hie.yaml`, `fourmolu.yaml`,
+- [x] **Project setup & DX.** Stack/LTS 24.60 pinned; `hie.yaml`, `fourmolu.yaml`,
   `.hlint.yaml`, `.editorconfig`, `Makefile`; FFI shim compiles; test harness in place;
   `Him.Log`. *Done when:* `make build` and `make test` pass, and HLS loads all components.
   **Note:** build and test pass, but HLS does not load yet. See the known issue in §8.
-- [x] **2. Raw mode.** `Terminal.Raw` + alternate screen. A temporary loop echoes byte
+- [x] **Raw mode.** `Terminal.Raw` + alternate screen. A temporary loop echoes byte
   values and `q` quits. *Done when:* the terminal is restored after a normal quit and after
   an exception.
-- [x] **3. Output & drawing.** `Terminal.Ansi/Output`; draw `~` rows and a welcome message;
+- [x] **Output & drawing.** `Terminal.Ansi/Output`; draw `~` rows and a welcome message;
   redraw on SIGWINCH. *Done when:* resizing redraws correctly.
-- [x] **4. Input decoding.** `Key`, `Event`, `Terminal.Input`. *Done when:* arrows, Ctrl-,
+- [x] **Input decoding.** `Key`, `Event`, `Terminal.Input`. *Done when:* arrows, Ctrl-,
   Alt-, and a lone Esc are distinguished and shown on screen; `decodeKeys` is unit tested.
-- [x] **5. Buffer, file loading, rendering.** `Buffer`, `File`, `Editor`, `View`, `Render`
+- [x] **Buffer, file loading, rendering.** `Buffer`, `File`, `Editor`, `View`, `Render`
   (TextArea + StatusLine), `Render.Diff`. *Done when:* `him file` shows the file and it
   scrolls.
-- [x] **6. Selections & motions.** `h j k l`, clamping, desired column, viewport follows the
+- [x] **Selections & motions.** `h j k l`, clamping, desired column, viewport follows the
   cursor, selection highlighted. *Done when:* motions are unit tested.
-- [x] **7. Commands, keymap, modes.** Registry, trie, Normal/Insert, `i a o`, typing,
+- [x] **Commands, keymap, modes.** Registry, trie, Normal/Insert, `i a o`, typing,
   Backspace, Enter, cursor shape, dirty flag.
-- [x] **8. Command mode.** `:w`, `:q` (refuses when dirty), `:q!`, `:wq`; status messages.
-- [x] **9. Helix selection actions.** `w b e x v ; d c`, plus `g g` / `g e`, with the
+- [x] **Command mode.** `:w`, `:q` (refuses when dirty), `:q!`, `:wq`; status messages.
+- [x] **Helix selection actions.** `w b e x v ; d c`, plus `g g` / `g e`, with the
   pending keys shown in the status line.
-- [x] **10. Polish.** Line-number gutter, tab expansion, wide-character width, horizontal
+- [x] **Polish.** Line-number gutter, tab expansion, wide-character width, horizontal
   scrolling.
 
-- [x] **11. Undo/redo.** `Him.History` holds snapshots. An insert session (including `c`
+- [x] **Undo/redo.** `Him.History` holds snapshots. An insert session (including `c`
   and `o`) is one undo step, and the dirty flag is recomputed after undo/redo.
-- [x] **12. Yank/paste.** `y`, `p`, `P` with a default register; `d` and `c` also yank.
+- [x] **Yank/paste.** `y`, `p`, `P` with a default register; `d` and `c` also yank.
   Text ending in a newline (from `x`) pastes as whole lines.
 
-- [x] **13. Memory.** A rope of blocks, streaming load/save, and the non-moving GC.
+- [x] **Memory.** A rope of blocks, streaming load/save, and the non-moving GC.
   Peak memory with the 14 MB file: 40 → 24 MB open, 87 → 35 MB after editing and saving.
-- [x] **14. Search.** `/`, `?`, `n`, `N`, `*`; smart case; incremental preview;
+- [x] **Search.** `/`, `?`, `n`, `N`, `*`; smart case; incremental preview;
   rare-byte SIMD scanning; benchmark scenarios with result checks.
-- [x] **15. Rendering pass.** Row reuse, terminal scroll regions, cell-level diff, and an
+- [x] **Rendering pass.** Row reuse, terminal scroll regions, cell-level diff, and an
   ASCII fast path.
-- [x] **16. Action layer.** Keys bind to actions with typed arguments, validated at
-  startup; user bindings override the defaults (ADR-17). Count prefixes fill an
+- [x] **Action layer.** Keys bind to actions with typed arguments, validated at
+  startup; user bindings override the defaults ([ADR actions](adr/actions.md)). Count prefixes fill an
   action's `count` parameter.
-- [x] **17. Multiple selections.** `C`, `s` (with preview), `%`, `,`, `A-,`, `(`, `)`,
-  `A-s`. Edits, yank and paste work on every range (ADR-18).
-- [x] **18. Buffers and menus.** `:open`/`:e` (with `tab` path completion), `:new`, `:bc`,
-  `:bn`/`:bp`, `:wa`, `:wqa`, `g n`/`g p`, and `him FILE...` (ADR-19). An info box shows
+- [x] **Multiple selections.** `C`, `s` (with preview), `%`, `,`, `A-,`, `(`, `)`,
+  `A-s`. Edits, yank and paste work on every range ([ADR bottom-up-multi-range-edits](adr/bottom-up-multi-range-edits.md)).
+- [x] **Buffers and menus.** `:open`/`:e` (with `tab` path completion), `:new`, `:bc`,
+  `:bn`/`:bp`, `:wa`, `:wqa`, `g n`/`g p`, and `him FILE...` ([ADR buffer-zipper](adr/buffer-zipper.md)). An info box shows
   the keys after `g`/`space` and the matching `:` commands. `space f` (file picker) and
-  `space b` (buffer picker) (ADR-20).
-- [x] **19. Ignore files and a directory viewer.** The file picker honours `.gitignore`
-  and `.ignore` (ADR-21). Directories open as dired-style listings: `ret`, `-`, `g r`,
-  `space d` / `space D`, `:cd`, `:pwd` (ADR-22).
-- [x] **20. File operations in listings.** `a`, `+`, `r`, `d` (with confirmation),
-  and `g .` for dotfiles (ADR-22).
-- [x] **21. Foundation, palette, async picker** (roadmap phases 0–1). Effects and
-  background jobs (ADR-23), `:action`, `Him.Json`, `Him.Process`; the command palette
-  `space ?`; the streaming, parallel file picker with background filtering (ADR-24).
-- [x] **22. Git** (roadmap phase 2). Gutter signs for added/changed/removed lines,
+  `space b` (buffer picker) ([ADR menus-as-data](adr/menus-as-data.md)).
+- [x] **Ignore files and a directory viewer.** The file picker honours `.gitignore`
+  and `.ignore` ([ADR gitignore-matcher](adr/gitignore-matcher.md)). Directories open as dired-style listings: `ret`, `-`, `g r`,
+  `space d` / `space D`, `:cd`, `:pwd` ([ADR directory-documents](adr/directory-documents.md)).
+- [x] **File operations in listings.** `a`, `+`, `r`, `d` (with confirmation),
+  and `g .` for dotfiles ([ADR directory-documents](adr/directory-documents.md)).
+- [x] **Foundation, palette, async picker** (roadmap phases 0–1). Effects and
+  background jobs ([ADR effects-and-runtime](adr/effects-and-runtime.md)), `:action`, `Him.Json`, `Him.Process`; the command palette
+  `space ?`; the streaming, parallel file picker with background filtering ([ADR streaming-file-picker](adr/streaming-file-picker.md)).
+- [x] **Git** (roadmap phase 2). Gutter signs for added/changed/removed lines,
   staged ones dimmer; `] g` / `[ g`; stage, unstage or reset the selected lines or the
-  file from the editor (ADR-25).
-- [x] **23. Syntax highlighting** (roadmap phase 3). One provider interface (ADR-26);
+  file from the editor ([ADR git](adr/git.md)).
+- [x] **Syntax highlighting** (roadmap phase 3). One provider interface ([ADR syntax-providers](adr/syntax-providers.md));
   the tree-sitter provider with a vendored runtime and grammars built by
-  `him --build-grammars` (ADR-27); `Him.Regex` (ADR-28).
-- [x] **24. LSP client** (roadmap phase 4). Diagnostics, hover, definition, references
-  and completion, with servers run by the runtime (ADR-29).
-- [x] **25. More LSP.** Incremental sync (`Buffer.changeBetween`), `didSave` and
+  `him --build-grammars` ([ADR tree-sitter](adr/tree-sitter.md)); `Him.Regex` ([ADR regex-engine](adr/regex-engine.md)).
+- [x] **LSP client** (roadmap phase 4). Diagnostics, hover, definition, references
+  and completion, with servers run by the runtime ([ADR lsp-client](adr/lsp-client.md)).
+- [x] **More LSP.** Incremental sync (`Buffer.changeBetween`), `didSave` and
   `didClose`; rename, format, code actions, signature help, document symbols, type
   definition and implementation; `:lsp-start`, `:lsp-stop`, `:lsp-restart` and
-  `:lsp-info` (ADR-29).
-- [x] **26. Previews, workspace symbols, imports.** Picker previews (ADR-30), `space S`,
-  completion imports, references on `g r` (ADR-29).
-- [x] **27. Movement.** Page and half-page motions, `f t F T` with `A-.`, `<count> g g`,
-  and Ctrl-Z to suspend (ADR-31).
-- [x] **28. Reload.** `:reload`, `:reload!`, `:reload-all`: the file is read again as one
+  `:lsp-info` ([ADR lsp-client](adr/lsp-client.md)).
+- [x] **Previews, workspace symbols, imports.** Picker previews ([ADR picker-preview](adr/picker-preview.md)), `space S`,
+  completion imports, references on `g r` ([ADR lsp-client](adr/lsp-client.md)).
+- [x] **Movement.** Page and half-page motions, `f t F T` with `A-.`, `<count> g g`,
+  and Ctrl-Z to suspend ([ADR suspend](adr/suspend.md)).
+- [x] **Reload.** `:reload`, `:reload!`, `:reload-all`: the file is read again as one
   undoable change, keeping the cursor; modified buffers are refused unless forced.
-- [x] **29. Config file.** `config.toml` with keys, editor settings and language servers;
-  `him --dump-default-config`, `:config-open`, `:config-reload` (ADR-32).
-- [x] **30. Themes.** Helix theme files (`[editor] theme`, `:theme`), styles layered
+- [x] **Config file.** `config.toml` with keys, editor settings and language servers;
+  `him --dump-default-config`, `:config-open`, `:config-reload` ([ADR toml-config](adr/toml-config.md)).
+- [x] **Themes.** Helix theme files (`[editor] theme`, `:theme`), styles layered
   as in Helix, underline kinds and colours, the theme's background through OSC 11, and
-  a 256-colour fallback (ADR-33).
-- [x] **31. Settings.** Tab width, expand-tab, relative line numbers, cursor shapes,
+  a 256-colour fallback ([ADR helix-themes](adr/helix-themes.md)).
+- [x] **Settings.** Tab width, expand-tab, relative line numbers, cursor shapes,
   completion, search, file-picker and preview settings, and the escape timeout, all
-  from one table (ADR-34).
-- [x] **32. Plugins.** Git and LSP as plugins: `[plugins]`, `:plugins`,
-  `:plugin-enable`, `:plugin-disable` (ADR-35).
-- [x] **33. Modules.** `Him.Session`, `Him.Actions.*`, `Him.EditorM`, the LSP split,
-  and the test modules (ADR-36).
-- [x] **34. Splits.** Windows side by side and stacked, Helix's `C-w` / `space w`
-  keys, `:vsplit`, `:hsplit` (ADR-37).
-- [x] **35. REPL plugin.** `:repl`, `space e` (send the selection), `space E`
-  (reload), reload on save, typing in the REPL buffer (ADR-38).
-- [x] **36. Match mode.** `m m`, `m s`, `m r`, `m d`, `m i`, `m a`; `I` and `A` (ADR-40).
-- [x] **37. AI chat plugin.** A chat beside the code; the model's edits wait for
-  approval in the editor (ADR-41).
-- [x] **38. Claude Code provider.** The chat through `claude`, with him's tools served
-  over MCP by `him --mcp-bridge` (ADR-42).
-- [x] **41. A chat panel like VS Code's.** Blocks for messages and answers, an input
+  from one table ([ADR settings-table](adr/settings-table.md)).
+- [x] **Plugins.** Git and LSP as plugins: `[plugins]`, `:plugins`,
+  `:plugin-enable`, `:plugin-disable` ([ADR git-and-lsp-as-plugins](adr/git-and-lsp-as-plugins.md)).
+- [x] **Modules.** `Him.Session`, `Him.Actions.*`, `Him.EditorM`, the LSP split,
+  and the test modules ([ADR module-names](adr/module-names.md)).
+- [x] **Splits.** Windows side by side and stacked, Helix's `C-w` / `space w`
+  keys, `:vsplit`, `:hsplit` ([ADR window-splits](adr/window-splits.md)).
+- [x] **REPL plugin.** `:repl`, `space e` (send the selection), `space E`
+  (reload), reload on save, typing in the REPL buffer ([ADR repl](adr/repl.md)).
+- [x] **Match mode.** `m m`, `m s`, `m r`, `m d`, `m i`, `m a`; `I` and `A` ([ADR match-mode](adr/match-mode.md)).
+- [x] **AI chat plugin.** A chat beside the code; the model's edits wait for
+  approval in the editor ([ADR ai-chat](adr/ai-chat.md)).
+- [x] **Claude Code provider.** The chat through `claude`, with him's tools served
+  over MCP by `him --mcp-bridge` ([ADR claude-code-provider](adr/claude-code-provider.md)).
+- [x] **A chat panel like VS Code's.** Blocks for messages and answers, an input
   box with a placeholder, wrapping, tool and change lines, a review summary, input
-  history, copying code blocks (ADR-45).
-- [x] **40. Transcripts.** REPL and chat buffers: only the input after the prompt can
-  change; select and yank anywhere; insert mode goes to the input (ADR-44).
-- [x] **39. Reviewing proposed changes.** All of a turn's changes at once, decided in
-  any order with the cursor on one, shown inline with their removed lines (ADR-43).
-- [x] **42. Global search.** `space /` searches the project's files as you type,
-  streaming hits into a picker with a preview (ADR-46).
-- [x] **43. Jumplist.** `C-o` / `C-i` / `tab`, `C-s`, `space j` with `del` to remove an
-  entry; jumps follow edits (ADR-47).
-- [x] **44. Picker actions.** Every picker has a primary (`ret`) and a secondary
-  (`del`) action, and `tab` marks items for both to act on (ADR-48).
-- [x] **45. Registers and the clipboard.** `"` + a register for the next command,
+  history, copying code blocks ([ADR chat-panel](adr/chat-panel.md)).
+- [x] **Transcripts.** REPL and chat buffers: only the input after the prompt can
+  change; select and yank anywhere; insert mode goes to the input ([ADR transcripts](adr/transcripts.md)).
+- [x] **Reviewing proposed changes.** All of a turn's changes at once, decided in
+  any order with the cursor on one, shown inline with their removed lines ([ADR change-review](adr/change-review.md)).
+- [x] **Global search.** `space /` searches the project's files as you type,
+  streaming hits into a picker with a preview ([ADR global-search](adr/global-search.md)).
+- [x] **Jumplist.** `C-o` / `C-i` / `tab`, `C-s`, `space j` with `del` to remove an
+  entry; jumps follow edits ([ADR jumplist](adr/jumplist.md)).
+- [x] **Picker actions.** Every picker has a primary (`ret`) and a secondary
+  (`del`) action, and `tab` marks items for both to act on ([ADR picker-actions](adr/picker-actions.md)).
+- [x] **Registers and the clipboard.** `"` + a register for the next command,
   `+` / `*` as the system clipboard / primary selection (`space y`, `space p`), `R` /
   `space R` (replace with a register / the clipboard), `_`,
-  `C-r` in insert mode, `:registers`, `:clear-register` (ADR-49).
-- [x] **46. Plugin building blocks.** Events, plugin processes, status line segments,
-  gutter signs and annotations; git's signs and a branch segment on them (ADR-50).
-- [x] **47. `Him.Plugin` and contrib.** The public plugin API, settings under
+  `C-r` in insert mode, `:registers`, `:clear-register` ([ADR registers-and-clipboard](adr/registers-and-clipboard.md)).
+- [x] **Plugin building blocks.** Events, plugin processes, status line segments,
+  gutter signs and annotations; git's signs and a branch segment on them ([ADR plugin-building-blocks](adr/plugin-building-blocks.md)).
+- [x] **`Him.Plugin` and contrib.** The public plugin API, settings under
   `[plugins.<name>]`, the `:plugins` picker; contrib `wordcount` and `recent-files`
-  (ADR-51).
-- [x] **48. Personal builds.** `himMain`, `him --rebuild` from `plugins.toml`, the
-  released him starting a personal build, the template repository (ADR-52).
+  ([ADR plugin-api](adr/plugin-api.md)).
+- [x] **Personal builds.** `himMain`, `him --rebuild` from `plugins.toml`, the
+  released him starting a personal build, the template repository ([ADR personal-builds](adr/personal-builds.md)).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
   selection on a pattern).
 - [ ] Undo tree / change sets instead of snapshots.
-- [ ] Incremental parsing and injections for tree-sitter (ADR-27); highlighting in the
+- [ ] Incremental parsing and injections for tree-sitter ([ADR tree-sitter](adr/tree-sitter.md)); highlighting in the
   picker preview.
 - [ ] Detecting files changed on disk.
 
@@ -1628,13 +333,13 @@ them in the editor.
 - **A `:` command:** an `ExCommand` (names, doc, argument kind for completion, run) in a
   module's `exCommands`, listed in `Him.Config.Default` (or `plExCommands`).
 - **A setting:** one `OptionSpec` in `Him.Options.optionSpecs`; checking, applying and
-  the dumped default follow (ADR-34).
+  the dumped default follow ([ADR settings-table](adr/settings-table.md)).
 - **A plugin:** a `Plugin` record (`Him.Config`): actions, bindings, commands, hooks
   (housekeeping, per batch, job results, enable/disable); add it to `plugins` in
-  `Him.Config.Default` (ADR-35). It can be switched off like the others.
-- **A provider:** a highlighter is a `SyntaxProvider` (ADR-26), a chat backend a
-  `ChatProvider` (ADR-41); register it in `Him.Config.Default`. A clipboard backend is
-  a `ClipboardProvider` in `Him.Clipboard.systemProviders` (ADR-49).
+  `Him.Config.Default` ([ADR git-and-lsp-as-plugins](adr/git-and-lsp-as-plugins.md)). It can be switched off like the others.
+- **A provider:** a highlighter is a `SyntaxProvider` ([ADR syntax-providers](adr/syntax-providers.md)), a chat backend a
+  `ChatProvider` ([ADR ai-chat](adr/ai-chat.md)); register it in `Him.Config.Default`. A clipboard backend is
+  a `ClipboardProvider` in `Him.Clipboard.systemProviders` ([ADR registers-and-clipboard](adr/registers-and-clipboard.md)).
 - **A render component:** `Theme -> Editor -> Rect -> Frame -> Frame` in
   `Him.Render.<Name>`, composed in `Him.Render` (per window or over everything).
 - **Debugging:** `HIM_LOG=/tmp/him.log make run ARGS=file`, `tail -f /tmp/him.log` in
@@ -1643,13 +348,14 @@ them in the editor.
 ## 8. Where to pick up
 
 *Last updated 2026-10-06.* Everything the user asked for so far is done; the latest
-work, on the `plugin-api` branch, is the plugin API: building blocks (ADR-50),
-`Him.Plugin` and contrib (ADR-51), personal builds (ADR-52). Before that came
-registers and the system clipboard (ADR-49), cycling the `:` line's completions with
+work, on the `plugin-api` branch, is the plugin API: building blocks ([ADR plugin-building-blocks](adr/plugin-building-blocks.md)),
+`Him.Plugin` and contrib ([ADR plugin-api](adr/plugin-api.md)), personal builds ([ADR personal-builds](adr/personal-builds.md)). Before that came
+registers and the system clipboard ([ADR registers-and-clipboard](adr/registers-and-clipboard.md)), cycling the `:` line's completions with
 `tab` / `S-tab`, previewing themes as `:theme <name>` is typed, picker actions and
-marks (ADR-48) and the jumplist (ADR-47).
+marks ([ADR picker-actions](adr/picker-actions.md)) and the jumplist ([ADR jumplist](adr/jumplist.md)).
 
-- **State:** milestones 1–48 (§5) and ADR-1…52 (§3). `make test` runs 649 tests (pure
+- **State:** every milestone in §5 is done; the decisions are in §3 (`docs/adr/`).
+  `make test` covers pure
   modules, key sequences through the real keymap, git in a temporary repository,
   clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
   chat with a scripted provider).
@@ -1662,7 +368,7 @@ marks (ADR-48) and the jumplist (ADR-47).
   and a login; `provider = "anthropic"` needs `ANTHROPIC_API_KEY` (or
   `ANTHROPIC_AUTH_TOKEN`, or `ant auth login`). `[chat]` sets the model and effort.
   The first live run worked as far as Claude Code is concerned (it used only him's
-  tools); the faults it found were him's and are fixed (ADR-42). `dev/fake-claude`
+  tools); the faults it found were him's and are fixed ([ADR claude-code-provider](adr/claude-code-provider.md)). `dev/fake-claude`
   checks the flow without a model.
 - **Ideas, roughly by value:**
   0. **A public plugin API** (in progress on `plugin-api`): the design and phases are
@@ -1670,7 +376,7 @@ marks (ADR-48) and the jumplist (ADR-47).
      Development focuses on releases that include a contrib collection, off by
      default. A template repository with CI builds and `him --rebuild` come later.
      Plugin processes and `.so` loading are ruled out. Phase 0, picker actions,
-     is ADR-48; the open questions at the end of that file are for the user.
+     is [ADR picker-actions](adr/picker-actions.md); the open questions at the end of that file are for the user.
      Earlier note: every picker gets a
      primary and a secondary action on two keys (the user suggested `ret` and
      `tab`). For example, the file picker's `tab` marks several files and `ret`
@@ -1681,16 +387,16 @@ marks (ADR-48) and the jumplist (ADR-47).
      public plugin API, so a user's plugin can open its own picker with its own
      actions. That means `PickTarget` (a closed sum read in `picker_accept`) has to
      give way to items whose actions come from the picker, e.g. named actions
-     (ADR-17 invocations) that receive the chosen items.
+     ([ADR actions](adr/actions.md) invocations) that receive the chosen items.
   1. Regex search and `S` (split on a pattern), on `Him.Regex`.
   2. Incremental tree-sitter parsing (the buffer's `changeBetween` is ready) and
      injections.
   3. Detecting files changed on disk.
   4. Chat: show the model's reasoning summaries (`display: "summarized"`), a picker of
      pending edits, more tools (search the project).
-  5. Moving the buffer zipper out of `Editor`, and per-subsystem job runners (ADR-36
+  5. Moving the buffer zipper out of `Editor`, and per-subsystem job runners ([ADR module-names](adr/module-names.md)
      left them for later).
-  6. Global search (ADR-46): regex patterns (with item 1), searching open buffers'
+  6. Global search ([ADR global-search](adr/global-search.md)): regex patterns (with item 1), searching open buffers'
      unsaved text, highlighting the match in the list and preview, and speed (scan
      the bytes before decoding them; more capabilities).
 - **Known issues:**
@@ -1702,7 +408,7 @@ marks (ADR-48) and the jumplist (ADR-47).
     about them. Git signs follow saves, staging and switching buffers only.
   - LSP, deferred by choice: inlay hints, semantic tokens, snippets (inserted as plain
     text), and file operations in code actions.
-  - Highlighting needs `him --build-grammars` once (ADR-27); without grammars, files
+  - Highlighting needs `him --build-grammars` once ([ADR tree-sitter](adr/tree-sitter.md)); without grammars, files
     are plain and only `$HIM_LOG` says why. Syntax sessions are not closed with their
     buffer. The preview is not highlighted.
   - A directory listing does not refresh by itself (`g r`). Deleting a file leaves its
@@ -1710,15 +416,15 @@ marks (ADR-48) and the jumplist (ADR-47).
   - The info box and picker measure text by characters, so wide characters can
     misalign their right border.
   - An unfocused window's selection is not moved by edits made in another window on
-    the same document; it is clamped (ADR-37).
+    the same document; it is clamped ([ADR window-splits](adr/window-splits.md)).
   - A proposed change that overlaps an unsaved edit of your own (made before the
     chat's first change to that file) cannot be approved until you save or undo
-    your edit (ADR-43). `:w` on a buffer under review writes what it shows,
+    your edit ([ADR change-review](adr/change-review.md)). `:w` on a buffer under review writes what it shows,
     proposals included.
   - The clipboard providers were tried with xclip only (reading); wl-clipboard, xsel,
     pbcopy, tmux and OSC 52 are untested on a real system. Counts don't repeat a paste.
   - The MCP bridge's pipes are opened read-write by the editor, which Linux allows but
-    POSIX leaves undefined (ADR-42).
+    POSIX leaves undefined ([ADR claude-code-provider](adr/claude-code-provider.md)).
 - **Working rules:**
   - Revert temporary instrumentation by editing it out (or `git checkout` on a clean
     tree only).

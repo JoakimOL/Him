@@ -210,7 +210,7 @@ data Editor = Editor
   , edSignLane :: !Bool
   -- ^ The gutter has a sign lane (an enabled plugin draws there).
   , edLayout :: !Layout
-  -- ^ How the screen is split into windows (ADR-37).
+  -- ^ How the screen is split into windows (ADR window-splits).
   , edFocus :: !Int
   -- ^ The focused window: it shows 'edDoc' through 'edView'.
   , edWindows :: !(IntMap Window)
@@ -227,16 +227,16 @@ data Editor = Editor
   , edSelectedRegister :: !(Maybe Char)
   -- ^ Chosen with @\"@ for the next command only.
   , edJumps :: !(IntMap Jumplist)
-  -- ^ Each window's jumplist, by window id (ADR-47).
+  -- ^ Each window's jumplist, by window id (ADR jumplist).
   , edJumpTexts :: !(IntMap (Int, Buffer))
   -- ^ For each document with jumps: the version and text their positions
   -- refer to, so they can follow later edits.
   , edPluginUI :: !(Map Text PluginUI)
-  -- ^ What each plugin shows, by plugin name (ADR-50).
+  -- ^ What each plugin shows, by plugin name (ADR plugin-building-blocks).
   , edPluginOptions :: !(Map Text (Map Text Value))
-  -- ^ Plugins' settings (@[plugins.<name>]@), by plugin (ADR-51).
+  -- ^ Plugins' settings (@[plugins.<name>]@), by plugin (ADR plugin-api).
   , edPluginStates :: !PluginStates
-  -- ^ Each plugin's own state ("Him.PluginState", ADR-51).
+  -- ^ Each plugin's own state ("Him.PluginState", ADR plugin-api).
   , edSeen :: !Seen
   -- ^ What plugin events have been raised for ("Him.PluginEvent").
   , edQuit :: !Bool
@@ -404,7 +404,7 @@ previewFor ed = \case
       LspAttached at -> atPath at == file
       _ -> False
 
--- * Windows (ADR-37)
+-- * Windows (ADR window-splits)
 
 -- | Every open document, the current one included.
 allDocuments :: Editor -> [Document]
@@ -516,12 +516,12 @@ windowShowing i ed
       w : _ -> Just w
       [] -> Nothing
 
--- | A document's review of proposed chat changes, if it has one (ADR-43).
+-- | A document's review of proposed chat changes, if it has one (ADR change-review).
 reviewFor :: Editor -> Int -> Maybe Review
 reviewFor ed i = case [rv | d <- allDocuments ed, ChatDoc cs <- [docKind d], rv <- csReviews cs, rvDoc rv == i] of
   rv : _ -> Just rv
   [] -> Nothing
 
--- | Change what a plugin shows (ADR-50).
+-- | Change what a plugin shows (ADR plugin-building-blocks).
 modifyPluginUI :: Text -> (PluginUI -> PluginUI) -> Editor -> Editor
 modifyPluginUI name f e = e {edPluginUI = Map.insert name (f (Map.findWithDefault emptyPluginUI name (edPluginUI e))) (edPluginUI e)}

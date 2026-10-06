@@ -50,9 +50,9 @@ data PickTarget
     PickPosition !FilePath !Int !Int !(Maybe Text)
   | -- | A language server's code action (or command), as it sent it.
     PickCodeAction !Value
-  | -- | An entry of the focused window's jumplist, by index (ADR-47).
+  | -- | An entry of the focused window's jumplist, by index (ADR jumplist).
     PickJump !Int
-  | -- | Data for the picker's own actions to read (ADR-48); choosing it
+  | -- | Data for the picker's own actions to read (ADR picker-actions); choosing it
     -- with the built-in @picker_open@ does nothing.
     PickValue !Text
   deriving stock (Eq, Show)
@@ -65,7 +65,7 @@ data PickerSource
     -- filters them (workspace symbols).
     ServerQuery !Text
   | -- | Lines of the project's files that contain the query, found by a
-    -- background search for each query (ADR-46); shown as they arrive.
+    -- background search for each query (ADR global-search); shown as they arrive.
     GrepQuery
   deriving stock (Eq, Show)
 
@@ -116,7 +116,7 @@ data Picker = Picker
   -- ^ The longest label of all items, so the detail column stays put while
   -- scrolling and filtering.
   , pkMarked :: !IntSet
-  -- ^ The marked items, by 'piId' (ADR-48).
+  -- ^ The marked items, by 'piId' (ADR picker-actions).
   , pkPrimary :: !Text
   -- ^ The action @ret@ runs (by name), on the 'chosenItems'.
   , pkSecondary :: !(Maybe Text)
@@ -151,7 +151,7 @@ refilter p =
    in p {pkMatches = ms, pkMatchCount = n, pkSelected = max 0 (min (pkSelected p) (length ms - 1))}
 
 -- | Pickers with more items than this filter in a background job when the
--- query is not empty (ADR-24); smaller ones filter at once.
+-- query is not empty (ADR streaming-file-picker); smaller ones filter at once.
 syncLimit :: Int
 syncLimit = 20000
 
@@ -166,7 +166,7 @@ matches q = fst . rank q
 
 -- | The best matches, and how many items match in all.
 --
--- Fast path for large lists (ADR-24): a cheap in-order character check on
+-- Fast path for large lists (ADR streaming-file-picker): a cheap in-order character check on
 -- the precomputed lower-case key rejects most items before any scoring,
 -- and instead of sorting every match the matches are bucketed by their
 -- rank (score, exactness, length), which keeps the original order inside

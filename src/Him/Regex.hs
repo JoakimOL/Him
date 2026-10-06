@@ -1,4 +1,4 @@
--- | A small backtracking regular expression engine (ADR-28), enough for
+-- | A small backtracking regular expression engine (ADR regex-engine), enough for
 -- tree-sitter query predicates (@#match?@, @#lua-match?@) and, later,
 -- regex search. There is no regex library among GHC's boot libraries.
 --

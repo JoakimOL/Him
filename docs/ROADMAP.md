@@ -1,8 +1,8 @@
 # him roadmap: language awareness, git, and the remaining gaps
 
-> **Done.** All five phases were completed (milestones 21–24, ADR-23…29). This file is
+> **Done.** All five phases were completed (the milestones from "Foundation, palette, async picker" to "LSP client", [ADR effects-and-runtime](adr/effects-and-runtime.md), [ADR streaming-file-picker](adr/streaming-file-picker.md), [ADR git](adr/git.md), [ADR syntax-providers](adr/syntax-providers.md), [ADR tree-sitter](adr/tree-sitter.md), [ADR regex-engine](adr/regex-engine.md), [ADR lsp-client](adr/lsp-client.md)). This file is
 > kept as the record of the plan; what was built, and how it differs from the plan,
-> is in the ADRs in `docs/PLAN.md`, and the current status is in its §8.
+> is in the ADRs in `docs/adr/`, and the current status is in its §8.
 
 This was the approved plan (2026-10-02) for the next phases.
 
@@ -21,7 +21,7 @@ Decisions taken with the user:
   `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-house-bindings-0.3.2/vendor`
   (MIT, ABI 13–15, ~466 KB of `.c`). Grammars are Helix's compiled ones, loaded with
   dlopen from `~/.config/helix/runtime/grammars/*.so` (301 of them), with
-  `queries/<lang>/highlights.scm`. This amends ADR-2. Nothing is downloaded.
+  `queries/<lang>/highlights.scm`. This amends [ADR boot-libraries-only](adr/boot-libraries-only.md). Nothing is downloaded.
   - **The Hackage `tree-sitter` package was considered and rejected.** It is version
     0.9.0.3, from the haskell-tree-sitter project, with packages like
     `tree-sitter-rust`.
@@ -42,7 +42,7 @@ Ground rules that still hold:
 - Nothing is downloaded.
 - Only boot libraries are added: `process` (git, LSP), and `unix` dlopen, which is
   already a dependency.
-- Each strategy and decision is documented: an ADR in `docs/PLAN.md`, an entry in the
+- Each strategy and decision is documented: an ADR in `docs/adr/`, an entry in the
   `docs/BENCHMARK.md` log for each performance strategy, and §8 refreshed when a phase
   stops.
 - Every verified step is committed with the trailer.
@@ -76,20 +76,20 @@ What's already on the machine:
    - `Him.Event` gets `EvJob JobResult`. `JobResult` is pure data, so `Event` keeps
      Eq/Show.
    - The loop drains effects after each `handleEvent` (`App.hs` `step`/`batch`), and
-     job results come back through the same channel. The existing batching (ADR-11)
+     job results come back through the same channel. The existing batching ([ADR render-per-batch](adr/render-per-batch.md))
      already renders once per burst.
 3. **Document identity and versions.**
    - `docId :: Int` is assigned when a document is opened (`edNextId` in `Editor`).
    - `docVersion :: Int` is bumped in `editAll` (`Him.EditorM`) and in undo/redo
      (`history` in `Him.Actions.Edit`).
    - Every job result carries `(docId, version)`; a stale result is dropped. This is
-     needed because buffers switch (the zipper, ADR-19) while jobs run.
+     needed because buffers switch (the zipper, [ADR buffer-zipper](adr/buffer-zipper.md)) while jobs run.
 4. **`Him.Process`.** Run a command with stdin text and capture stdout, stderr and the
    exit code (`process`, `bytestring`). Used by git; LSP spawns its own pipes.
 5. **`Him.Json`.** A value type, a strict parser (`ByteString`, `\u` escapes,
    surrogates), a `Builder` encoder, and small accessors (`key`, `asInt`, …). Tests:
    round trips, escapes, nesting, malformed input.
-6. **ADR-23** (effects/runtime/jobs) and **ADR-2 amended** (the `process` boot library).
+6. **[ADR effects-and-runtime](adr/effects-and-runtime.md)** (effects/runtime/jobs) and **[ADR boot-libraries-only](adr/boot-libraries-only.md) amended** (the `process` boot library).
 
 ## Phase 1: Minor features
 
@@ -109,7 +109,7 @@ What's already on the machine:
 - **Accept:** `RunAction` with the invocation. For an action with required parameters
   (`actParams` with no default), it opens the `:` line pre-filled with
   `action <name> `. A new ex command `action <invocation>` runs any action by its text,
-  as ADR-17 noted for later.
+  as [ADR actions](adr/actions.md) noted for later.
 - Bind `space ?`. The info box after `space` shows it automatically.
 
 ### 1b. Async, faster file picker
@@ -136,7 +136,7 @@ What's already on the machine:
     job keyed by `(gen, query)`, keeping the last results until it answers.
 - Raise `maxFiles` (`Him.Actions.Picker`) to e.g. 500k, since streaming makes a limit
   mostly a memory guard.
-- **ADR-24** (async picker), plus benchmark log rows with before/after numbers.
+- **[ADR streaming-file-picker](adr/streaming-file-picker.md)** (async picker), plus benchmark log rows with before/after numbers.
 
 ## Phase 2: Git (gutter signs + staging)
 
@@ -186,7 +186,7 @@ What's already on the machine:
      the leftovers are pure adds or removes.
 7. **Tests:** the diff model; staging pure functions (index text + hunks + selection →
    new index text); an integration test in a temp repo (`git init`, commit, edit,
-   stage the selection, check `git diff --cached`). **ADR-25.**
+   stage the selection, check `git diff --cached`). **[ADR git](adr/git.md).**
 
 ## Phase 3: Syntax highlighting (provider API + tree-sitter)
 
@@ -294,8 +294,8 @@ What's already on the machine:
    - the fake-provider integration;
    - a tree-sitter smoke test on a Rust snippet. If the runtime directory is missing,
      the test reports "skipped" and passes.
-8. **ADR-26** (syntax API and providers), **ADR-27** (vendored tree-sitter, amending
-   ADR-2), **ADR-28** (regex subset).
+8. **[ADR syntax-providers](adr/syntax-providers.md)** (syntax API and providers), **[ADR tree-sitter](adr/tree-sitter.md)** (vendored tree-sitter, amending
+   [ADR boot-libraries-only](adr/boot-libraries-only.md)), **[ADR regex-engine](adr/regex-engine.md)** (regex subset).
 
 ## Phase 4: LSP client
 
@@ -341,7 +341,7 @@ What's already on the machine:
    - a fake in-process server over pipes that answers `initialize`/`hover`/
      `definition`.
    - Manual: clangd on a small C file, and hls on him itself.
-6. **ADR-29** (LSP architecture).
+6. **[ADR lsp-client](adr/lsp-client.md)** (LSP architecture).
 
 ---
 
@@ -380,5 +380,5 @@ What's already on the machine:
 - **Performance:** `bench/bench.py` latency scenarios must not regress, measured when
   the machine is idle (the benchmark pause in §8 still applies). New picker and
   highlighting numbers go into the `docs/BENCHMARK.md` log.
-- **Docs:** ADRs 23–29, the module map, keybindings §6, milestones, the tutorial parts,
+- **Docs:** [ADR effects-and-runtime](adr/effects-and-runtime.md), [ADR streaming-file-picker](adr/streaming-file-picker.md), [ADR git](adr/git.md), [ADR syntax-providers](adr/syntax-providers.md), [ADR tree-sitter](adr/tree-sitter.md), [ADR regex-engine](adr/regex-engine.md), [ADR lsp-client](adr/lsp-client.md), the module map, keybindings §6, milestones, the tutorial parts,
   and §8 updated at the end of each phase.

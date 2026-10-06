@@ -54,7 +54,7 @@ chatTests = do
   live <- liveTests
   pure (pureTests <> transcriptTests <> claudeCodeTests <> flow <> bridge <> live)
 
--- | The chat buffer's layout (ADR-45).
+-- | The chat buffer's layout (ADR chat-panel).
 transcriptTests :: [Test]
 transcriptTests =
   [ test "a long line is wrapped at spaces, list items under their text" $

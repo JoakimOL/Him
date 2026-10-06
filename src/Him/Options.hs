@@ -1,5 +1,5 @@
 -- | The editor's settings (the @[editor]@ section of the config file,
--- ADR-34), and one table describing them: each setting's key, doc, type
+-- ADR settings-table), and one table describing them: each setting's key, doc, type
 -- and how it is read, so checking, applying and @--dump-default-config@
 -- cannot drift apart.
 module Him.Options

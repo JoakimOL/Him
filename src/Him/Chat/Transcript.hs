@@ -1,4 +1,4 @@
--- | The chat buffer's layout (ADR-45): a transcript of blocks (your
+-- | The chat buffer's layout (ADR chat-panel): a transcript of blocks (your
 -- messages, the model's answers, what it did), then the prompt and the
 -- message being typed. Output goes at the end of the transcript, above the
 -- prompt, so typing is never in the way. The transcript only grows at its

@@ -1,4 +1,4 @@
--- | Splits (ADR-37): actions on windows, with Helix's names and keys
+-- | Splits (ADR window-splits): actions on windows, with Helix's names and keys
 -- (@C-w@ or @space w@, then @v s w h j k l q o H J K L n@), and the @:@
 -- commands @:vsplit@, @:hsplit@ and their @-new@ forms.
 module Him.Actions.Window

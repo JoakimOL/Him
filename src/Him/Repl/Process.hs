@@ -1,4 +1,4 @@
--- | A REPL process (ADR-38): its output and errors in one stream, read on
+-- | A REPL process (ADR repl): its output and errors in one stream, read on
 -- a thread and handed on as text; input written as typed or sent.
 module Him.Repl.Process
   ( ReplProcess

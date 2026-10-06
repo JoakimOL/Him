@@ -1,5 +1,5 @@
 -- | Languages: how a file's language is recognised, and what each
--- syntax provider calls it (ADR-26). The table is built in; a config file
+-- syntax provider calls it (ADR syntax-providers). The table is built in; a config file
 -- can extend it later.
 module Him.Language
   ( Language (..)

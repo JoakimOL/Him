@@ -1,4 +1,4 @@
--- | Turning a 'PluginSpec' into the editor's 'Plugin' record (ADR-51):
+-- | Turning a 'PluginSpec' into the editor's 'Plugin' record (ADR plugin-api):
 -- its actions, commands, keys and hooks, run for it by name.
 module Him.Plugin.Host
   ( hostPlugin

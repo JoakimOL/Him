@@ -1,4 +1,4 @@
--- | Match mode (@m@, ADR-40), as in Helix: @m m@ goes to the matching
+-- | Match mode (@m@, ADR match-mode), as in Helix: @m m@ goes to the matching
 -- bracket; @m s@ / @m r@ / @m d@ add, replace and delete the pair around
 -- each selection; @m i@ / @m a@ select inside / around a text object
 -- ("Him.TextObject"). The commands that need a character wait for the

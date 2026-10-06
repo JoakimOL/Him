@@ -82,7 +82,7 @@ main = do
     , group "AI chat (scripted provider; nothing live)" chat
     , group "windows (splits)" windows
     , group "REPL" repl
-    , group "plugin building blocks (ADR-50)" pluginApi
+    , group "plugin building blocks (ADR plugin-building-blocks)" pluginApi
     , group "keys through the default config" integration
     , group "rebinding keys to actions" rebinding
     , group "buffers" bufferIO

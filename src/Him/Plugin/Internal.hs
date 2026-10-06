@@ -1,4 +1,4 @@
--- | The plugin API's escape hatch (ADR-51): plugin code that needs the
+-- | The plugin API's escape hatch (ADR plugin-api): plugin code that needs the
 -- editor's internals. Built-in plugins may use it while they move to the
 -- API; contrib plugins should not (review keeps them to "Him.Plugin").
 module Him.Plugin.Internal

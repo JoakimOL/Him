@@ -1,4 +1,4 @@
--- | An MCP server for the chat's tools (ADR-42), so Claude Code can call
+-- | An MCP server for the chat's tools (ADR claude-code-provider), so Claude Code can call
 -- them. Claude Code starts MCP servers itself, over stdio, so the server
 -- is a small bridge, @him --mcp-bridge DIR@, that forwards each tool call
 -- to the running editor and waits for its answer. The editor answers an

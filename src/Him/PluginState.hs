@@ -1,4 +1,4 @@
--- | Plugins' own state (ADR-51), kept in the editor so each editor (and
+-- | Plugins' own state (ADR plugin-api), kept in the editor so each editor (and
 -- each test) has its own. A plugin's state can be of any type; it is
 -- stored as a 'Dynamic' under the plugin's name.
 module Him.PluginState

@@ -1,4 +1,4 @@
--- | Keeping a server's copy of a document current (ADR-29): the messages
+-- | Keeping a server's copy of a document current (ADR lsp-client): the messages
 -- for opening, changing (incrementally when the server allows it), saving
 -- and closing a document.
 --

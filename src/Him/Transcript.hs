@@ -1,4 +1,4 @@
--- | Transcripts, the text of REPL and chat buffers (ADR-38, ADR-41):
+-- | Transcripts, the text of REPL and chat buffers (ADR repl, ADR ai-chat):
 -- output goes in just before what is being typed, so typing is never
 -- interrupted; @ret@ takes what was typed as the next input. Output is not
 -- an edit: it is not undone, and it does not make the buffer dirty.

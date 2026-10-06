@@ -1,6 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
--- | The types of the plugin API (ADR-51): a plugin's spec, the monad its
+-- | The types of the plugin API (ADR plugin-api): a plugin's spec, the monad its
 -- code runs in, and the views of the editor it gets. Plugins import
 -- "Him.Plugin", which re-exports these.
 module Him.Plugin.Types

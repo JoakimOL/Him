@@ -1,4 +1,4 @@
--- | Actions: the user-facing features keys are bound to (see ADR-17 in
+-- | Actions: the user-facing features keys are bound to (see ADR actions in
 -- docs/PLAN.md).
 --
 -- An action has a stable snake_case name, a group, a doc string, and a list
