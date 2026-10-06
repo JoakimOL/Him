@@ -29,6 +29,7 @@ import Him.Config.Default (defaultConfig, plugins)
 import Him.Document (Document (..), newDocument)
 import Him.History qualified as History
 import Him.Actions.File qualified as File
+import Him.Actions.Register qualified as Register
 import Him.Actions.Motion qualified as Motion
 import Him.Actions.Picker qualified as Picker
 import Him.Actions.Jump qualified as Jump
@@ -115,6 +116,8 @@ keyThroughKeymap config key = do
         case (edCount ed, boundCounted bound) of
           (Just n, Just counted) -> counted n
           _ -> boundRun bound
+        -- A register chosen with " is for this one command.
+        when (isJust (edSelectedRegister ed)) $ modify' (\e -> e {edSelectedRegister = Nothing})
         pure False
       NoMatch
         -- A started sequence that does not go on, of keys that mean
@@ -128,6 +131,7 @@ keyThroughKeymap config key = do
         | otherwise -> do
             setPending []
             clearCount
+            modify' (\e -> e {edSelectedRegister = Nothing})
             -- Only a key typed on its own falls back (a failed chord is dropped).
             when (null pending) $ sequence_ (cfgFallback config (edMode ed) key)
             pure False
@@ -192,6 +196,8 @@ runEffects config = go (8 :: Int)
       OpenPalette -> True
       OpenConfig -> True
       PluginCommand Nothing -> True
+      ClipboardSet {} -> True
+      ClipboardGet {} -> True
       _ -> False
     perform = \case
       StartJob _ -> pure ()
@@ -210,6 +216,8 @@ runEffects config = go (8 :: Int)
       ChatCancel _ -> pure ()
       ChatAnswer {} -> pure ()
       PluginCommand (Just _) -> pure ()
+      ClipboardSet c vs -> Register.clipboardSet (cfgClipboardProviders config) c vs
+      ClipboardGet c use -> Register.clipboardGet (cfgClipboardProviders config) c use
       PluginCommand Nothing ->
         let on = map plName (cfgPlugins config)
             describe p = plName p <> (if plName p `elem` on then " (on)" else " (off)")

@@ -13,6 +13,7 @@ module Him.Edit
   , selectionText
   , pasteAfter
   , pasteBefore
+  , replaceWith
   ) where
 
 import Data.Char (isSpace)
@@ -126,6 +127,15 @@ pasteBefore t b r
   | T.null t = (b, r)
   | isLinewise t = pasteAt (Pos (posLine (rangeStart r)) 0) t b
   | otherwise = pasteAt (rangeStart r) t b
+
+-- | @R@: replace what the range covers; the new text becomes the selection.
+replaceWith :: Text -> Edit
+replaceWith t b r
+  | T.null t = (b', point (clampPos b' s))
+  | otherwise = pasteAt s t b'
+  where
+    s = rangeStart r
+    b' = deleteRange s (nextPos b (rangeEnd r)) b
 
 pasteAt :: Pos -> Text -> Buffer -> (Buffer, Range)
 pasteAt p t b = selectFrom p (insertText p t b)

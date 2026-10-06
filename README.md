@@ -34,6 +34,13 @@ make fmt / make lint         # format / lint
 
 - **Editing, Helix-style.** Select, then act. Multiple selections; `f t`, counts,
   pages. Match mode: `m i w`, `m a (`, `m s"`, `m r ( [`, `m d (`, `m m`.
+- **Registers and the clipboard,** as in Vim/Helix: `" a y` yanks into `a` without
+  touching the others, `" a p` pastes it; `+` is the system clipboard and `*` the
+  primary selection (`space y` / `space p` for short), `R` replaces the selection
+  with a register (`space R`: with the clipboard), `_` discards, `C-r a` inserts in
+  insert mode. `:registers` lists them, `:clear-register [a]` forgets them. The
+  clipboard tool is found by itself (wl-clipboard, xclip, xsel, pbcopy, tmux, or the
+  terminal's OSC 52); `[editor] clipboard-provider` picks one.
 - **Files, buffers, windows.**
   - `space f` / `space b` pickers with a preview.
   - `space /` searches the project's files as you type.

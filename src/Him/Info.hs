@@ -9,6 +9,7 @@ module Him.Info
   ( refreshInfo
   , keyInfo
   , exInfo
+  , registerRows
   ) where
 
 import Data.Map.Strict qualified as Map
@@ -26,6 +27,8 @@ refreshInfo :: Config -> Editor -> Editor
 refreshInfo config ed = ed {edInfo = box}
   where
     box = case (edPending ed, edMode ed, edPrompt ed) of
+      _ | Just w <- edAwait ed, w `elem` [AwaitRegister, AwaitInsertRegister] ->
+            Just (InfoBox "registers" (registerRows ed <> specials) BottomRight Nothing)
       (_ : _, _, _) -> keyInfo config ed
       ([], CmdLine, ExPrompt) -> exInfo (cfgExCommands config) ed
       _ -> Nothing
@@ -71,3 +74,23 @@ exInfo table ed
     matching = [c | c <- table, any (name `T.isPrefixOf`) (exNames c)]
     row c = (T.intercalate ", " (exNames c), exDoc c)
 
+-- | The registers that hold something, @\"@ first, each with the start of
+-- its text (a register yanked from several ranges says how many).
+registerRows :: Editor -> [(T.Text, T.Text)]
+registerRows ed = [(T.singleton c, preview vs) | (c, vs) <- order (Map.toList (edRegisters ed))]
+  where
+    order rs = [r | r@(c, _) <- rs, c == '"'] <> [r | r@(c, _) <- rs, c /= '"']
+    preview vs =
+      let n = length vs
+          count = if n > 1 then "[" <> T.pack (show n) <> "] " else ""
+          flat = T.concatMap visible (T.intercalate " " vs)
+       in count <> if T.length flat > width then T.take (width - 1) flat <> "…" else flat
+    visible = \case
+      '\n' -> "⏎"
+      '\t' -> "→"
+      c -> T.singleton c
+    width = 50
+
+-- | The registers that need no yank first, listed after @\"@.
+specials :: [(T.Text, T.Text)]
+specials = [("+", "system clipboard"), ("*", "primary selection"), ("_", "discard (black hole)")]

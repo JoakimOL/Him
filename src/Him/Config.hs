@@ -19,6 +19,7 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
+import Him.Clipboard (ClipboardProvider, systemProviders)
 import Him.Action
 import Him.EditorM (EditorM)
 import Him.Ex (ExCommand)
@@ -51,6 +52,9 @@ data Config = Config
   , cfgChat :: ChatConfig
   , cfgChatProviders :: [ChatProvider]
   -- ^ Chat providers ("Him.Chat"); @[chat] provider@ names the one used.
+  , cfgClipboardProviders :: [ClipboardProvider]
+  -- ^ Behind the @+@ and @*@ registers ("Him.Clipboard");
+  -- @[editor] clipboard-provider@ names the one used.
   , cfgPlugins :: [Plugin]
   -- ^ The enabled plugins, in order (their actions, keys and commands are
   -- in the fields above already).
@@ -139,6 +143,7 @@ buildConfig actions bindings fallback = do
           , cfgRepls = defaultRepls
           , cfgChat = defaultChatConfig
           , cfgChatProviders = []
+          , cfgClipboardProviders = systemProviders
           , cfgPlugins = []
           }
     errs -> Left (T.intercalate "\n" errs)

@@ -56,4 +56,4 @@ drawStatusLine theme focused ed rect =
     working = case docKind doc of
       ChatDoc cs | csStatus cs == ChatWaiting -> "working…  "
       _ -> ""
-    right = maybe "" (T.pack . show) (edCount ed) <> showKeys (edPending ed) <> "  " <> review <> sels <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "
+    right = maybe "" (\r -> "\"" <> T.singleton r <> " ") (edSelectedRegister ed) <> maybe "" (T.pack . show) (edCount ed) <> showKeys (edPending ed) <> "  " <> review <> sels <> T.pack (show (l + 1) <> ":" <> show (c + 1)) <> " "

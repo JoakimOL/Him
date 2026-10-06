@@ -14,6 +14,7 @@ import Him.EditorM
 import Him.Effect (Effect (..))
 import Him.Document (Document (..))
 import Him.Edit
+import Him.Actions.Register (selectedRegister, yank)
 import Him.History (History, Snapshot (..), redo, undo)
 import Him.Editor (Editor (..))
 import Him.Options (Options (..))
@@ -49,21 +50,13 @@ actions =
   , simple "delete_char_backward" GEditing "Delete the character before the cursor" (edit deleteBackward)
   , simple "delete_char_forward" GEditing "Delete the character under the cursor" (edit deleteForward)
   , simple "delete_selection" GEditing "Delete the selection (and yank it)" $ do
-      yank
+      yank =<< selectedRegister
       edit deleteSelection
       setMode Normal
   , simple "change_selection" GEditing "Delete the selection (and yank it), then insert" $ do
-      yank
+      yank =<< selectedRegister
       edit deleteSelection
       setMode Insert
-  , simple "yank" GClipboard "Copy the selection into the register" $ do
-      yank
-      vs <- getRegister defaultRegister
-      info $ case vs of
-        [v] -> "yanked " <> T.pack (show (T.length v)) <> " characters"
-        _ -> "yanked " <> T.pack (show (length vs)) <> " selections"
-  , simple "paste_after" GClipboard "Paste after each selection" (paste pasteAfter)
-  , simple "paste_before" GClipboard "Paste before each selection" (paste pasteBefore)
   , simple "undo" GHistory "Undo the last change" (history "nothing to undo" undo)
   , simple "redo" GHistory "Redo the last undone change" (history "nothing to redo" redo)
   , action "insert_text" GEditing "Insert text before the selection" (text "text") (edit . insertAtHead)
@@ -71,26 +64,6 @@ actions =
   , simple "no_op" GMisc "Do nothing (bind a key to this to disable it)" (pure ())
   , simple "suspend" GMisc "Suspend the editor (fg in the shell brings it back)" (request Suspend)
   ]
-
-defaultRegister :: Char
-defaultRegister = '"'
-
--- | Copy every range into the default register, one value per range.
-yank :: EditorM ()
-yank = do
-  d <- getDoc
-  setRegister defaultRegister (map (selectionText (docBuffer d)) (ranges (docSelection d)))
-
--- | Paste the register at every range. With as many values as ranges, each
--- range gets its own; otherwise every range gets all of them, joined.
-paste :: (T.Text -> Edit) -> EditorM ()
-paste at = do
-  vs <- getRegister defaultRegister
-  n <- rangeCount . docSelection <$> getDoc
-  let value i
-        | length vs == n = vs !! i
-        | otherwise = T.concat vs
-  editEach (at . value)
 
 -- | Undo or redo: swap the current state with one from the history.
 history :: T.Text -> (Snapshot -> History -> Maybe (Snapshot, History)) -> EditorM ()

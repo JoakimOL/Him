@@ -17,6 +17,7 @@ module Him.Options
 import Data.List (find)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Him.Clipboard (ClipboardProvider (..), systemProviders)
 import Him.Json (Value (..))
 import Him.Mode (Mode (..))
 
@@ -57,6 +58,8 @@ data Options = Options
   -- ^ In bytes; larger files are not read for the preview.
   , optEscapeTimeout :: !Int
   -- ^ Milliseconds to wait after @esc@ for the rest of an escape sequence.
+  , optClipboardProvider :: !Text
+  -- ^ The provider of the @+@ and @*@ registers ("Him.Clipboard"), or @auto@.
   }
   deriving stock (Eq, Show)
 
@@ -87,6 +90,7 @@ defaultOptions =
     , optPreviewMinWidth = 60
     , optPreviewMaxSize = 20 * 1024 * 1024
     , optEscapeTimeout = 30
+    , optClipboardProvider = "auto"
     }
 
 -- | The cursor shape in a mode.
@@ -124,6 +128,7 @@ optionSpecs =
   , int "tab-width" "columns between tab stops" 1 optTabWidth (\v o -> o {optTabWidth = v})
   , bool "expand-tab" "tab inserts spaces instead of a tab character" optExpandTab (\v o -> o {optExpandTab = v})
   , choice "line-number" "absolute, relative or off" [("absolute", LineNumbersAbsolute), ("relative", LineNumbersRelative), ("off", LineNumbersOff)] optLineNumbers (\v o -> o {optLineNumbers = v})
+  , choice "clipboard-provider" "the clipboard of the + and * registers: auto (the first that works here), or one of these" [(n, n) | n <- "auto" : map cbName systemProviders] optClipboardProvider (\v o -> o {optClipboardProvider = v})
   , int "escape-timeout" "milliseconds to wait after esc for a key sequence (read at startup)" 0 optEscapeTimeout (\v o -> o {optEscapeTimeout = v})
   , cursor "normal" optCursorNormal (\v o -> o {optCursorNormal = v})
   , cursor "insert" optCursorInsert (\v o -> o {optCursorInsert = v})

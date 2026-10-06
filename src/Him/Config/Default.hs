@@ -27,6 +27,7 @@ import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Actions.CommandLine qualified as CommandLine
 import Him.Actions.Directory qualified as Directory
 import Him.Actions.Edit qualified as Edit
+import Him.Actions.Register qualified as Register
 import Him.Actions.Git qualified as Git
 import Him.Actions.Lsp qualified as Lsp
 import Him.Actions.File qualified as File
@@ -65,6 +66,7 @@ coreActions :: [Action]
 coreActions =
   Motion.actions
     <> Edit.actions
+    <> Register.actions
     <> Search.actions
     <> File.actions
     <> Picker.actions
@@ -82,7 +84,7 @@ allActions :: [Action]
 allActions = actionsWith plugins
 
 exCommandsWith :: [Plugin] -> [ExCommand]
-exCommandsWith on = File.exCommands <> Window.exCommands <> pluginCommands <> concatMap plExCommands on
+exCommandsWith on = File.exCommands <> Window.exCommands <> Register.exCommands <> pluginCommands <> concatMap plExCommands on
 
 -- | Switching plugins while running (carried out by the main loop).
 pluginCommands :: [ExCommand]
@@ -147,6 +149,12 @@ normalBindings =
        , ("y", "yank")
        , ("p", "paste_after")
        , ("P", "paste_before")
+       , ("\"", "select_register")
+       , ("space y", "yank_to_clipboard")
+       , ("space p", "paste_clipboard_after")
+       , ("space P", "paste_clipboard_before")
+       , ("R", "replace_with_yanked")
+       , ("space R", "replace_with_clipboard")
        , ("u", "undo")
        , ("U", "redo")
        , ("g g", "goto_file_start")
@@ -201,6 +209,7 @@ insertBindings =
        , ("tab", "insert_tab")
        , ("backspace", "delete_char_backward")
        , ("del", "delete_char_forward")
+       , ("C-r", "insert_register")
        ]
 
 commandBindings :: [(Text, Text)]

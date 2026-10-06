@@ -138,6 +138,10 @@ data Await
   | AwaitReplaceSurround
   | AwaitReplaceSurroundWith !Char
   | AwaitObject !Bool
+  | -- | The register for the next command (@\"@), or to insert (@C-r@ in
+    -- insert mode).
+    AwaitRegister
+  | AwaitInsertRegister
   deriving stock (Eq, Show)
 
 -- | A file's text for the picker's preview.
@@ -211,8 +215,12 @@ data Editor = Editor
   -- ^ Candidates from the last @tab@ on the command line, shown until the
   -- line is edited.
   , edRegisters :: !(Map Char [Text])
-  -- ^ Registers: @\"@ (yanked text, one value per range) and @/@ (the
-  -- last search).
+  -- ^ Registers, one value per range: @\"@ (the default), @/@ (the last
+  -- search), any other character yanked to (@\"a y@), and the last
+  -- values copied to or pasted from @+@ and @*@ (the clipboard,
+  -- "Him.Actions.Register").
+  , edSelectedRegister :: !(Maybe Char)
+  -- ^ Chosen with @\"@ for the next command only.
   , edJumps :: !(IntMap Jumplist)
   -- ^ Each window's jumplist, by window id (ADR-47).
   , edJumpTexts :: !(IntMap (Int, Buffer))
@@ -255,6 +263,7 @@ newEditor size doc =
     , edInfo = Nothing
     , edCompletions = Nothing
     , edRegisters = Map.empty
+    , edSelectedRegister = Nothing
     , edJumps = IntMap.empty
     , edJumpTexts = IntMap.empty
     , edQuit = False

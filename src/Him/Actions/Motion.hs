@@ -19,6 +19,7 @@ import Him.Actions.Jump (jumping)
 import Him.Document (Document (..))
 import Him.Motion
 import Him.Actions.Match (awaitedMatchKey)
+import Him.Actions.Register (awaitedRegister)
 import Him.Options (Options (..))
 import Him.Buffer (Buffer)
 import Him.Selection (Selection, collapse, keepPrimary, mapRanges, removePrimary, rotatePrimary)
@@ -113,6 +114,11 @@ awaitedKey key =
           motion (findChar False forward till ch n)
         Nothing -> pure ()
       pure True
+    Just waiting
+      | waiting `elem` [AwaitRegister, AwaitInsertRegister] -> do
+          modify' (\e -> e {edAwait = Nothing})
+          mapM_ (awaitedRegister waiting) (keyChar key)
+          pure True
     Just waiting -> do
       modify' (\e -> e {edAwait = Nothing})
       mapM_ (awaitedMatchKey waiting) (keyChar key)

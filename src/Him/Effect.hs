@@ -11,6 +11,7 @@ module Him.Effect
   , JobKey (..)
   , jobKey
   , JobResult (..)
+  , RegisterUse (..)
   ) where
 
 import Data.Sequence (Seq)
@@ -71,6 +72,15 @@ data Effect
   | -- | Answer a tool call the model waits for (chat buffer, call id, is it
     -- an error, the result).
     ChatAnswer !Int !Text !Bool !Text
+  | -- | Copy a register's values to the system clipboard (@+@) or primary
+    -- selection (@*@).
+    ClipboardSet !Char ![Text]
+  | -- | Read the clipboard into its register, then use it.
+    ClipboardGet !Char !RegisterUse
+  deriving stock (Eq, Show)
+
+-- | What a register read from the clipboard is for.
+data RegisterUse = UsePasteAfter | UsePasteBefore | UseReplace | UseInsert | UseShowRegisters | UseRefresh
   deriving stock (Eq, Show)
 
 -- | Background work. Results carry the generation (and query) they were
