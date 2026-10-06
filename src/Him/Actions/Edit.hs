@@ -39,7 +39,10 @@ actions =
       modifySelection (\d r -> let l = posLine (rangeHead r) in point (Pos l (Buffer.lineLength l (docBuffer d))))
       setMode Insert
   , simple "open_below" GEditing "Open a new line below and insert" $ do
-      edit openLineBelow
+      edit (openLine Below)
+      setMode Insert
+  , simple "open_above" GEditing "Open a new line above and insert" $ do
+      edit (openLine Above)
       setMode Insert
   , simple "select_mode" GModes "Toggle select (extend) mode" $
       gets edMode >>= \m -> setMode (if m == Select then Normal else Select)

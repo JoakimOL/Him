@@ -200,6 +200,7 @@ normalBindings =
        , ("I", "insert_at_line_start")
        , ("A", "insert_at_line_end")
        , ("o", "open_below")
+       , ("O", "open_above")
        , (":", "command_mode")
        , ("/", "search_forward")
        , ("?", "search_backward")

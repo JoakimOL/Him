@@ -9,7 +9,8 @@ module Him.Edit
   , deleteBackward
   , deleteForward
   , deleteSelection
-  , openLineBelow
+  , openLine
+  , LineDirection (..)
   , selectionText
   , pasteAfter
   , pasteBefore
@@ -25,6 +26,10 @@ import Him.Position (Pos (..))
 import Him.Selection
 
 type Edit = Buffer -> Range -> (Buffer, Range)
+
+-- | Which side of the head's line 'openLine' opens a line on.
+data LineDirection = Above | Below
+  deriving stock (Eq, Show)
 
 -- | Apply an edit to every range of a selection; the edit is told the
 -- range's index (e.g. to paste the matching register value).
@@ -88,9 +93,16 @@ deleteSelection b r
     to = nextPos b e
     removesTrailingLines = e == endPos b && posCol s == 0 && posLine s > 0
 
--- | @o@: start a new line below the head's line, with the same indentation.
-openLineBelow :: Edit
-openLineBelow b r = insertNewline b (point (Pos l (lineLength l b)))
+-- | @O@ / @o@: start a new line above or below the head's line, with the
+-- same indentation; the head goes after that indentation.
+openLine :: LineDirection -> Edit
+openLine Above b r =
+  let (b', _) = insertText (Pos l 0) (indent <> "\n") b
+   in (b', point (Pos l (T.length indent)))
+  where
+    l = posLine (rangeHead r)
+    indent = indentOf l b
+openLine Below b r = insertNewline b (point (Pos l (lineLength l b)))
   where
     l = posLine (rangeHead r)
 

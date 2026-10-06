@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- `O` opens a line above, with the line's indentation (as `o` does below).
 - The info box lists the keys `m i`, `m a`, `m s`, `m d` and `m r` wait for (text objects and pairs).
 - Personal builds: `him --rebuild` builds a him with the plugins in `~/.config/him/plugins.toml`, and the released him starts it. `templates/him-config` builds one in GitHub Actions, with no toolchain needed.
 - Plugin API (`Him.Plugin`): plugins see buffers and events, run programs, and show status line segments, gutter signs, annotations, pickers and scratch buffers. Settings go under `[plugins.<name>]`.
