@@ -16,6 +16,7 @@ import Test.Jump
 import Test.Chat
 import Test.Repl
 import Test.PluginApi
+import Test.Grammar
 
 main :: IO ()
 main = do
@@ -36,6 +37,7 @@ main = do
   chat <- chatTests
   repl <- replTests
   pluginApi <- pluginApiTests
+  grammars <- grammarIO
   runTests
     [ group "Him.Key" keyTests
     , group "Him.Terminal.Input.decodeKeys" decodeTests
@@ -68,6 +70,8 @@ main = do
     , group "LSP client (with clangd)" lspIO
     , group "highlighting through a provider" syntaxIO
     , group "Him.Syntax.TreeSitter (with the installed grammars)" treeSitterIO
+    , group "Him.GrammarList and the built-in queries" grammarTests
+    , group "him --grammar (a local repository as the remote)" grammars
     , group "Him.Process" processes
     , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests

@@ -50,8 +50,9 @@ stack install                # build and install the built binary
 - **The `:` line** shows the commands as you type; `tab` completes, and `tab` / `S-tab`
   again cycle through the candidates. `:theme <name>` previews the theme as you type
   or cycle; `esc` goes back.
-- **Highlighting** with tree-sitter grammars that him compiles itself. Fetch grammar
-  sources once with Helix (`hx --grammar fetch`), then run `him --build-grammars`.
+- **Highlighting** with tree-sitter grammars that him fetches and compiles itself:
+  run `him --grammar` once (it needs `git` and a C compiler). The highlight queries
+  are built into him.
 - **Themes:** any Helix theme (`:theme onedark`), or your own.
 - **Plugins**, each of which can be switched off (`[plugins]` in the config,
   `:plugin-disable`):
@@ -86,11 +87,25 @@ Debug logging: set the `HIM_LOG` env var.
 ## Layout
 
 ```
-app/Main.hs         arguments (--dump-default-config, --build-grammars), then Him.App.run
+app/Main.hs         himMain (Him.Main: --grammar, --dump-default-config, …), then Him.App.run
 src/Him/…           the library (module map: docs/PLAN.md §4)
 cbits/              C used through FFI: text scans, terminal size, tree-sitter
 test/               the test suite (test/Test/*.hs) with a minimal built-in harness
 bench/              bench.py (vim/helix comparison, Python stdlib only), micro-benchmarks
-dev/                fake-claude: a stand-in for `claude` to check the chat without a model
+dev/                fake-claude: a stand-in for `claude` to check the chat without a model;
+                    sync-helix-runtime.py: refresh runtime/ from a Helix checkout
+runtime/            the grammar list and highlight queries built into him (from Helix, MPL-2.0)
 docs/               PLAN.md (decisions, status), TUTORIAL.md, BENCHMARK.md, ROADMAP.md
 ```
+
+## Credits
+
+- **[Helix](https://helix-editor.com)** ([github.com/helix-editor/helix](https://github.com/helix-editor/helix)):
+  him's editing model follows Helix's, and him reads Helix themes. The highlight
+  queries in `runtime/queries/` and the grammar list in `runtime/grammars.toml` are
+  the Helix project's work, copied from its repository under the Mozilla Public
+  License 2.0 (`runtime/queries/LICENSE`, `runtime/README.md`). Thank you to everyone
+  who wrote and maintains them.
+- **[tree-sitter](https://tree-sitter.github.io)**: the parsing runtime in
+  `cbits/tree-sitter` (MIT), and the authors of each grammar, which `him --grammar`
+  fetches from their own repositories under their own licences.

@@ -8,6 +8,8 @@ and this project adheres to the
 
 ## Unreleased
 
+- `him --grammar` sets up highlighting with no other editor installed: it fetches the tree-sitter grammars (pinned revisions) with `git` and builds them; the highlight queries are built into him. `him --build-grammars` and the Helix runtime for queries are gone.
+- Commit messages are highlighted (the language asked for a grammar named `git-commit`; it is `gitcommit`).
 - `r` + a character replaces every selected character with it (line breaks stay; `r ret` splits), as in Helix.
 - `O` opens a line above, with the line's indentation (as `o` does below).
 - The info box lists the keys `m i`, `m a`, `m s`, `m d` and `m r` wait for (text objects and pairs).

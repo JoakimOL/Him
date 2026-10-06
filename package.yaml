@@ -12,6 +12,10 @@ extra-source-files:
 - cbits/tree-sitter/src/*.c
 - cbits/tree-sitter/src/*.h
 - cbits/tree-sitter/src/**/*.h
+- runtime/grammars.toml
+- runtime/queries/*/highlights.scm
+- runtime/queries/LICENSE
+- runtime/HELIX-VERSION
 - README.md
 - CHANGELOG.md
 - docs/PLAN.md
@@ -50,6 +54,7 @@ library:
   - filepath
   - process
   - stm
+  - template-haskell
   - text
   - transformers
   - unix

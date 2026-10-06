@@ -5,8 +5,8 @@
   `cbits/ts_runtime.c`, which sets the feature macros for that unit only.
   `cbits/ts_shim.c` runs one query over a byte range and returns every capture in one
   array.
-- **Provider:** `Him.Syntax.TreeSitter` dlopens `grammars/NAME.so` and reads
-  `queries/LANG/highlights.scm`. It resolves `; inherits:` in place, and evaluates
+- **Provider:** `Him.Syntax.TreeSitter` dlopens `grammars/NAME.so` and reads the
+  language's `highlights.scm` (built into him, see [ADR grammar-setup](grammar-setup.md)). It resolves `; inherits:` in place, and evaluates
   `#eq?`, `#match?`, `#any-of?` (and negations, plus `#lua-match?`) in Haskell.
   Unknown predicates drop the match; directives and `#is?`/`#is-not?` are ignored.
 - **Precedence:** the innermost node wins; on the same node the *last* pattern wins.
@@ -17,11 +17,10 @@
   may keep the old pointer. Helix's `haskell.so` (GCC 16) corrupted the heap on ordinary
   files. This was reproduced in plain C and located with AddressSanitizer
   (`scanner.c:651`, `advance`). 168 of 198 grammar sources here use that `array.h`.
-  So only grammars from `$HIM_RUNTIME` or `~/.config/him/runtime` are loaded.
-  `him --build-grammars [SOURCES] [NAMES]` compiles grammar sources (by default Helix's
-  `runtime/grammars/sources`) with `-O2 -fno-strict-aliasing` into
-  `~/.config/him/runtime/grammars`; 299 of 301 built here. Queries still come from
-  Helix's runtime.
+  So only grammars from `$HIM_RUNTIME` or `~/.config/him/runtime` are loaded, and
+  him compiles them itself with `-O2 -fno-strict-aliasing`; 299 of 301 built here.
+  Where the sources come from, and the queries, is [ADR grammar-setup](grammar-setup.md)
+  (`him --grammar`).
 - **Cost** (`bench/HighlightBench.hs`, log 24): a 7,241-line Rust file parses in 22 ms,
   and a 260-line window highlights in 3 ms. Loading a grammar and its query takes
   30–160 ms, once per document. All of it runs in jobs. Every edit re-parses fully for

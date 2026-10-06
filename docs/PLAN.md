@@ -69,6 +69,7 @@ there are no numbers, so branches that add decisions do not conflict.
 - [git](adr/git.md): Git through the `git` program; the diff in-process
 - [syntax-providers](adr/syntax-providers.md): One syntax-highlighting interface, with injected providers
 - [tree-sitter](adr/tree-sitter.md): Tree-sitter: vendored runtime, grammars built for him
+- [grammar-setup](adr/grammar-setup.md): Grammars set up by him itself: a pinned list, fetched and built, queries built in
 - [regex-engine](adr/regex-engine.md): A small regex engine of our own
 - [lsp-client](adr/lsp-client.md): The LSP client: processes in the runtime, protocol as pure data
 - [picker-preview](adr/picker-preview.md): Pickers preview where an item points
@@ -154,7 +155,7 @@ Pure modules are marked *(pure)*.
 
 | Module | Responsibility |
 |---|---|
-| `Him.Syntax`, `Him.Syntax.Span`, `Him.Syntax.TreeSitter`, `Him.Language`, `Him.GrammarBuild` + `cbits/ts_*.c`, `cbits/tree-sitter` | Highlighting: the provider interface ([ADR syntax-providers](adr/syntax-providers.md)), tree-sitter ([ADR tree-sitter](adr/tree-sitter.md)), languages, `him --build-grammars`. |
+| `Him.Syntax`, `Him.Syntax.Span`, `Him.Syntax.TreeSitter`, `Him.Language`, `Him.GrammarList`, `Him.GrammarBuild`, `Him.Embedded` (+ `.TH`) + `cbits/ts_*.c`, `cbits/tree-sitter`, `runtime/` | Highlighting: the provider interface ([ADR syntax-providers](adr/syntax-providers.md)), tree-sitter ([ADR tree-sitter](adr/tree-sitter.md)), languages; the grammar list, `him --grammar` (fetch, build) and the built-in queries ([ADR grammar-setup](adr/grammar-setup.md)). |
 | `Him.Diff`, `Him.GitState`, `Him.Git` | Line diffs, a document's git state and signs *(pure)*; running git ([ADR git](adr/git.md)). |
 | `Him.Lsp.*` | The LSP client: protocol, state, sync, edits *(pure)*, server processes, the server table ([ADR lsp-client](adr/lsp-client.md)). |
 | `Him.Repl`, `Him.Repl.Process` | REPL config and state *(pure)*; the process ([ADR repl](adr/repl.md)). |
@@ -280,6 +281,8 @@ Each milestone ends with something runnable, and with this file updated.
   ([ADR plugin-api](adr/plugin-api.md)).
 - [x] **Personal builds.** `himMain`, `him --rebuild` from `plugins.toml`, the
   released him starting a personal build, the template repository ([ADR personal-builds](adr/personal-builds.md)).
+- [x] **Highlighting without Helix.** `him --grammar` fetches the grammars at pinned
+  revisions and builds them; the highlight queries are built into him ([ADR grammar-setup](adr/grammar-setup.md)).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
@@ -348,7 +351,8 @@ them in the editor.
 ## 8. Where to pick up
 
 *Last updated 2026-10-06.* Everything the user asked for so far is done; the latest
-work, on the `plugin-api` branch, is the plugin API: building blocks ([ADR plugin-building-blocks](adr/plugin-building-blocks.md)),
+work is setting up highlighting without Helix (`him --grammar`, [ADR grammar-setup](adr/grammar-setup.md)),
+`r` and `O`, and before that, on the `plugin-api` branch, the plugin API: building blocks ([ADR plugin-building-blocks](adr/plugin-building-blocks.md)),
 `Him.Plugin` and contrib ([ADR plugin-api](adr/plugin-api.md)), personal builds ([ADR personal-builds](adr/personal-builds.md)). Before that came
 registers and the system clipboard ([ADR registers-and-clipboard](adr/registers-and-clipboard.md)), cycling the `:` line's completions with
 `tab` / `S-tab`, previewing themes as `:theme <name>` is typed, picker actions and
@@ -408,7 +412,7 @@ marks ([ADR picker-actions](adr/picker-actions.md)) and the jumplist ([ADR jumpl
     about them. Git signs follow saves, staging and switching buffers only.
   - LSP, deferred by choice: inlay hints, semantic tokens, snippets (inserted as plain
     text), and file operations in code actions.
-  - Highlighting needs `him --build-grammars` once ([ADR tree-sitter](adr/tree-sitter.md)); without grammars, files
+  - Highlighting needs `him --grammar` once ([ADR grammar-setup](adr/grammar-setup.md)); without grammars, files
     are plain and only `$HIM_LOG` says why. Syntax sessions are not closed with their
     buffer. The preview is not highlighted.
   - A directory listing does not refresh by itself (`g r`). Deleting a file leaves its

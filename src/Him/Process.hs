@@ -4,6 +4,7 @@
 module Him.Process
   ( ProcessResult (..)
   , runProcess
+  , runProcessEnv
   ) where
 
 import Control.Concurrent (forkIO)
@@ -14,6 +15,7 @@ import Data.ByteString qualified as BS
 import Data.Text (Text)
 import Data.Text qualified as T
 import System.Exit (ExitCode)
+import System.Environment (getEnvironment)
 import System.IO (hClose)
 import System.Process (CreateProcess (..), StdStream (..), createProcess, proc, waitForProcess)
 
@@ -27,10 +29,18 @@ data ProcessResult = ProcessResult
 -- | Run a program with arguments in a directory (or the current one),
 -- giving it @input@ on stdin. 'Left' when it could not be started.
 runProcess :: FilePath -> [String] -> Maybe FilePath -> ByteString -> IO (Either Text ProcessResult)
-runProcess cmd args cwd input =
+runProcess = runProcessEnv []
+
+-- | The same, with these environment variables set (over the inherited ones).
+runProcessEnv :: [(String, String)] -> FilePath -> [String] -> Maybe FilePath -> ByteString -> IO (Either Text ProcessResult)
+runProcessEnv extra cmd args cwd input =
   fmap (either (Left . T.pack . show @IOException) Right) . try $ do
+    env <-
+      if null extra
+        then pure Nothing
+        else Just . (extra <>) . filter ((`notElem` map fst extra) . fst) <$> getEnvironment
     (Just hin, Just hout, Just herr, ph) <-
-      createProcess (proc cmd args) {cwd = cwd, std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe}
+      createProcess (proc cmd args) {cwd = cwd, env = env, std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe}
     errVar <- newEmptyMVar
     _ <- forkIO (BS.hGetContents herr >>= evaluate >>= putMVar errVar)
     outVar <- newEmptyMVar

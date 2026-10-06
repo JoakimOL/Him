@@ -948,7 +948,7 @@ highlight query had been compiled. The search narrowed the cause in steps:
 The grammar's old `array.h` reallocates through an `(Array *)` cast, and strict
 aliasing lets the compiler keep the stale pointer. The lesson: native code from
 elsewhere is part of your program's memory safety. him now builds its own grammars
-(`him --build-grammars`, with `-fno-strict-aliasing`) instead of trusting prebuilt
+(`him --grammar`, with `-fno-strict-aliasing`) instead of trusting prebuilt
 ones.
 
 ### 5.10 A language-server client without blocking ([ADR lsp-client](adr/lsp-client.md))

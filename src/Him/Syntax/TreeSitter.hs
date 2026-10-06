@@ -3,20 +3,21 @@
 -- in the editor knows tree-sitter is involved.
 --
 -- The runtime is vendored C (@cbits/tree-sitter@). Grammars are compiled
--- shared objects loaded at run time, with their @highlights.scm@ queries,
--- from a runtime directory laid out like Helix's (@grammars/NAME.so@,
--- @queries/LANG/highlights.scm@): @$HIM_RUNTIME@, @~/.config/him/runtime@,
--- @~/.config/helix/runtime@, @/usr/lib/helix/runtime@ or
--- @/usr/share/helix/runtime@.
+-- shared objects that @him --grammar@ builds into @$HIM_RUNTIME@ or
+-- @~/.config/him/runtime@ (@grammars/NAME.so@), loaded at run time. Their
+-- @highlights.scm@ queries are built into him ("Him.Embedded"); a
+-- @queries/LANG/highlights.scm@ in one of those directories replaces one.
 module Him.Syntax.TreeSitter
   ( treeSitter
     -- * For tests
   , findRuntime
+  , findQuery
   , readQuery
   ) where
 
 import Control.Exception (IOException, SomeException, try)
-import Him.Paths (runtimeDirs)
+import Him.Embedded (embeddedQueries)
+import Him.Paths (ownRuntimeDirs)
 import Control.Monad (forM, when)
 import Data.Array.Unboxed (UArray, bounds, listArray, (!))
 import Data.ByteString (ByteString)
@@ -25,6 +26,7 @@ import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.IntMap.Strict (IntMap)
 import Data.IntMap.Strict qualified as IntMap
+import Data.Map.Strict qualified as Map
 import Data.List (groupBy, nub, sortOn)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -46,8 +48,7 @@ import Him.Language (Language (..), grammarFor)
 import Him.Log (logMsg)
 import Him.Regex (Regex, compileLua, compileRegex, matchesRegex)
 import Him.Syntax
-import System.Directory (doesFileExist, getHomeDirectory)
-import System.Environment (lookupEnv)
+import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 import System.Posix.DynamicLinker (RTLDFlags (..), dlopen, dlsym)
 
@@ -114,15 +115,12 @@ start language = case grammarFor "tree-sitter" language of
 
 -- | The directory with the grammar's shared object. Only grammars built
 -- for him are loaded (@$HIM_RUNTIME@ or @~/.config/him/runtime@, filled by
--- @him --build-grammars@): prebuilt ones from other editors may be
--- miscompiled (see "Him.GrammarBuild").
+-- @him --grammar@): prebuilt ones from other editors may be miscompiled
+-- (see "Him.GrammarBuild").
 findRuntime :: Text -> IO (Maybe FilePath)
 findRuntime name = do
-  dirs <- runtimeDirs
-  env <- lookupEnv "HIM_RUNTIME"
-  home <- either (const "") id <$> try @IOException getHomeDirectory
-  let own = maybe [] pure env <> [home </> ".config/him/runtime"]
-  firstWith [d | d <- dirs, d `elem` own] ("grammars" </> T.unpack name <> ".so")
+  dirs <- ownRuntimeDirs
+  firstWith dirs ("grammars" </> T.unpack name <> ".so")
 
 firstWith :: [FilePath] -> FilePath -> IO (Maybe FilePath)
 firstWith [] _ = pure Nothing
@@ -143,29 +141,35 @@ loadGrammar runtime name langDir = do
       if abi < fst abiRange || abi > snd abiRange
         then pure (Left ("grammar " <> name <> " has ABI " <> T.pack (show abi)))
         else do
-          -- Queries may come from any runtime directory (Helix's included);
-          -- the language's own first, then the grammar's.
-          dirs <- runtimeDirs
+          -- The language's own query first, then the grammar's.
+          dirs <- ownRuntimeDirs
           let search = nub (runtime : dirs)
-              queryIn n = firstWith search ("queries" </> T.unpack n </> "highlights.scm") >>= \case
-                Just d -> readQuery (d </> "queries") n
-                Nothing -> pure Nothing
-          src' <- queryIn langDir >>= maybe (queryIn name) (pure . Just)
+          src' <- readQuery (findQuery search) langDir >>= maybe (readQuery (findQuery search) name) (pure . Just)
           case src' of
             Nothing -> pure (Left ("no highlights.scm for " <> langDir))
             Just source -> compileQuery lang source
 
--- | A language's @highlights.scm@, with @; inherits: a,b@ lines replaced by
--- those languages' queries (as Helix does).
-readQuery :: FilePath -> Text -> IO (Maybe Text)
-readQuery dir = go []
+-- | A language's @highlights.scm@: from the first of these runtime
+-- directories that has one, else the one built into him.
+findQuery :: [FilePath] -> Text -> IO (Maybe Text)
+findQuery dirs lang =
+  firstWith dirs file >>= \case
+    Just d -> either (const Nothing) Just <$> try @IOException (TIO.readFile (d </> file))
+    Nothing -> pure (Map.lookup lang embeddedQueries)
+  where
+    file = "queries" </> T.unpack lang </> "highlights.scm"
+
+-- | A language's query, with @; inherits: a,b@ lines replaced by those
+-- languages' queries (as Helix does), each found by @find@.
+readQuery :: (Text -> IO (Maybe Text)) -> Text -> IO (Maybe Text)
+readQuery find = go []
   where
     go seen lang
       | lang `elem` seen = pure (Just "")
       | otherwise =
-          try @IOException (TIO.readFile (dir </> T.unpack lang </> "highlights.scm")) >>= \case
-            Left _ -> pure Nothing
-            Right t -> Just . T.unlines <$> mapM (expand (lang : seen)) (T.lines t)
+          find lang >>= \case
+            Nothing -> pure Nothing
+            Just t -> Just . T.unlines <$> mapM (expand (lang : seen)) (T.lines t)
     expand seen line = case T.stripPrefix "; inherits:" (T.strip line) of
       Just names -> T.unlines . map (fromMaybe "") <$> mapM (go seen . T.strip) (T.splitOn "," names)
       Nothing -> pure line

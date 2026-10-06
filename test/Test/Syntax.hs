@@ -15,10 +15,8 @@ import Him.Config.Default (defaultConfig)
 import Him.Document
 import Him.Editor
 import Him.Event (Event (..))
-import System.Directory (getHomeDirectory)
 import Him.Syntax
-import Him.Syntax.TreeSitter (findRuntime, readQuery, treeSitter)
-import System.FilePath ((</>))
+import Him.Syntax.TreeSitter (findQuery, findRuntime, readQuery, treeSitter)
 import Data.List (find)
 import Data.Maybe (isJust)
 import Him.Language (detectLanguage, langName, languages)
@@ -93,8 +91,8 @@ treeSitterTests =
       spans <- case session of
         Nothing -> pure IntMap.empty
         Just s -> ssUpdate s 1 source [] >> ssHighlight s 0 3
-      home <- getHomeDirectory
-      inherited <- readQuery (home </> ".config/helix/runtime/queries") "typescript"
+      -- The built-in queries (no runtime directory overrides them).
+      inherited <- readQuery (findQuery []) "typescript"
       let scopesOn l = [lsScope sp | sp <- IntMap.findWithDefault [] l spans]
       pure
         [ test "a Rust grammar loads" (assertEqual True (isJust session))

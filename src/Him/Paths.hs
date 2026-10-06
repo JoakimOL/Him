@@ -3,6 +3,8 @@
 module Him.Paths
   ( configPath
   , runtimeDirs
+  , ownRuntimeDirs
+  , himRuntimeDir
   , themeDirs
   , stateDir
   ) where
@@ -34,8 +36,24 @@ stateDir =
         Just xdg | not (null xdg) -> pure (xdg </> "him")
         _ -> (</> ".local/state/him") <$> getHomeDirectory
 
+-- | Where @him --grammar@ puts grammars: @$HIM_RUNTIME@ or
+-- @~/.config/him/runtime@.
+himRuntimeDir :: IO FilePath
+himRuntimeDir =
+  lookupEnv "HIM_RUNTIME" >>= \case
+    Just p | not (null p) -> pure p
+    _ -> (</> ".config/him/runtime") <$> getHomeDirectory
+
+-- | The runtime directories with files made for him (grammars it built,
+-- queries the user put there), in order: @$HIM_RUNTIME@, then him's own.
+ownRuntimeDirs :: IO [FilePath]
+ownRuntimeDirs = do
+  env <- lookupEnv "HIM_RUNTIME"
+  home <- either (const "") id <$> try @IOException getHomeDirectory
+  pure (filter (not . null) (maybe [] pure env <> [home </> ".config/him/runtime" | not (null home)]))
+
 -- | The runtime directories, in order: @$HIM_RUNTIME@, him's own, then
--- Helix's.
+-- Helix's (for its themes).
 runtimeDirs :: IO [FilePath]
 runtimeDirs = do
   env <- lookupEnv "HIM_RUNTIME"

@@ -66,7 +66,7 @@ languages =
   , lang "elixir" ["ex", "exs"] [] ["elixir"] "elixir" (Just "#")
   , lang "sql" ["sql"] [] [] "sql" (Just "--")
   , lang "dockerfile" ["dockerfile"] ["Dockerfile", "Containerfile"] [] "dockerfile" (Just "#")
-  , lang "git-commit" [] ["COMMIT_EDITMSG"] [] "git-commit" (Just "#")
+  , lang "git-commit" [] ["COMMIT_EDITMSG"] [] "gitcommit" (Just "#")
   ]
 
 -- | A file's language, from its name, else from a @#!@ first line.
