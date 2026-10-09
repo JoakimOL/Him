@@ -15,6 +15,8 @@ module Him.EditorM
   , getRegister
   , setRegister
   , request
+  , keyHint
+  , keyHints
   , openPicker
   , replaceText
   , transcriptKept
@@ -24,13 +26,14 @@ module Him.EditorM
 import Control.Monad.Trans.State.Strict (StateT, gets, modify')
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import Him.Document (Document (..), changeDocument, inputPos, isReadOnly)
+import Him.Document (DocKind (..), Document (..), changeDocument, inputPos, isReadOnly)
 import Him.Buffer qualified as Buffer
 import Control.Monad (when)
 import Him.Edit (Edit, applyEdits)
 import Him.Effect (Effect)
 import Him.Editor
 import Him.Mode (Mode (..))
+import Him.KeyHints (HintScope (..), hintLine, keyOr)
 import Him.Motion (Motion, Movement (..), applyMotion)
 import Him.Picker (Picker)
 import Him.Selection (Range (..), mapRanges, normalize, point)
@@ -51,7 +54,7 @@ setMode :: Mode -> EditorM ()
 setMode m = do
   readOnly <- isReadOnly <$> getDoc
   if m == Insert && readOnly
-    then failWith readOnlyMessage
+    then readOnlyMessage >>= failWith
     else do
       modify' (\e -> e {edMode = m})
       -- In a REPL or chat buffer, typing goes to the input: a cursor up in
@@ -62,8 +65,15 @@ setMode m = do
            in d {docSelection = mapRanges (\r -> if rangeHead r < p then point end else r) (docSelection d)}
         Nothing -> d
 
-readOnlyMessage :: Text
-readOnlyMessage = "a directory listing is read-only (ret opens an entry, - goes up)"
+-- | Why a read-only buffer refuses an edit; a listing says how to use it.
+readOnlyMessage :: EditorM Text
+readOnlyMessage =
+  getDoc >>= \d -> case docKind d of
+    DirectoryDoc _ -> do
+      open <- keyHint Directory "directory_open"
+      up <- keyHint Directory "directory_parent"
+      pure ("a directory listing is read-only (" <> open <> " opens an entry, " <> up <> " goes up)")
+    _ -> pure "this buffer is read-only"
 
 info :: Text -> EditorM ()
 info t = modify' (\e -> e {edStatus = Just (Status Info t)})
@@ -106,7 +116,7 @@ edit f = editEach (const f)
 editEach :: (Int -> Edit) -> EditorM ()
 editEach f = do
   readOnly <- isReadOnly <$> getDoc
-  if readOnly then failWith readOnlyMessage else editAll f
+  if readOnly then readOnlyMessage >>= failWith else editAll f
 
 editAll :: (Int -> Edit) -> EditorM ()
 editAll f = do
@@ -137,3 +147,13 @@ motion m = do
   let movement = if mode == Select then Extend else Move
   modifyDoc $ \d ->
     d {docSelection = normalize (mapRanges (applyMotion movement m (docBuffer d)) (docSelection d))}
+
+-- | The keys that run an action in a mode, as the config binds them
+-- (@:action name@ when nothing does), for texts that tell what to press.
+keyHint :: Mode -> Text -> EditorM Text
+keyHint m inv = gets (\e -> keyOr (edKeyHints e) (InMode m) inv)
+
+-- | A line of hints in a mode (@"ret send · A-ret new line"@); unbound
+-- actions are left out.
+keyHints :: Mode -> [(Text, Text)] -> EditorM Text
+keyHints m pairs = gets (\e -> hintLine (edKeyHints e) (InMode m) pairs)

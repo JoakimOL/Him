@@ -36,9 +36,9 @@ that are easier to understand.
   a.txt:2 (-1 +2) …] [Still waiting for review: …]").
 - **Showing a change** (`Him.Review.displayRows`): the text area and the gutter draw
   rows, not just buffer lines.
-  - Above each change's new lines there is a header row ("change 1/2 (-1 +2) space
-    c a/d: approve/deny space c n: next") and its removed lines (red, from the base, with
-    `-` in the gutter).
+  - Above each change's new lines there is a header row (its number, its counts, and
+    the keys to keep, discard and go to the next as they are bound, [ADR key-hints](key-hints.md)) and
+    its removed lines (red, from the base, with `-` in the gutter).
   - The new lines are highlighted with `+` in the gutter.
   - These extra rows are never in the buffer. The cursor, `cursorPosition` and the
     scrolling (`ensureCursorVisible` scrolls further while extra rows push the cursor

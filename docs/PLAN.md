@@ -97,6 +97,7 @@ there are no numbers, so branches that add decisions do not conflict.
 - [personal-builds](adr/personal-builds.md): Personal builds, as in xmonad: `himMain`, `him --rebuild`, and a template repository
 - [plugin-canvas](adr/plugin-canvas.md): Plugins colour buffers, give them keys, draw canvases and keep time
 - [layout-friendly-keys](adr/layout-friendly-keys.md): Default keys avoid AltGr and dead keys; next / previous live in their menus
+- [key-hints](adr/key-hints.md): Texts that name keys look them up in the running config
 - [no-test-framework](adr/no-test-framework.md): No test framework
 
 ## 4. Module map
@@ -130,7 +131,7 @@ Pure modules are marked *(pure)*.
 | `Him.Editor` | The whole editor state: the focused document and view, the buffer zipper, windows ([ADR window-splits](adr/window-splits.md)), popups, plugin state; `windowEditor`, `pendingEditLines` *(pure)*. |
 | `Him.Window` | The layout tree of windows, boxes, neighbours ([ADR window-splits](adr/window-splits.md)) *(pure)*. |
 | `Him.Chat.Transcript` | The chat buffer's layout: blocks above the prompt, marks per line, wrapping, code blocks, the input ([ADR chat-panel](adr/chat-panel.md)) *(pure)*. |
-| `Him.Mode`, `Him.Key`, `Him.Keymap` | Modes and keymap layers (directory, completion, REPL, chat); keys; keymap tries. |
+| `Him.Mode`, `Him.Key`, `Him.Keymap`, `Him.KeyHints` | Modes and keymap layers (directory, completion, REPL, chat); keys; keymap tries; which keys run an action, for texts that name keys ([ADR key-hints](adr/key-hints.md)) *(the last pure)*. |
 | `Him.EditorM` | The monad actions run in and its helpers (`edit`, `motion`, `request`, `info`). |
 | `Him.Action`, `Him.Invocation` | Named actions with typed parameters; invocations as text ([ADR actions](adr/actions.md)). |
 | `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`, `Jump` (the jumplist and `jumping`); the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
@@ -333,7 +334,9 @@ them in the editor.
   `action name group doc spec run` when it takes arguments (`int`, `text`, `choice`,
   `optional`). Add it to an action list in `Him.Actions.*`. The name is public, because
   bindings and config files use it.
-- **New default keys** avoid AltGr and dead keys ([ADR layout-friendly-keys](adr/layout-friendly-keys.md)).
+- **A text that names a key:** look it up (`keyHint` / `keyHints` in `EditorM`, `keyFor` /
+  `keyInKeymap` for plugins, `hintLine` in render code) instead of writing it, so it follows
+  the user's bindings ([ADR key-hints](adr/key-hints.md)). New default keys avoid AltGr and dead keys ([ADR layout-friendly-keys](adr/layout-friendly-keys.md)).
 - **A key:** add `("g h", "goto_line_start")` to the mode's list in `Him.Config.Default`
   (or a plugin's `plBindings`). `buildConfig` rejects unknown actions and bad arguments,
   and a test checks the defaults. Prefix titles (`"match"`, `"window"`) go in

@@ -19,6 +19,7 @@ and this project adheres to the
 - A `space d` diagnostics menu: `d` this file's, `D` the workspace's (new), `n` / `p` next / previous, `f` / `l` first / last.
 - Letters for pairs in match mode: `b` (), `B` {}, `r` [], `c` <>, `q` backticks (`m i B`, `m s r`, …).
 - `u` goes up in a directory listing.
+- Texts that name keys (the review header, the chat's hints, messages, picker titles, the listing header, magit's help line, tetris's panel) show the keys as bound, so they follow your config. Plugins get `keyFor` / `keyInKeymap`.
 - `him --grammar` sets up highlighting with no other editor installed: it fetches the tree-sitter grammars (pinned revisions) with `git` and builds them; the highlight queries are built into him. `him --build-grammars` and the Helix runtime for queries are gone.
 - Commit messages are highlighted (the language asked for a grammar named `git-commit`; it is `gitcommit`).
 - `r` + a character replaces every selected character with it (line breaks stay; `r ret` splits), as in Helix.

@@ -15,7 +15,7 @@ import Data.List (isPrefixOf)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Him.App (handleEvent)
 import Him.Buffer qualified as B
-import Him.Config.Default (defaultConfig)
+import Him.Config.Default (configWith, defaultConfig, defaultPlugins)
 import Him.Document
 import Him.Editor
 import Him.Event (Event (..))
@@ -402,6 +402,9 @@ openBufferTests = do
   backToListing <- keys "space ." =<< keys "space -" openedFile
   ofFile <- keys "space -" openedFile
   refused <- keys "i" listing
+  -- Texts that name keys follow the user's bindings.
+  rebound <- either (fail . T.unpack) pure (configWith defaultPlugins (Map.fromList [(Directory, [("o", "directory_open")])]))
+  refusedRebound <- execStateT (handleEvent rebound (EvKey (plain (KChar 'i')))) listing
   refusedDelete <- keys "x d" listing
   refusedWrite <- ex "w" listing
   writeFile (dtree <> "/new.txt") ""
@@ -524,7 +527,7 @@ openBufferTests = do
         assertEqual ((\case PickPosition f l c _ -> Just (Just f, Pos l c); _ -> Nothing) . piTarget =<< firstHit)
           (Just (docPath (edDoc pickedHit), rangeHead (primary (docSelection (edDoc pickedHit)))))
     , test ":o of a directory lists it" $
-        assertEqual (Just dcanon, [T.pack dcanon <> ":  (ret opens, - goes up)", "../", "sub/", "a.txt", "b.txt"], 2, Directory)
+        assertEqual (Just dcanon, [T.pack dcanon <> ":", "../", "sub/", "a.txt", "b.txt"], 2, Directory)
           (docPath (edDoc listing), lines' listing, cursorLine listing, keymapMode listing)
     , test "ret enters a directory in the same buffer" (assertEqual (Just (dcanon <> "/sub"), bufferIndex listing) (docPath (edDoc entered), bufferIndex entered))
     , test "^ goes up too" (assertEqual (Just dcanon) (docPath (edDoc caretUp)))
@@ -533,7 +536,8 @@ openBufferTests = do
     , test "ret on a file opens it as a buffer" (assertEqual (Just (dcanon <> "/a.txt"), (2, 3)) (docPath (edDoc openedFile), bufferIndex openedFile))
     , test "space - shows the file's directory, on the file" (assertEqual (Just dcanon, 3, (1, 3)) (docPath (edDoc ofFile), cursorLine ofFile, bufferIndex ofFile))
     , test "space . opens the working directory" (assertEqual (Just cwd, Directory) (docPath (edDoc backToListing), keymapMode backToListing))
-    , test "insert mode is refused in a listing" (assertEqual (Normal, Just (Status Error "a directory listing is read-only (ret opens an entry, - goes up)")) (edMode refused, edStatus refused))
+    , test "a message naming a key follows the user's binding" (assertEqual (Just (Status Error "a directory listing is read-only (o opens an entry, u goes up)")) (edStatus refusedRebound))
+    , test "insert mode is refused in a listing" (assertEqual (Normal, Just (Status Error "a directory listing is read-only (ret opens an entry, u goes up)")) (edMode refused, edStatus refused))
     , test "deleting is refused in a listing" (assertEqual (lines' listing) (lines' refusedDelete))
     , test ":w is refused in a listing" (assertEqual (Just (Status Error "a directory listing cannot be written")) (edStatus refusedWrite))
     , test "g r lists the directory again" (assertEqual ["sub/", "a.txt", "b.txt", "new.txt"] (drop 2 (lines' refreshed)))

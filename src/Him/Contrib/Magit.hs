@@ -187,7 +187,8 @@ refresh = do
 draw :: PluginM St ()
 draw = do
   s <- getState
-  let (texts, highlights, rows) = layout (stBranch s) (stChanges s) (stDiffs s) (stExpanded s)
+  help <- T.intercalate " · " <$> traverse (\(inv, what) -> (<> (" " <> what)) <$> keyInKeymap "status" inv) [("magit_stage", "stage"), ("magit_unstage", "unstage"), ("magit_toggle", "hunks"), ("magit_open", "open"), ("magit_commit", "commit"), ("magit_refresh", "refresh"), ("magit_quit", "close")]
+  let (texts, highlights, rows) = layout help (stBranch s) (stChanges s) (stDiffs s) (stExpanded s)
       body = T.intercalate "\n" texts
   existing <- maybe (pure Nothing) bufferInfo (stBuffer s)
   case existing of
@@ -436,9 +437,10 @@ newStart header = case T.breakOn "+" (T.drop 2 header) of
   where
     nonEmpty x = if T.null x then Nothing else Just x
 
--- | The buffer: its lines, their highlights, and what each line is.
-layout :: Text -> [Change] -> Map (Section, FilePath) FileDiff -> Set (Section, FilePath) -> ([Text], [Highlight], IntMap Row)
-layout branch changes diffs expanded = (map fst3 lines', concat [map (\(a, b, f) -> Highlight l a b f) hs | (l, (_, hs, _)) <- zip [0 ..] lines'], rows)
+-- | The buffer: its lines, their highlights, and what each line is. The
+-- help line (the keys, as bound) comes last.
+layout :: Text -> Text -> [Change] -> Map (Section, FilePath) FileDiff -> Set (Section, FilePath) -> ([Text], [Highlight], IntMap Row)
+layout help branch changes diffs expanded = (map fst3 lines', concat [map (\(a, b, f) -> Highlight l a b f) hs | (l, (_, hs, _)) <- zip [0 ..] lines'], rows)
   where
     rows = IntMap.fromList [(l, r) | (l, (_, _, r)) <- zip [0 ..] lines', r /= RowNone]
     fst3 (a, _, _) = a
@@ -448,7 +450,6 @@ layout branch changes diffs expanded = (map fst3 lines', concat [map (\(a, b, f)
         <> (if null changes then [blank, ("Nothing to commit, working tree clean", [], RowNone)] else [])
         <> [blank, (help, [(0, T.length help, face "comment")], RowNone)]
     blank = ("", [], RowNone)
-    help = "s stage · u unstage · tab hunks · ret open · c commit · g r refresh · q close"
     section sec = case [c | c <- changes, chSection c == sec] of
       [] -> []
       cs ->

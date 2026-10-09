@@ -127,7 +127,7 @@ pluginCanvasTests = do
           (linesPatch False (FileDiff "a.txt" header [Hunk "@@ -1,2 +1,3 @@" [" a", "+b", " c"], Hunk "@@ -10,2 +11,3 @@" [" x", "+y", " z"]]) (Set.fromList [(0, 1), (1, 2)]))
     , test "only context chosen: no patch" (assertEqual Nothing (linesPatch False twoChanges (Set.fromList [(0, 1)])))
     , test "the layout marks each line" $
-        let (texts, hls, rows) = layout "main" [Change Unstaged 'M' "a.txt"] (Map.fromList [((Unstaged, "a.txt"), d) | d <- take 1 (parseDiff diffLines)]) (Set.singleton (Unstaged, "a.txt"))
+        let (texts, hls, rows) = layout "" "main" [Change Unstaged 'M' "a.txt"] (Map.fromList [((Unstaged, "a.txt"), d) | d <- take 1 (parseDiff diffLines)]) (Set.singleton (Unstaged, "a.txt"))
          in assertEqual
               (Just "  modified   a.txt", Just (RowFile Unstaged "a.txt"), Just (RowHunk Unstaged "a.txt" 0), Just (RowHunkLine Unstaged "a.txt" 0 2), True)
               (lookupLine 3 texts, IntMap.lookup 3 rows, IntMap.lookup 4 rows, IntMap.lookup 6 rows, Highlight 6 0 4 (face "diff.plus") `elem` hls)

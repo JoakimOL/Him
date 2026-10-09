@@ -57,6 +57,7 @@ import Him.Json (Value)
 import Him.Jumplist (Jump (..), Jumplist (..))
 import Data.Sequence qualified as Seq
 import Him.Search (Direction)
+import Him.KeyHints (KeyHints, noHints)
 import Him.Syntax (SyntaxInfo (..))
 import Him.Syntax.Span (LineSpan)
 import Him.Selection (Selection, primary, rangeHead)
@@ -238,6 +239,9 @@ data Editor = Editor
   -- refer to, so they can follow later edits.
   , edPluginUI :: !(Map Text PluginUI)
   -- ^ What each plugin shows, by plugin name (ADR plugin-building-blocks).
+  , edKeyHints :: !KeyHints
+  -- ^ Which keys run which action in the running config, for texts that
+  -- name keys ("Him.KeyHints"; set by "Him.Session").
   , edCanvas :: !(Maybe OpenCanvas)
   -- ^ A plugin's canvas over everything; it has the keys (ADR plugin-canvas).
   , edPluginOptions :: !(Map Text (Map Text Value))
@@ -288,6 +292,7 @@ newEditor size doc =
     , edJumpTexts = IntMap.empty
     , edPluginUI = Map.empty
     , edCanvas = Nothing
+    , edKeyHints = noHints
     , edPluginOptions = Map.empty
     , edPluginStates = noStates
     , edSeen = unseen

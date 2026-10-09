@@ -11,6 +11,8 @@ module Him.Actions.Jump
   , goToEntry
   ) where
 
+import Him.KeyHints (HintScope (..), keyFor)
+import Him.Mode (Mode (..))
 import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.Foldable (toList)
 import Data.IntMap.Strict qualified as IntMap
@@ -112,8 +114,11 @@ deleteJump i = gets (remove i . jumplist) >>= setJumplist
 
 -- | The @space j@ picker: the focused window's jumps, newest first.
 jumplistPicker :: Editor -> Picker
-jumplistPicker ed = (newPicker "jumplist (del removes)" items) {pkSecondary = Just "jumplist_remove"}
+jumplistPicker ed = (newPicker title items) {pkSecondary = Just "jumplist_remove"}
   where
+    title = case keyFor (edKeyHints ed) (InMode Picking) "picker_secondary" of
+      Just k -> "jumplist (" <> k <> " removes)"
+      Nothing -> "jumplist"
     docs = IntMap.fromList [(docId d, d) | d <- allDocuments ed]
     items =
       [ pickerItem (displayName d <> ":" <> T.pack (show (line + 1))) (PickJump i) (T.strip (T.take 300 (Buffer.lineAt line (docBuffer d))))

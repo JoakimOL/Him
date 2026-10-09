@@ -29,7 +29,8 @@ import Him.Terminal.Ansi (Style (..), defaultStyle, packStyle, patchStyle, unpac
 import Him.Selection
 import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
 import Him.View (View (..))
-import Him.PluginUI (Annotation (..), Highlight (..), annotationsIn, highlightsIn)
+import Him.PluginUI (Annotation (..), Face (..), Highlight (..), annotationsIn, highlightsIn)
+import Him.KeyHints (HintScope (..), hintLine, keyFor)
 
 -- | Draws the visible lines. Rows whose 'RowKey' is the same as in the
 -- previous frame are copied from it instead of being laid out again.
@@ -44,7 +45,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
       LineRow l -> drawRow f r l
       EmptyRow -> putText (rectRow rect + r) (rectCol rect) (themeTilde theme) "~" f
       HeaderRow n total h ->
-        band (themeReviewHeader theme) r (" ✎ " <> T.pack (show n) <> "/" <> T.pack (show total) <> "  −" <> T.pack (show (hOldCount h)) <> " +" <> T.pack (show (hNewCount h)) <> "  ·  space c a keep  ·  space c d discard  ·  space c n next") f
+        band (themeReviewHeader theme) r (" ✎ " <> T.pack (show n) <> "/" <> T.pack (show total) <> "  −" <> T.pack (show (hOldCount h)) <> " +" <> T.pack (show (hNewCount h)) <> (case hintLine hints (InMode Normal) [("chat_approve", "keep"), ("chat_deny", "discard"), ("chat_next_change", "next")] of "" -> ""; t -> "  ·  " <> t)) f
       RemovedRow t -> band (themeRemoved theme) r (T.drop left (T.replace "\t" (T.replicate tabWidth " ") t)) f
     band st r t = putText (rectRow rect + r) (rectCol rect) st (T.take (rectWidth rect) t <> T.replicate (rectWidth rect - T.length t) " ")
     prevFrame = case prev of
@@ -116,16 +117,25 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
     -- Rows drawn across the whole width (a box: code, the input, the
     -- review summary), and what an empty input says.
     banded c = c `elem` [10 + fromEnum MarkReview, 10 + fromEnum MarkFence, 10 + fromEnum MarkCode, 30, 31, 32]
+    hints = edKeyHints ed
     placeholder = \case
-      30 -> "Ask about your code  (ret send · A-ret new line · up earlier)"
-      31 -> "Claude is working…  (C-c stops it)"
+      30 -> "Ask about your code" <> parens (hintLine hints (InMode Chat) [("chat_submit", "send"), ("insert_newline", "new line"), ("chat_history_previous", "earlier")])
+      31 -> "Claude is working…" <> parens (maybe "" (<> " stops it") (keyFor hints (InMode Chat) "chat_cancel"))
       _ -> ""
+    parens t = if T.null t then "" else "  (" <> t <> ")"
     -- Markdown in the chat's prose.
     inlineStyle = \case
       InlineCode -> themeInlineCode theme
       InlineBold -> defaultStyle {styleBold = True}
       InlineHeading -> bold (themeDirectoryHeader theme)
-    annotationsByLine = annotationsIn (docId doc) top bottom (edPluginUI ed)
+    annotationsByLine = IntMap.unionWith (<>) listingKeys (annotationsIn (docId doc) top bottom (edPluginUI ed))
+    -- A listing's header says which keys open, go up and show dotfiles.
+    listingKeys = case docKind doc of
+      DirectoryDoc _
+        | top == 0
+        , keys@(_ : _) <- T.unpack (hintLine hints (InMode Directory) [("directory_open", "open"), ("directory_parent", "up"), ("directory_toggle_hidden", "dotfiles")]) ->
+            IntMap.singleton 0 [Annotation 0 ("  " <> T.pack keys) (Face "comment" False)]
+      _ -> IntMap.empty
     highlightsByLine = highlightsIn (docId doc) top bottom (edPluginUI ed)
     diagnosticsByLine =
       IntMap.fromListWith (<>) [(sdLine sd, [(sdStart sd, sdEnd sd, sdSeverity sd)]) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) buf top bottom]

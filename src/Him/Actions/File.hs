@@ -16,7 +16,8 @@ import Him.Buffer (lineCount)
 import Him.Buffer qualified as Buffer
 import Him.EditorM
 import Him.Actions.Jump (jumping)
-import Him.Document (Document (..), changeDocument, clampSelection, displayName, isReadOnly, newDocument, unsaved)
+import Him.Document (DocKind (..), Document (..), changeDocument, clampSelection, displayName, isReadOnly, newDocument, unsaved)
+import Him.Mode (Mode (..))
 import Him.Options (Options (..))
 import Him.Editor
 import Him.Ex (ExArgs (..), ExCommand (..))
@@ -88,7 +89,9 @@ exCommands =
 -- | Read a document's file again: 'Left' with why not.
 reloadDocument :: Bool -> Document -> EditorM (Either T.Text (Maybe Document))
 reloadDocument force d = case (isReadOnly d, docPath d) of
-  (True, _) -> pure (Left "a directory listing is refreshed with g r")
+  (True, _) -> case docKind d of
+    DirectoryDoc _ -> Left . ("a directory listing is refreshed with " <>) <$> keyHint Directory "directory_refresh"
+    _ -> pure (Left "this buffer has no file to reload")
   (_, Nothing) -> pure (Left "no file to reload")
   (_, Just path)
     | docDirty d && not force -> pure (Left "unsaved changes (use :reload! to discard them)")

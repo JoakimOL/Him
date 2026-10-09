@@ -50,7 +50,7 @@ import Him.Chat (ChatProvider)
 import Him.Chat.Anthropic (anthropicProvider)
 import Him.Chat.ClaudeCode (claudeCodeProvider)
 import Him.Contrib (contribPlugins)
-import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings)
+import Him.Config (Bindings, Config (..), Plugin (..), buildConfig, overrideBindings, withKeyHints)
 import Him.Key (Key (..), KeyCode (..), Modifier (..), plain)
 import Him.Mode (Mode (..))
 import Him.Syntax (SyntaxProvider)
@@ -318,7 +318,7 @@ configWithPlugins every enabled user = do
       usable (_, inv) = either (const True) ((`Set.notMember` offActions) . invAction) (parseInvocation inv)
   config <- buildConfig (actionsWith every on) (overrideBindings (Map.map (filter usable) user) (bindingsWith on)) fallback
   layers <- traverse (layer (cfgActions config)) (Map.fromList (concatMap plKeymaps on))
-  pure
+  pure . withKeyHints $
     config
       { cfgKeymapLayers = layers
       , cfgExCommands = exCommandsWith every on

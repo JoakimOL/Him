@@ -10,6 +10,7 @@ module Him.Config
   , plugin
   , Bindings
   , buildConfig
+  , withKeyHints
   , overrideBindings
   , inheritsFrom
   ) where
@@ -30,7 +31,8 @@ import Him.PluginEvent (Event)
 import Him.Lsp.Config (ServerTable, defaultServers)
 import Him.Syntax (SyntaxProvider)
 import Him.Key (Key)
-import Him.Keymap (Keymap, fromBindings, unionKeymap)
+import Him.Keymap (Keymap, fromBindings, keymapBindings, unionKeymap)
+import Him.KeyHints (HintScope (..), KeyHints, buildHints, noHints)
 import Him.Mode (Mode (..))
 
 data Config = Config
@@ -65,6 +67,9 @@ data Config = Config
   , cfgKeymapLayers :: Map Text (Keymap Bound)
   -- ^ The enabled plugins' own keymaps, by full name (@plugin:keymap@):
   -- for their buffers (over normal mode's) and canvases (alone), ADR plugin-canvas.
+  , cfgKeyHints :: KeyHints
+  -- ^ Which keys run which action, for texts that name keys
+  -- ("Him.KeyHints"); made from the keymaps by 'withKeyHints'.
   }
 
 -- | A feature that can be switched off (ADR git-and-lsp-as-plugins): git signs and staging,
@@ -130,6 +135,16 @@ inheritsFrom = \case
   Chat -> Just Insert
   _ -> Nothing
 
+-- | The key hints of a config's keymaps (again after they change).
+withKeyHints :: Config -> Config
+withKeyHints c =
+  c
+    { cfgKeyHints =
+        buildHints $
+          [(InMode m, keys, renderInvocation (boundInvocation b)) | (m, km) <- Map.toList (cfgKeymaps c), (keys, b) <- keymapBindings km]
+            <> [(InKeymap n, keys, renderInvocation (boundInvocation b)) | (n, km) <- Map.toList (cfgKeymapLayers c), (keys, b) <- keymapBindings km]
+    }
+
 -- | Validate every binding against the actions and build the keymaps.
 -- All errors are reported, one per line.
 buildConfig :: [Action] -> Bindings -> (Mode -> Key -> Maybe (EditorM ())) -> Either Text Config
@@ -148,7 +163,7 @@ buildConfig actions bindings fallback = do
         Nothing -> km
   case concat (lefts (Map.elems compiled)) of
     [] ->
-      Right
+      Right . withKeyHints $
         Config
           { cfgActions = registry
           , cfgKeymaps = Map.mapWithKey withParent own
@@ -164,5 +179,6 @@ buildConfig actions bindings fallback = do
           , cfgPlugins = []
           , cfgAllPlugins = []
           , cfgKeymapLayers = Map.empty
+          , cfgKeyHints = noHints
           }
     errs -> Left (T.intercalate "\n" errs)

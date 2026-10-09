@@ -70,12 +70,13 @@ pick = do
         | rel <- makeRelative cwd f, rel /= f = rel
         | rel <- makeRelative home f, rel /= f = "~/" <> rel
         | otherwise = f
+  forgetKey <- keyFor Picking "picker_secondary"
   if null files
     then notify "no recent files yet"
     else
       openPicker
         PickerSpec
-          { pickerTitle = "recent files (del forgets)"
+          { pickerTitle = "recent files (" <> forgetKey <> " forgets)"
           , pickerItems = [Item (T.pack (shown f)) "" (TargetFile f) | f <- files]
           , pickerPrimary = "picker_open"
           , pickerSecondary = Just "recent_files_forget"

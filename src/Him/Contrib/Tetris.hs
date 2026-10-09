@@ -23,6 +23,7 @@ module Him.Contrib.Tetris
 import Data.Bits (shiftR, xor)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
@@ -119,7 +120,19 @@ update :: (Game -> Game) -> PluginM (Maybe Game) ()
 update f = modifyState (fmap f) >> redraw
 
 redraw :: PluginM (Maybe Game) ()
-redraw = getState >>= mapM_ (\g -> showCanvas "board" (draw g) {canvasKeymap = Just "game"})
+redraw = do
+  -- The keys, as the game's keymap binds them (arrows as arrows).
+  keys <- traverse (\(inv, what) -> (\k -> T.justifyLeft 5 ' ' (arrow k) <> what) <$> keyInKeymap "game" inv) helpKeys
+  getState >>= mapM_ (\g -> showCanvas "board" (draw keys g) {canvasKeymap = Just "game"})
+  where
+    helpKeys = [("tetris_left", "left"), ("tetris_right", "right"), ("tetris_rotate", "rotate"), ("tetris_down", "down"), ("tetris_drop", "drop"), ("tetris_pause", "pause"), ("tetris_quit", "quit")]
+    arrow = \case
+      "left" -> "←"
+      "right" -> "→"
+      "up" -> "↑"
+      "down" -> "↓"
+      "space" -> "spc"
+      k -> k
 
 -- | Milliseconds between steps down at a level.
 period :: Int -> Int
@@ -220,8 +233,8 @@ faceOf k = face (["function", "type", "keyword", "string", "diff.minus", "variab
 
 -- | The board with its frame, and beside it the next piece, the score
 -- and the keys.
-draw :: Game -> Canvas
-draw g = (canvas "tetris" (2 * boardWidth + 3 + 16) (boardHeight + 1)) {canvasRows = rows}
+draw :: [Text] -> Game -> Canvas
+draw keys g = (canvas "tetris" (2 * boardWidth + 3 + 16) (boardHeight + 1)) {canvasRows = rows}
   where
     falling = Map.fromList [(p, gPiece g) | not (gOver g), p <- cells g]
     rowCells r = [maybe dot block (Map.lookup (r, c) falling <|> Map.lookup (r, c) (gBoard g)) | c <- [0 .. boardWidth - 1]]
@@ -252,7 +265,7 @@ draw g = (canvas "tetris" (2 * boardWidth + 3 + 16) (boardHeight + 1)) {canvasRo
            , [value (level g)]
            , []
            ]
-        <> map (\t -> [("  " <> t, face "comment")]) (if gOver g then ["r   again", "esc quit"] else ["←→  move", "↑ x rotate", "↓   down", "spc drop", "p   pause", "esc quit"])
+        <> map (\t -> [("  " <> t, face "comment")]) (if gOver g then ["r    again", "esc  quit"] else keys)
     pad = ("  ", frame)
     label t = ("  " <> t, face "ui.text.focus")
     value n = ("  " <> T.pack (show n), face "ui.text")

@@ -68,6 +68,8 @@ module Him.Plugin
   , windows
   , options
   , Options (..)
+  , keyFor
+  , keyInKeymap
   , Diagnostic
   , ShownDiagnostic (..)
   , Severity (..)
@@ -150,6 +152,8 @@ import Him.Paths (stateDir)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
 import Him.Jumplist (mapThroughChange)
+import Him.KeyHints (HintScope (..), keyOr)
+import Him.KeyHints qualified as KH
 import Him.Lsp.Protocol (Severity (..))
 import Him.Lsp.State (ShownDiagnostic (..), shownDiagnosticsIn)
 import Him.Mode (Mode (..))
@@ -292,6 +296,20 @@ windows :: PluginM s [WindowInfo]
 windows = liftEditor $ do
   ed <- get
   pure (WindowInfo (edFocus ed) (docId (edDoc ed)) True : [WindowInfo w (winDoc win) False | (w, win) <- IntMap.toList (edWindows ed)])
+
+-- | The keys that run an action in a mode, as the user's config binds
+-- them (@:action name@ when nothing does): for texts that say what to
+-- press, so they follow the user's keys.
+keyFor :: Mode -> Text -> PluginM s Text
+keyFor m inv = liftEditor (gets (\e -> keyOr (edKeyHints e) (InMode m) inv))
+
+-- | The keys of an action in one of the plugin's own keymaps
+-- ('psKeymaps', by name), else in normal mode.
+keyInKeymap :: Text -> Text -> PluginM s Text
+keyInKeymap keymap inv = do
+  full <- fullName keymap
+  hints <- liftEditor (gets edKeyHints)
+  maybe (keyFor Normal inv) pure (KH.keyFor hints (InKeymap full) inv)
 
 -- | The settings (@[editor]@ in the config file).
 options :: PluginM s Options

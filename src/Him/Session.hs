@@ -12,6 +12,7 @@ module Him.Session
   , switchPlugins
   ) where
 
+import Him.KeyHints (HintScope (..), keyFor)
 import Control.Monad (forM_, unless, when)
 import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.Map.Strict qualified as Map
@@ -86,11 +87,18 @@ openAll size docs = case docs of
   d : ds -> gotoBuffer 0 (foldl (flip openBuffer) (newEditor size d) ds)
 
 handleEvent :: Config -> Event -> Command.EditorM ()
-handleEvent config (EvResize rows cols) = do
+handleEvent config event = do
+  -- Texts that name keys follow the config in use (a reload, a plugin
+  -- switched, a test's own config).
+  modify' (\e -> e {edKeyHints = cfgKeyHints config})
+  handle config event
+
+handle :: Config -> Event -> Command.EditorM ()
+handle config (EvResize rows cols) = do
   modify' (\e -> e {edSize = (rows, cols)})
   -- More lines may be visible now; they need highlighting.
   housekeeping config
-handleEvent config (EvJob result) = do
+handle config (EvJob result) = do
   Picker.applyJobResult result
   Syntax.applySyntaxResult result
   mapM_ (`plJobResult` result) (cfgPlugins config)
@@ -106,7 +114,7 @@ handleEvent config (EvJob result) = do
     toOwner key event =
       let (owner, name) = T.breakOn ":" key
        in mapM_ (\p -> plEvent p (event (T.drop 1 name))) [p | p <- cfgPlugins config, plName p == owner]
-handleEvent config (EvKey key) =
+handle config (EvKey key) =
   gets edCanvas >>= \case
     -- An open canvas has every key (ADR plugin-canvas).
     Just oc -> canvasKey config oc key >> afterKey config
@@ -233,7 +241,7 @@ pluginEvents config = do
 
 -- | What the editor needs to know about the enabled plugins.
 withPlugins :: Config -> Editor -> Editor
-withPlugins config ed = ed {edSignLane = any plSigns (cfgPlugins config)}
+withPlugins config ed = ed {edSignLane = any plSigns (cfgPlugins config), edKeyHints = cfgKeyHints config}
 
 -- | Going from one config's plugins to another's: the ones switched off
 -- clear up, the ones switched on start, and the gutter follows.
@@ -315,7 +323,8 @@ runEffects config = go (8 :: Int)
             item p
               | plName p `elem` on = pickerItem (plName p) (PickValue ("-" <> plName p)) ("on   " <> plDoc p)
               | otherwise = pickerItem (plName p) (PickValue ("+" <> plName p)) ("off  " <> plDoc p)
-         in Command.openPicker (newPicker "plugins (ret switches on / off)" (map item (cfgAllPlugins config))) {pkPrimary = "plugin_toggle"}
+            title = maybe "plugins" (\k -> "plugins (" <> k <> " switches on / off)") (keyFor (cfgKeyHints config) (InMode Picking) "picker_accept")
+         in Command.openPicker (newPicker title (map item (cfgAllPlugins config))) {pkPrimary = "plugin_toggle"}
       OpenConfig -> do
         path <- liftIO configPath
         exists <- liftIO (doesFileExist path)

@@ -177,14 +177,16 @@ withWidth i f = do
 
 -- | What a new chat says before the first message.
 welcome :: Int -> EditorM ()
-welcome i =
+welcome i = do
+  keys <- keyHints Chat [("chat_submit", "send"), ("insert_newline", "new line"), ("chat_history_previous", "earlier messages"), ("chat_cancel", "stop"), ("chat_new", "new chat")]
+  addKey <- keyHint Normal "chat_add_selection"
   sayLines
     i
     MarkWelcome
     [ "Ask Claude about your code. It sees which file you are in, reads the project, and proposes changes that you keep or discard in the editor."
     , ""
-    , "ret send · A-ret new line · up/down earlier messages · C-c stop · C-l new chat"
-    , "In a file: space c s puts the selection in your message."
+    , keys
+    , "In a file: " <> addKey <> " puts the selection in your message."
     ]
 
 -- | Show the chat (beside the current window if it is not shown), and
@@ -262,7 +264,7 @@ submit = do
   d <- getDoc
   case docKind d of
     ChatDoc cs -> case csStatus cs of
-      ChatWaiting -> failWith "the answer is still coming (C-c stops it)"
+      ChatWaiting -> keyHint Chat "chat_cancel" >>= \k -> failWith ("the answer is still coming (" <> k <> " stops it)")
       ChatIdle -> case takeMessage d of
         Just (text, d') | not (T.null (T.strip text)) -> do
           let i = docId d
@@ -400,12 +402,13 @@ endOfTurn i = do
     then settle i
     else do
       gap i
+      keys <- keyHints Normal [("chat_approve", "keep"), ("chat_deny", "discard"), ("chat_next_change", "next"), ("chat_approve_all", "keep all"), ("chat_deny_all", "discard all"), ("chat_changes", "list")]
       sayLines
         i
         MarkReview
         ( [T.pack (show n) <> " change" <> (if n == 1 then "" else "s") <> " to review"]
             <> ["  " <> T.pack (rvPath rv) <> counts rv | rv <- reviews]
-            <> ["In the editor, cursor on a change: space c a keep · space c d discard · space c n next · space c A / D all · space c l list"]
+            <> ["In the editor, cursor on a change: " <> keys]
         )
       case reviews of
         rv : _ | h : _ <- rvHunks rv -> showChange rv h
@@ -527,14 +530,16 @@ decideAtCursor approve = do
   ed <- get
   let d = edDoc ed
       line = posLine (rangeHead (primary (docSelection d)))
+  list <- keyHint Normal "chat_changes"
+  next <- keyHint Normal "chat_next_change"
   case reviewFor ed (docId d) of
-    Nothing -> failWith "no proposed changes in this buffer (space c l lists them)"
+    Nothing -> failWith ("no proposed changes in this buffer (" <> list <> " lists them)")
     Just rv -> case hunkAtLine (Buffer.lineCount (docBuffer d)) line (rvHunks rv) of
-      Nothing -> failWith "the cursor is not on a proposed change (space c n goes to the next)"
+      Nothing -> failWith ("the cursor is not on a proposed change (" <> next <> " goes to the next)")
       Just (_, h) -> do
         ok <- decide approve rv h
         left <- gets (\e -> maybe 0 (length . rvHunks) (reviewFor e (docId d)))
-        when ok $ info ((if approve then "kept" else "discarded") <> (if left == 0 then "; no changes left here" else "; " <> T.pack (show left) <> " left here (space c n: next)"))
+        when ok $ info ((if approve then "kept" else "discarded") <> (if left == 0 then "; no changes left here" else "; " <> T.pack (show left) <> " left here (" <> next <> ": next)"))
 
 -- | Approve (write to the file) or deny (put back) one change; 'False' when
 -- it could not be approved.
@@ -641,8 +646,9 @@ jumpChange forward = do
         | otherwise = case reverse (filter (< line) starts) of
             l : _ -> Just l
             [] -> case reverse starts of l : _ -> Just l; [] -> Nothing
+  list <- keyHint Normal "chat_changes"
   case target of
-    Nothing -> failWith "no proposed changes in this buffer (space c l lists them)"
+    Nothing -> failWith ("no proposed changes in this buffer (" <> list <> " lists them)")
     Just l -> motion (\b _ -> point (Buffer.clampPos b (Pos (min l (Buffer.lineCount b - 1)) 0)))
 
 -- | Put the editor on a change: focus its window, cursor on its first line.
