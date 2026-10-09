@@ -16,6 +16,7 @@ module Him.Edit
   , pasteBefore
   , replaceWith
   , replaceChars
+  , mapChars
   ) where
 
 import Data.Char (isSpace)
@@ -162,6 +163,14 @@ replaceChars ch b r
     to = nextPos b (rangeEnd r)
     new = T.map (\c -> if c == '\n' then c else ch) (textRange s to b)
     b' = deleteRange s to b
+
+-- | Change every character the range covers, one character for one (a
+-- case change), so the range stays.
+mapChars :: (Char -> Char) -> Edit
+mapChars f b r = (fst (insertText s (T.map f (textRange s to b)) (deleteRange s to b)), r)
+  where
+    s = rangeStart r
+    to = nextPos b (rangeEnd r)
 
 pasteAt :: Pos -> Text -> Buffer -> (Buffer, Range)
 pasteAt p t b = selectFrom p (insertText p t b)

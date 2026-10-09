@@ -5,6 +5,7 @@ module Him.Actions.Edit
   ) where
 
 import Control.Monad.Trans.State.Strict (gets, modify')
+import Data.Char (isUpper, toLower, toUpper)
 import Data.Text qualified as T
 import Him.Action
 import Him.Buffer (nextPos)
@@ -46,6 +47,10 @@ actions =
       setMode Insert
   , simple "replace" GEditing "Replace each selected character with the next key" $
       modify' (\e -> e {edAwait = Just AwaitReplaceChar})
+  , simple "to_lower" GEditing "Make the selected text lower case" (edit (mapChars toLower))
+  , simple "to_upper" GEditing "Make the selected text upper case" (edit (mapChars toUpper))
+  , simple "swap_case" GEditing "Swap the case of the selected text (upper to lower, lower to upper)" $
+      edit (mapChars (\c -> if isUpper c then toLower c else toUpper c))
   , simple "select_mode" GModes "Toggle select (extend) mode" $
       gets edMode >>= \m -> setMode (if m == Select then Normal else Select)
   , simple "insert_newline" GEditing "Insert a line break" (edit insertNewline)
