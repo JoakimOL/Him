@@ -14,7 +14,7 @@
   `:repl-restart`.
 
 How it is built:
-- **The transcript (`Him.Repl.Transcript`, pure).** A REPL buffer is a document of
+- **The transcript (`Him.Transcript`, pure).** A REPL buffer is a document of
   kind `ReplDoc ReplState`, whose `rsInput` is where the next input starts.
   - Output is inserted just before the input, and cursors at or after that point move
     with it. Output arriving while you type never splits your line.
@@ -32,8 +32,8 @@ How it is built:
 - **Starting.** The runtime starts the REPL as soon as it performs the effect, not as
   a job, so text sent straight after reaches it. It runs in the project root, found
   from `roots` markers (like language servers), so `stack ghci` loads the project.
-  The runtime holds the REPL table (`setReplTable` on `:config-reload`) and the
-  processes by buffer id.
+  The runtime reads the REPL table from its config (replaced on `:config-reload`)
+  and holds the processes by buffer id.
 - **Windows.** If the REPL buffer is not shown, a split opens beside the current
   window. Unfocused windows on a REPL buffer follow its end as output arrives.
 - **Highlighting.** The transcript is highlighted as its language.
@@ -47,4 +47,4 @@ How it is built:
 *Testing while developing:* point the Haskell REPL at the library and the test suite
 (`args = ["ghci", "him:lib", "him:test:him-test"]`). Then `:repl-send main` runs the
 suite. Selecting an expression (a test, or a call into the module being written) and
-pressing `space e` evaluates it. Saving reloads. See the tutorial, §5.11.
+pressing `space e` evaluates it. Saving reloads.

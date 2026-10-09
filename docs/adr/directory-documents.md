@@ -25,7 +25,7 @@
   editing the name uses the ordinary command-line keys. After a rename, buffers showing
   the old path (or something inside a renamed directory) take the new path.
 - **Dotfiles** are hidden by default, like the file picker. The header counts them,
-  and `g .` (`edShowHidden`, shared by all listings) shows them.
+  and `g .` (the `show-hidden-files` setting, `optShowHidden`, shared by all listings) shows them.
 
 *Alternatives:* a separate directory UI component, which would have to reimplement
 movement and search. Editing the listing text and applying the difference (as Emacs's

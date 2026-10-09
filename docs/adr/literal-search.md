@@ -1,7 +1,8 @@
 # Search is literal, smart case, and anchored on the rarest byte
 
 - **Matching:** there is no regex engine, since none ships with GHC. A pattern
-  without upper-case letters matches ASCII letters case-insensitively.
+  without upper-case letters matches ASCII letters case-insensitively. (Later, `Him.Regex`
+  came for highlight queries, [ADR regex-engine](regex-engine.md); search is still literal.)
 - **Exact matches:** these use glibc `memmem`.
 - **Case-insensitive matches:** these scan for the needle byte that is rarest in a
   4 KB sample of each block, in both cases, 16 bytes at a time, and verify each

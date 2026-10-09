@@ -134,7 +134,7 @@ Pure modules are marked *(pure)*.
 | `Him.Mode`, `Him.Key`, `Him.Keymap`, `Him.KeyHints` | Modes and keymap layers (directory, completion, REPL, chat); keys; keymap tries; which keys run an action, for texts that name keys ([ADR key-hints](adr/key-hints.md)) *(the last pure)*. |
 | `Him.EditorM` | The monad actions run in and its helpers (`edit`, `motion`, `request`, `info`). |
 | `Him.Action`, `Him.Invocation` | Named actions with typed parameters; invocations as text ([ADR actions](adr/actions.md)). |
-| `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`, `Jump` (the jumplist and `jumping`); the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
+| `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`, `Jump` (the jumplist and `jumping`), `Register` (registers and the clipboard); the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
 | `Him.Plugin` (+ `.Types`, `.Host`, `.Internal`), `Him.PluginState`, `Him.Contrib` (+ `.WordCount`, `.RecentFiles`, `.Magit`, `.Tetris`) | The public plugin API, plugins' state, the contrib collection ([ADR plugin-api](adr/plugin-api.md), [ADR plugin-canvas](adr/plugin-canvas.md)). |
 | `Him.PluginUI`, `Him.PluginEvent`, `Him.Spawn` | What plugins show (segments, signs, annotations, highlights, a buffer's keymap, a canvas); events found by comparing with what was seen, and routed ones (process output, timers, canvas keys); plugin processes ([ADR plugin-building-blocks](adr/plugin-building-blocks.md), [ADR plugin-canvas](adr/plugin-canvas.md)) *(the first two pure)*. |
 | `Him.Main`, `Him.Rebuild` | The program as `himMain [Plugin]`; `him --rebuild` and starting a personal build ([ADR personal-builds](adr/personal-builds.md)). |
@@ -225,8 +225,8 @@ Each milestone ends with something runnable, and with this file updated.
   staged ones dimmer; `space g n` / `space g p`; stage, unstage or reset the selected lines or the
   file from the editor ([ADR git](adr/git.md)).
 - [x] **Syntax highlighting** (roadmap phase 3). One provider interface ([ADR syntax-providers](adr/syntax-providers.md));
-  the tree-sitter provider with a vendored runtime and grammars built by
-  `him --build-grammars` ([ADR tree-sitter](adr/tree-sitter.md)); `Him.Regex` ([ADR regex-engine](adr/regex-engine.md)).
+  the tree-sitter provider with a vendored runtime and grammars built for him
+  ([ADR tree-sitter](adr/tree-sitter.md)); `Him.Regex` ([ADR regex-engine](adr/regex-engine.md)).
 - [x] **LSP client** (roadmap phase 4). Diagnostics, hover, definition, references
   and completion, with servers run by the runtime ([ADR lsp-client](adr/lsp-client.md)).
 - [x] **More LSP.** Incremental sync (`Buffer.changeBetween`), `didSave` and
@@ -286,13 +286,15 @@ Each milestone ends with something runnable, and with this file updated.
   released him starting a personal build, the template repository ([ADR personal-builds](adr/personal-builds.md)).
 - [x] **Highlighting without Helix.** `him --grammar` fetches the grammars at pinned
   revisions and builds them; the highlight queries are built into him ([ADR grammar-setup](adr/grammar-setup.md)).
+- [x] **Canvases and keys.** Plugins colour buffers, give them keys, draw canvases and
+  keep time; contrib `magit` and `tetris` on them ([ADR plugin-canvas](adr/plugin-canvas.md)). Default keys avoid AltGr
+  and dead keys ([ADR layout-friendly-keys](adr/layout-friendly-keys.md)); texts that name keys show them as bound ([ADR key-hints](adr/key-hints.md)).
 
 Later (not started; the architecture has room for them):
 - [ ] Highlight all matches of a search; regex search on `Him.Regex`; `S` (split the
   selection on a pattern).
 - [ ] Undo tree / change sets instead of snapshots.
-- [ ] Incremental parsing and injections for tree-sitter ([ADR tree-sitter](adr/tree-sitter.md)); highlighting in the
-  picker preview.
+- [ ] Incremental parsing and injections for tree-sitter ([ADR tree-sitter](adr/tree-sitter.md)).
 - [ ] Detecting files changed on disk.
 
 ## 6. Keybindings
@@ -361,26 +363,25 @@ them in the editor.
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-09.* Everything the user asked for so far is done; the latest
-work is more plugin building blocks ([ADR plugin-canvas](adr/plugin-canvas.md): highlights, a buffer's own
-keymap, canvases, timers) with two contrib plugins on them (`magit`, a git status buffer like Emacs's,
-and `tetris`); a highlighted picker preview; `X`; `y` leaving select mode; `x` in
-select mode selecting whole lines. Before that came setting up highlighting without Helix (`him --grammar`, [ADR grammar-setup](adr/grammar-setup.md)),
-`r` and `O`, and before that, on the `plugin-api` branch, the plugin API: building blocks ([ADR plugin-building-blocks](adr/plugin-building-blocks.md)),
-`Him.Plugin` and contrib ([ADR plugin-api](adr/plugin-api.md)), personal builds ([ADR personal-builds](adr/personal-builds.md)). Before that came
-registers and the system clipboard ([ADR registers-and-clipboard](adr/registers-and-clipboard.md)), cycling the `:` line's completions with
-`tab` / `S-tab`, previewing themes as `:theme <name>` is typed, picker actions and
-marks ([ADR picker-actions](adr/picker-actions.md)) and the jumplist ([ADR jumplist](adr/jumplist.md)).
+*Last updated 2026-10-09.* Everything the user asked for so far is done. The latest
+work: plugin canvases ([ADR plugin-canvas](adr/plugin-canvas.md)) with contrib `magit` and `tetris`; a
+highlighted picker preview; case changes (`g u`, `g U`, `g s`); keys without AltGr ([ADR layout-friendly-keys](adr/layout-friendly-keys.md))
+and key hints that follow the bindings ([ADR key-hints](adr/key-hints.md)); `x`, `X`, `o` and `y` in select mode;
+less work per key and at startup. Before that: `him --grammar` ([ADR grammar-setup](adr/grammar-setup.md)), `r`, `O`, the
+plugin API ([ADR plugin-building-blocks](adr/plugin-building-blocks.md), [ADR plugin-api](adr/plugin-api.md), [ADR personal-builds](adr/personal-builds.md)), registers and the
+clipboard, picker actions, the jumplist and global search.
 
 - **State:** every milestone in §5 is done; the decisions are in §3 (`docs/adr/`).
   `make test` covers pure
   modules, key sequences through the real keymap, git in a temporary repository,
-  clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, the
-  chat with a scripted provider).
-- **Benchmarks:** the reference is `docs/BENCHMARK.md`, 2026-10-02 (idle machine,
-  `him` and `him-lite`, plain text and an IDE-like setup). Open items there: the first
-  paint of a large plain file (Helix 23 vs him 30 ms), per-key latency against Vim
-  (0.5 vs about 1.1 ms), and parsing large diagnostic lists on the main loop.
+  clangd when installed, tree-sitter when grammars are built, REPLs with `cat`, and the
+  chat with a scripted provider.
+- **Benchmarks:** `docs/BENCHMARK.md` holds only the latest run: `4e7df7b`, 2026-10-09
+  (idle machine, `him` and `him-lite`, plain text and an IDE-like setup). Open items:
+  the first paint of a large plain file (Helix 24 vs him 32 ms), per-key latency
+  against Vim (0.5 vs 1.2 ms), per-key allocation (about 23 KB, against 15 KB before
+  the jumplist; plugin events are about 4 KB of it), and parsing large diagnostic
+  lists on the main loop.
 - **The chat plugin has not been tried against a live model** (the user tests live
   models themselves). The default provider, `claude-code`, needs the `claude` program
   and a login; `provider = "anthropic"` needs `ANTHROPIC_API_KEY` (or
@@ -389,23 +390,8 @@ marks ([ADR picker-actions](adr/picker-actions.md)) and the jumplist ([ADR jumpl
   tools); the faults it found were him's and are fixed ([ADR claude-code-provider](adr/claude-code-provider.md)). `dev/fake-claude`
   checks the flow without a model.
 - **Ideas, roughly by value:**
-  0. **A public plugin API** (in progress on `plugin-api`): the design and phases are
-     in `docs/PLUGIN-API.md`. Plugins are compiled in, as in xmonad.
-     Development focuses on releases that include a contrib collection, off by
-     default. A template repository with CI builds and `him --rebuild` come later.
-     Plugin processes and `.so` loading are ruled out. Phase 0, picker actions,
-     is [ADR picker-actions](adr/picker-actions.md); the open questions at the end of that file are for the user.
-     Earlier note: every picker gets a
-     primary and a secondary action on two keys (the user suggested `ret` and
-     `tab`). For example, the file picker's `tab` marks several files and `ret`
-     opens them; the jumplist's `ret` jumps and its secondary deletes. Today
-     `picker_secondary` (on `del`) is that hook, with only the jumplist using it,
-     and `tab` moves the selection. Moving `tab` would need another key for
-     "next" (`down` / `C-n` stay). The longer aim: make the picker a component of a
-     public plugin API, so a user's plugin can open its own picker with its own
-     actions. That means `PickTarget` (a closed sum read in `picker_accept`) has to
-     give way to items whose actions come from the picker, e.g. named actions
-     ([ADR actions](adr/actions.md) invocations) that receive the chosen items.
+  0. Plugin API follow-ups (`docs/PLUGIN-API.md`): `him --update`, and a real run of a
+     personal build (needs the network).
   1. Regex search and `S` (split on a pattern), on `Him.Regex`.
   2. Incremental tree-sitter parsing (the buffer's `changeBetween` is ready) and
      injections.

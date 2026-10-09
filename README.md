@@ -7,8 +7,8 @@ A modal, selection-first (Helix-style) text editor for the terminal, written in 
 using only GHC boot libraries.
 
 The design, the decisions behind it and the status are in
-**[docs/PLAN.md](docs/PLAN.md)**. **[docs/TUTORIAL.md](docs/TUTORIAL.md)** explains how it
-is built, step by step, and **[docs/BENCHMARK.md](docs/BENCHMARK.md)** compares it with
+**[docs/PLAN.md](docs/PLAN.md)**. **[docs/TUTORIAL.md](docs/TUTORIAL.md)** builds the core
+of such an editor step by step, and **[docs/BENCHMARK.md](docs/BENCHMARK.md)** compares it with
 Vim and Helix.
 
 ## Requirements
@@ -73,7 +73,7 @@ stack install                # build and install the built binary
     copies a code block. The model proposes all its changes in one go; they show up
     in the editor with the lines they remove, and nothing is written until you keep
     them. With the cursor on a change, `space c a` / `space c d` keep or discard it
-    (in any order); `space c n` / `space c p` move between them, `A` / `D` do all.
+    (in any order); `space c n` / `space c p` move between them, `space c A` / `space c D` do all.
   - **contrib**, off until switched on: `wordcount`, `recent-files` (`space o`),
     `magit` (`space g g`: a magit-like status buffer; `s` / `u` stage and
     unstage files, hunks or the selected lines, `tab` shows hunks, `c` commits) and `tetris` (`:tetris`).
@@ -90,7 +90,7 @@ Debug logging: set the `HIM_LOG` env var.
 ## Layout
 
 ```
-app/Main.hs         himMain (Him.Main: --grammar, --dump-default-config, …), then Him.App.run
+app/Main.hs         himMain [] (Him.Main: --grammar, --rebuild, --dump-default-config, …), then Him.App.runWith
 src/Him/…           the library (module map: docs/PLAN.md §4)
 cbits/              C used through FFI: text scans, terminal size, tree-sitter
 test/               the test suite (test/Test/*.hs) with a minimal built-in harness
@@ -98,7 +98,8 @@ bench/              bench.py (vim/helix comparison, Python stdlib only), micro-b
 dev/                fake-claude: a stand-in for `claude` to check the chat without a model;
                     sync-helix-runtime.py: refresh runtime/ from a Helix checkout
 runtime/            the grammar list and highlight queries built into him (from Helix, MPL-2.0)
-docs/               PLAN.md (decisions, status), TUTORIAL.md, BENCHMARK.md, ROADMAP.md
+docs/               PLAN.md (decisions, status), adr/, TUTORIAL.md, BENCHMARK.md, ROADMAP.md,
+                    PLUGIN-API.md
 ```
 
 ## Credits

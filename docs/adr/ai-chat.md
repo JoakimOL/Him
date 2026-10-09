@@ -47,3 +47,6 @@
   over a REPL or chat buffer.
 - **`Runtime` now takes the `Config`** (`newRuntime config post`, `reconfigure`), instead
   of one argument and one setter per table.
+
+*Later:* providers start a session per chat buffer ([ADR claude-code-provider](claude-code-provider.md)), and
+proposed edits no longer block: they are reviewed in any order ([ADR change-review](change-review.md)).

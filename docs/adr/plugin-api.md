@@ -45,7 +45,8 @@ xmonad. Releases include a contrib collection that is off until switched on.
   already open.
 - **`:plugins`** opens a picker of every plugin, on or off, with its doc. `ret`
   (`plugin_toggle`) switches the chosen ones; `tab` marks several.
-- **Contrib** (`Him.Contrib`): plugins import only `Him.Plugin`. There are two so far.
+- **Contrib** (`Him.Contrib`): plugins import only `Him.Plugin`. Two came with
+  it (`magit` and `tetris` came with [ADR plugin-canvas](plugin-canvas.md)).
   - **`wordcount`:** a segment per buffer, recounted on change, with `max-lines`
     (default 10000) because counting follows every change.
   - **`recent-files`:** `space o` / `:recent` opens a picker of the files entered

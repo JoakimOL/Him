@@ -31,6 +31,8 @@ and this project adheres to the
 - Contrib plugins, off until switched on: `wordcount` (words in the status line) and `recent-files` (`space o`, files opened lately).
 - `:plugins` is a picker: `ret` switches the chosen plugins on or off.
 - The git branch shows in the status line.
+- Registers and the system clipboard, as in Vim/Helix: `" a y` / `" a p`, `+` (clipboard) and `*` (primary selection), `space y` / `space p` / `space P` / `space R`, `R` replaces the selection with a register, `_` discards, `C-r` inserts one in insert mode; `:registers`, `:clear-register`; `[editor] clipboard-provider`.
+- The `:` line: `tab` / `S-tab` cycle the completions; `:theme <name>` previews the theme as you type (`esc` goes back).
 - Pickers: `tab` marks items, `ret` acts on all marked (the file picker opens them all), `del` is the picker's second action (the jumplist removes all marked).
 - Jumplist, as in Helix: `C-o` / `C-i` (`tab`) go back and forward, `C-s` saves the selection, `space j` lists the jumps (`del` removes one); jumps follow edits.
 - Global search (`space /`): search the project's files as you type, with hits streaming into a picker with a preview.

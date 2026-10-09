@@ -61,8 +61,8 @@ start. `--git` commits it in a git repository, so git signs have work to do.
 
 ## Caveats
 
-- **Typeahead:** Vim (and partly Helix) skips redraws while more keys are queued, so
-  `scroll` and `jump` reward that batching. him currently renders after every key.
+- **Typeahead:** Vim and him handle all queued keys before drawing (Helix partly), so
+  `scroll` and `jump` reward that batching.
 - **Latency limits:** `frame_done` is measured to the last byte written, with a 20 ms
   quiet threshold. It does not include the terminal emulator's own drawing.
 - **Fairness:**
@@ -87,237 +87,56 @@ start. `--git` commits it in a git repository, so git signs have work to do.
 
 ## Results
 
-Newest first. Machine: 16 cores, Linux 6.6, Vim 9.2, Helix 25.07.1. 200,000 lines,
-5 runs, median. Vim/Helix numbers vary by a few ms between runs, so compare within
-one run.
+Commit `4e7df7b`, 2026-10-09. Machine: 16 cores, Linux 6.6, idle (load below 1).
+Vim 9.2, Helix 25.07.1, him built with `stack build`. 5 runs, median. `him` has every
+plugin on (git, LSP, REPL), `him-lite` every plugin off. Best per row in bold.
 
-### 2026-10-02: themes, plugins, splits, REPL (`9c9b54c` + log 25–27)
-
-Machine idle (load 0.2–0.5). Optimized build (`stack build`). Vim 9.2, Helix 25.07.1.
-Two him configurations, each with its own config file so the user's config does not
-count:
-- **him:** every plugin on (git, LSP, REPL);
-- **him-lite:** every plugin off (`[plugins] git = false`, …).
-
-**Plain text** (200,000 lines, 14 MB, not in a git repository: the plugins have
-nothing to do):
+**Plain text** (200,000 lines, 14 MB, not in a git repository):
 
 | Scenario / metric | him | him-lite | vim | helix |
 |---|---:|---:|---:|---:|
-| startup_empty: settled ms | 13.7 → **~12** (log 25) | 14.0 | 24.0 | 30.2 |
-| startup_empty: max RSS MB | 15.9 | **14.5** | 21.6 | 24.4 |
-| open_large: first paint ms | 30.2 | 31.4 | 34.8 | **22.8** |
-| open_large: max RSS MB | **30.2** | 30.1 | 37.2 | 46.8 |
-| scroll (2000 × `j`): work ms | 26.7* | **17.5** | 62.2 | 628 |
-| jump (100 × `ge gg`): work ms | 7.0 | **6.3** | 34.3 | 114 |
-| edit_save: work ms | 13.0 | **11.8** | 22.7 | 18.2 |
-| latency `j`: frame done ms (p95) | 1.3 (1.7) | 1.2 (1.8) | **0.5 (0.6)** | 2.0 (2.3) |
-| latency typing: frame done ms (p95) | 1.1 (1.4) | 1.0 (1.3) | **0.3 (0.5)** | 1.9 (2.2) |
-| search_far: ms | **11.2** | 11.5 | 30.3 | 25.7 |
-| search_none: ms | 5.1 | **4.9** | 24.9 | 47.6 |
-| search_next `n`: ms (p95) | 2.8 (3.5) | 2.9 (3.7) | **1.6 (2.0)** | 2.8 (3.3) |
-| search_next 200 × `n`: ms | **9.2** | 11.1 | 49.0 | 83.3 |
+| startup_empty: settled ms | 14.9 | **13.1** | 29.1 | 33.3 |
+| startup_empty: max RSS MB | 19.1 | **17.1** | 21.8 | 24.4 |
+| open_large: first paint ms | 35.5 | 31.6 | 39.7 | **23.8** |
+| open_large: max RSS MB | **31.9** | 33.2 | 37.4 | 47.2 |
+| scroll (2000 × `j`): work ms | **20.9** | 24.0 | 62.3 | 634 |
+| jump (100 × `ge gg`): work ms | 12.6 | **7.7** | 35.6 | 114 |
+| edit_save: work ms | 16.2 | **11.8** | 23.4 | 20.1 |
+| edit_save: max RSS MB | **32.9** | 34.3 | 37.1 | 67.3 |
+| latency `j`: frame done ms (p95) | 1.2 (1.9) | 1.3 (1.8) | **0.5 (0.7)** | 2.0 (2.6) |
+| latency typing: frame done ms (p95) | 1.2 (1.5) | 1.2 (1.6) | **0.5 (0.7)** | 1.7 (2.1) |
+| search_far: ms | 11.5 | **10.6** | 29.6 | 24.6 |
+| search_none: ms | 5.3 | **5.2** | 24.3 | 45.5 |
+| search_next `n`: ms (p95) | 2.9 (3.7) | 2.9 (3.9) | **1.6 (2.1)** | 2.5 (3.2) |
+| search_next 200 × `n`: ms | 17.1 | **9.7** | 48.5 | 83.9 |
 
-\* Noise: a second run gave 19.4 (him) and 21.4 (him-lite).
-
-**Code, IDE-style** (`--ext rs --git --lines 20000`):
-- 1.4 MB of Rust-looking text, committed in a git repository;
-- tree-sitter highlighting (him and Helix);
-- git signs (him);
-- rust-analyzer (him with LSP, and Helix).
-
-Before log 26–27:
+**Code, IDE-style** (`--ext rs --git --lines 20000`: 1.4 MB of Rust-looking text,
+committed in a git repository; tree-sitter highlighting in him and Helix, git signs in
+him, rust-analyzer in him with plugins and in Helix):
 
 | Scenario / metric | him | him-lite | vim | helix |
 |---|---:|---:|---:|---:|
-| open_large: first paint ms | 9.6 | **6.3** | 20.9 | 589 |
-| scroll: work ms | **9.4** | 11.1 | 60.6 | 627 |
-| edit_save: work ms | 6.3 | **4.5** | 10.7 | 598 |
-| latency `j`: ms (p95) | 1.0 (1.1) | **0.5 (0.6)** | 0.5 (0.6) | 2.1 (2.5) |
-| latency typing: ms (p95) | 3.4 (4.3) | **0.5 (0.6)** | 0.5 (0.7) | 10.9 (12.4) |
-| search_far / search_none: ms | 1.3 / 1.2 | 1.0 / 0.5 | 7.8 / 4.8 | 17.7 / 21.1 |
-| search_next `n`: ms | 1.4 | **0.8** | 1.7 | 2.7 |
+| startup_empty: settled ms | **13.0** | 13.2 | 30.2 | 32.7 |
+| open_large: first paint ms | 10.6 | **6.7** | 31.7 | 592 |
+| open_large: settled ms | 82.2 | 41.0 | **32.0** | 736 |
+| open_large: max RSS MB | 37.3 | 29.0 | **23.6** | 45.7 |
+| scroll: work ms | 13.8 | **12.4** | 69.2 | 624 |
+| jump: work ms | **3.3** | 3.5 | 44.0 | 115 |
+| edit_save: work ms | 5.1 | **3.8** | 12.4 | 494 |
+| latency `j`: ms (p95) | 1.0 (1.2) | **0.5 (0.7)** | **0.5 (0.7)** | 2.0 (2.5) |
+| latency typing: ms (p95) | 0.8 (1.0) | **0.5 (0.6)** | **0.5 (0.6)** | 10.8 (12.3) |
+| search_far / search_none: ms | 1.6 / 1.2 | **1.1 / 0.6** | 9.3 / 5.0 | 17.7 / 21.1 |
+| search_next `n`: ms | 1.4 | **0.9** | 1.7 | 2.7 |
 
-Per plugin (`him-nogit`, `him-nolsp`), latency in ms, before → after log 26–27:
-
-| | all on | git off | lsp off | all off |
-|---|---:|---:|---:|---:|
-| typing | 3.3 → **0.7** | 0.6 | 2.1 → 0.6 | 0.4 |
-| `j` | 1.0 | 0.9 | 0.5 | 0.5 |
-
-Findings:
-- **Typing with git on** cost about 2.7 ms per key. Each version started a diff of the
-  whole file, on another core but at the same moment as the frame, allocating enough
-  to trigger collections. Debouncing (log 27) brought it to 0.7 ms.
-- **`j` with the LSP on** stays about 0.5 ms slower. rust-analyzer is still working
-  on the file and sends progress and diagnostics between keys. Per-frame diagnostic
-  work is now bounded by the visible lines (log 26).
-- **Helix** highlights the whole file before its first paint (589 ms here); him
+Notes:
+- **Garbage collection in short scenarios.** `jump` and the 200 × `n` burst are a few
+  milliseconds of work, so one young-generation collection more or less inside the
+  window shows up as several ms. With plugins on, him allocates a little more per key
+  and gets that collection; with `+RTS -A64m` him and him-lite measure the same.
+- **First paint of a large plain file:** Helix is faster (24 vs 32 ms).
+- **Per-key latency:** Vim is about twice as fast (0.5 vs 1.2 ms).
+- **Helix** highlights the whole file before its first paint (592 ms here); him
   highlights the view in a job.
-
-No regression from this session's other changes: against the pre-session binary
-(`9696165`, measured in the same sitting), `n`, latency and `open_large` are equal.
-Startup was 4.5 ms slower after themes; log 25 recovers about half. The rest is the
-built-in theme's parse (0.4 ms warm) and code that is loaded the first time.
-
-Two earlier provisional numbers do not reproduce on this machine today, for the old
-binary either:
-- `n` at 1.4 ms (log 20) measures 2.6;
-- `open_large` at 15 ms (log 16) measures about 30.
-
-Those were measured with the machine in another state (CPU clock), so the numbers in
-this section are the reference.
-
-### 2026-10-01: memory, search, and rendering pass (`edcc9ed`)
-
-Changes since the previous entry:
-1. **Buffer.** A rope of multi-line blocks (`Him.Buffer.Rope`) replaces `Seq Text`. A
-   line costs 4 bytes of offset instead of about 50 bytes of heap objects.
-2. **Loading and saving.** Files load in 1 MB chunks into one reused buffer, and lines
-   stay slices of the chunks. Saving streams lines through a `Builder`.
-3. **GC.** The non-moving GC (`-xn`) is the default, so peak memory stays close to the
-   live data.
-4. **Search** (new). Whole blocks are scanned in C, anchored on the needle byte that is
-   rarest in a sample of the text. Candidates are found with SSE2, and exact matches use
-   glibc `memmem`.
-5. **Diff.** Only the changed cell runs are written, and trailing blanks are cleared with
-   `EL`.
-6. **Rows.** Unchanged text-area rows are copied from the previous frame, keyed by line,
-   so scrolling keeps them. When the view moves less than a screen, the terminal scrolls
-   its region (`DECSTBM` + `SU`/`SD`).
-7. **ASCII rows.** Lines of printable ASCII skip the general layout.
-
-| Scenario / metric | him | vim | helix |
-|---|---:|---:|---:|
-| startup_empty: settled ms | **8.1** | 29.7 | 31.0 |
-| startup_empty: max RSS MB | **14.7** | 21.5 | 22.5 |
-| open_large: first paint ms | 51.2 | 34.8 | **22.4** |
-| open_large: max RSS MB | **24.1** | 37.2 | 46.8 |
-| scroll (2000 × `j`): work ms | **20.9** | 62.9 | 636 |
-| jump (100 × `ge gg`): work ms | **6.1** | 34.7 | 113 |
-| edit_save (880 chars): work ms | 31.7 | 23.7 | **18.2** |
-| edit_save: max RSS MB | **35.4** | 37.1 | 65.0 |
-| latency `j`: frame done ms (p95) | 1.2 (1.6) | **0.5 (0.6)** | 2.0 (2.6) |
-| latency typing: frame done ms (p95) | 1.1 (1.5) | **0.5 (0.7)** | 1.8 (2.2) |
-| search_far: ms | **11.3** | 30.0 | 24.0 |
-| search_none: ms | **5.7** | 25.2 | 48.1 |
-| search_next `n`: ms (p95) | 2.6 (3.5) | **1.6 (2.0)** | 2.6 (3.3) |
-| search_next 200 × `n` at once: ms | **16.9** | 49.2 | 90.1 |
-
-Search on its own (the 14 MB file, a tight loop, full CPU clock): a far match takes
-1.4 ms; no match, scanning everything twice, takes 0.6 ms; a case-sensitive pattern takes
-1.5–2.1 ms. Rendering on its own: a full redraw is 0.24 ms to render, 0.24 ms to diff,
-and about 2 KB of output (it was 0.62 ms and 5.7 KB). Typing a key with nothing to
-redraw costs about 0.2 ms for the thread handoff, plus the reused rows.
-
-Still open:
-- **Opening large files** (about 50 ms vs. Helix's 22). Decoding is one copy at about
-  1 GB/s; most of the rest is the first render and line-start indexing. Indexing could be
-  done lazily per block, and decoding could be skipped for valid UTF-8 by adopting the
-  buffer.
-- **`n` latency** vs. Vim (2.6 vs. 1.6 ms). Each `n` jumps 1000 lines, so every row is
-  laid out again; the remaining cost is the diff of 40 changed rows plus the slow-core
-  start-up.
-- **Typing throughput** (`edit_save`): every typed key replaces one line of the rope and
-  records undo state. This could batch consecutive inserts into one edit.
-
-### 2026-10-01: after the first performance pass
-
-Changes since the baseline:
-1. **Batching:** queued events are handled before rendering once (`TChan`, up to 512
-   per frame).
-2. **Row writes:** frame rows are written with one splice instead of cell by cell.
-3. **Text area:** each visible line is built as one cell list.
-4. **Selection:** the selected columns are computed per line, not per character.
-5. **Character widths:** `isWide` has an ASCII fast path and an `IntMap` lookup.
-
-`render` alone (a micro-benchmark, 40×120): 1.43 → 0.54 ms per frame. `diff`: 0.32 →
-0.13 ms.
-
-| Scenario / metric | him | vim | helix |
-|---|---:|---:|---:|
-| startup_empty: settled ms | **6.1** | 24.0 | 21.2 |
-| startup_empty: max RSS MB | **14.3** | 21.8 | 24.3 |
-| open_large: first paint ms | 50.2 | 24.3 | **21.9** |
-| open_large: max RSS MB | 40.4 | **37.1** | 45.0 |
-| scroll (2000 × `j`): work ms | **19.5** | 69.1 | 673 |
-| scroll: CPU ms | **68.1** | 92.8 | 1213 |
-| jump (100 × `ge gg`): work ms | **6.7** | 39.0 | 124 |
-| edit_save (880 chars): work ms | 49.5 | 33.4 | **18.2** |
-| edit_save: max RSS MB | 86.6 | **37.0** | 66.8 |
-| latency `j`: frame done ms (p95) | 1.9 (3.0) | **0.3 (0.4)** | 1.3 (1.8) |
-| latency typing: frame done ms (p95) | 1.6 (2.4) | **0.3 (0.4)** | 1.2 (1.5) |
-
-What's left, by impact:
-
-- **Opening large files** (50 ms vs. about 22 ms). The cost is decoding 14 MB,
-  `T.splitOn`, and building a `Seq` of 200,000 `Text`s. Options: split on the
-  `ByteString` and decode per line lazily, or move to a rope ([ADR seq-text-buffer](adr/seq-text-buffer.md)).
-- **Memory in `edit_save`** (87 MB vs. 37 MB). This is mostly GC overhead on top of
-  about 30 MB of live lines. The copying collector needs about twice the live data;
-  try the compacting/non-moving GC, or a more compact line representation.
-  (`-A16m`/`-A64m` were tried: latency is about the same, memory is worse.)
-- **Per-key latency** (about 1.9 ms vs. Vim's 0.3 ms). `render` (0.54 ms) is still
-  dominated by `layoutLine` allocation and building `Cell`s for every row on every frame.
-  Next steps: cache rendered rows of unchanged lines, or render only rows whose line
-  or selection changed. Write cost (about 0.5–1 ms, including the pty) could drop by
-  emitting shorter SGR sequences.
-- **Typing throughput** (`edit_save`): each typed key still runs `edit` plus the undo
-  bookkeeping, but rendering is batched now. Profile before changing anything.
-
-### 2026-10-01: baseline (`db992ae`)
-
-| Scenario / metric | him | vim | helix |
-|---|---:|---:|---:|
-| startup_empty: settled ms | **6.3** | 23.0 | 20.8 |
-| startup_empty: max RSS MB | **14.4** | 21.5 | 22.8 |
-| open_large: first paint ms | 42.0 | 40.3 | **22.7** |
-| open_large: max RSS MB | 38.6 | **37.1** | 44.8 |
-| scroll (2000 × `j`): work ms | 2809 | **60.7** | 666 |
-| scroll: CPU ms | 2850 | **85.4** | 1185 |
-| jump (100 × `ge gg`): work ms | 505 | **41.2** | 114 |
-| edit_save (880 chars): work ms | 495 | 24.4 | **19.0** |
-| edit_save: max RSS MB | 88.5 | **37.1** | 66.8 |
-| latency `j`: frame done ms (p95) | 4.6 (6.5) | **0.3 (0.5)** | 1.4 (2.3) |
-| latency typing: frame done ms (p95) | 4.7 (6.1) | **0.3 (0.4)** | 1.2 (1.9) |
-
-At the baseline, him rendered after every key, and frames were built one cell at a time
-with `Seq.update`.
-
-## Optimization log
-
-One entry per strategy: what was measured, what was changed, the effect. Newest last.
-Measurements are on the 14 MB / 200,000-line benchmark file.
-
-| # | Strategy | Measured before | Change | Effect |
-|---|---|---|---|---|
-| 1 | Batch typeahead | 2000 × `j` rendered 2000 frames | Handle all queued events, render once (`TChan`, ≤ 512) | 2000 × `j`: 2809 → 26 ms |
-| 2 | Row-level frame writes | 4,800 `Seq.update`s per frame | `putCells`: one splice per row | render 1.43 → 0.75 ms |
-| 3 | Profile-guided fixes | `isWide` 19%, selection checks 15% | ASCII fast path + `IntMap`; per-line selection spans | render 0.75 → 0.54 ms |
-| 4 | Streaming save | Save built 2 whole-file copies (28 MB) | `Builder` straight to the handle | edit_save peak RSS −30 MB |
-| 5 | Reused read buffer | Garbage chunks + decoder state | `hGetBuf` into one buffer, decode the complete UTF-8 prefix | fewer transient chunks |
-| 6 | Slices, not `T.breakOnEnd` | 28 MB of arrays for 14 MB of text | `dropWhileEnd`/`takeWhileEnd` (slices) | max live 21 → 15 MB |
-| 7 | Rope of blocks | ~50 B of heap objects per line | Blocks with `Word32` line starts in a balanced tree | live 24 → 15 MB |
-| 8 | Non-moving GC | in use ≈ 2–3 × live | `-with-rtsopts=-xn` | open RSS 40 → 25 MB |
-| 9 | Block-level C search | — | `memmem`; rarest-byte anchor + SSE2 for smart case | far search 1.4 ms, no match 0.6 ms (in-process) |
-| 10 | Cell-level diff + `EL` | 5.7 KB per `n` (Vim: 0.7 KB) | Write changed cell runs only | 5.7 → 2 KB per full jump |
-| 11 | Row reuse by line | A no-op key cost ~2.7 ms | `RowKey` memo, looked up by line | typing latency 2.4 → 1.1 ms |
-| 12 | Terminal scrolling | Scrolling rewrote 38 rows | `DECSTBM` + `SU`/`SD`, diff against the shifted frame | `j` latency 2.7 → 1.2 ms |
-| 13 | ASCII row fast path | Full redraw 0.62 ms | Printable-ASCII lines skip `layoutLine` | full redraw 0.62 → 0.24 ms |
-| 14 | No `T.count` per block | `loadDocument` 25 ms, of which counting lines with `T.count "\n"` (a generic substring search) was most | Line count comes from the C newline scan that builds the offsets | `loadDocument` 25 → 5.4 ms; open_large first paint 51 → 26 ms |
-| 15 | SIMD newline scan, lazy offsets | Counting newlines 1.7 ms (one `memchr` call per newline); every block's offsets were built before the first paint | SSE2 count (byte counters summed with `_mm_sad_epu8`) and a movemask fill; `blkStarts` is lazy, so only blocks that are shown or searched are indexed | count 1.7 → 0.5 ms; `loadDocument` 5.4 → 3 ms |
-| 16 | Zero-copy load | Read 14 MB into a buffer, then decode = copy into a `Text` | Regular files are read straight into one pinned array of the file's size; if `isValidUtf8ByteArray` (0.3 ms) accepts it, that array *is* the `Text`. Invalid UTF-8 and pipes (size unknown, `hFileSize` = 0) use the lenient/chunked paths | open_large first paint 26 → 15 ms (Helix 22); peak RSS 24 → 22.6 MB. *2026-10-02: not reproduced, 25–28 ms with the machine in use, on this commit and the next; re-measure on an idle machine (PLAN §8)* |
-| 17 | Save whole regions | Saving 14 MB took 14.7 ms: 200,000 `encodeUtf8Builder` calls, one per line | `Buffer.regions` exposes each block's lines as one contiguous text; a region whose line endings match the file's is written in one piece, others line by line | save 14.7 → 4.4 ms; edit_save 31.7 → 14.5 ms (Helix 18.7) |
-| 18 | `hPutBuf` from pinned arrays | 4.4 ms, about 1.5 ms of it copying into the builder buffer | A region ≥ 64 KB in a pinned array (a loaded file) is handed to `hPutBuf` directly (`keepAlive#` holds the array) | save 4.4 → 3.9 ms (small: the rest is the kernel's write) |
-| 19 | Single-pass cell diff | In the editor (slow-clocked CPU) the diff was the biggest per-`n` cost: 1.29 ms vs render 0.62, search 0.11 | `drawChanges` walks old/new once, building merged runs as it goes (no `zip3`, per-run `drop`/`take`, or double `reverse`) | full-redraw diff 0.23 → 0.20 ms (micro); end to end, see 20 |
-| 20 | Packed styles | Cell comparisons chased pointers to a boxed `Char` and a 6-field `Style` | `PackedStyle` (one `Word64`: two 26-bit colours + 4 flags); `Cell` unpacks `Char#` + `Word64#`; theme styles packed once per frame | diff 0.20 → 0.18 ms (micro). End to end, 19 + 20 together (`search_next,latency`, 5 runs, same run as Helix; provisional, the machine was in use): `n` 2.5 → 1.4 ms (p95 3.4 → 2.2; Helix 1.9, p95 2.3); `j` 1.1 → 0.9 ms (Helix 1.5); typing 1.1 → 0.8 ms (Helix 1.3). `n` no longer ties, so the further ideas (skip the diff of rows whose `RowKey` matches; a cheaper row type than `Seq Cell`) were not needed |
-| 21 | Picker ranking: keys, rejection, buckets | `bench/PickerBench.hs`, 200k paths: a query matching nothing took 65 ms, one matching everything 74–155 ms (`String` conversion of every label, a full `sortOn`) | Each item has a precomputed lower-case key, file name and length; a `Text` in-order check rejects non-matches before scoring; matches are bucketed by (score, exact, length) in an `IntMap` and only the first 1000 are kept, with a total count | no match 65 → 12 ms; everything matching still 74–105 ms (per-item overhead), so large pickers filter in a background job ([ADR streaming-file-picker](adr/streaming-file-picker.md)). 2.2k files (Helix's repo): 1–3 ms. *Machine in use; ±20 %* |
-| 22 | Parallel walk, `readdir` types | `listFiles` of 200k files: 732 ms, one `stat` per entry (`doesDirectoryExist`), one directory at a time | A pool of up to 8 workers over an STM queue; entry types from `readdir` (`unix` `readDirStreamWith`/`dirEntType`), so only links and unknown types are `stat`ed; directory links are followed once each, cycles skipped | 732 → 363–391 ms (−N1: 692 ms, so the gain is the parallelism); Helix's repo 19 → 16 ms. *Machine in use* |
-| 23 | Git diff cost (measurement) | `bench/DiffBench.hs`: 200k lines, the diff the git signs recompute after an edit | Myers after prefix/suffix trimming; at most one diff per document in flight, on a background thread | identical 5 ms; a line added at the top 9 ms; 10 spread edits 26 ms; one changed line in the middle 53 ms (list reversals while trimming the suffix; arrays would cut it if it ever matters). *Machine in use* |
-| 24 | Tree-sitter cost (measurement) | `bench/HighlightBench.hs` on Helix's `commands.rs` (7,241 lines) and `test/Spec.hs` (1,596) | Full parse per version in a job; highlight only the view ± 100 lines (`ts_query_cursor_set_byte_range`), one FFI call per request | Rust: parse 22 ms, 260-line window 3 ms, whole file 167 ms; Haskell: parse 18 ms, window 10 ms; grammar and query load 29 / 157 ms once per document. *Machine in use* |
-| 25 | Parse the built-in theme once | startup_empty 14.5 ms vs 9.5 before themes; the built-in theme (≈100 TOML lines) was parsed twice, the reader walking every line as a `String` (1.3 ms cold) | `loadTheme "default"` reuses `defaultTheme`; the TOML reader skips the comment and bracket walks on lines without `#` or brackets, and reads strings without escapes as slices | startup 14.5 → ~12 ms (Vim 24, Helix 30) |
-| 26 | Visible diagnostics only | Every frame converted and sorted *all* of a document's diagnostics, three times (text area, gutter, command line); with thousands from a server, that is per key | `shownDiagnosticsIn` skips diagnostics outside the drawn lines before any column conversion | per-frame cost bounded by the screen; no visible change on the benchmark (the server's own traffic dominates) |
-| 27 | Debounced git diff | Typing in a 20k-line file in git: 3.3 ms per key (p95 4.3) vs 0.4 without git; each version diffed the whole file right away | The diff job sleeps 50 ms first; a newer version's job replaces it (same job key), and housekeeping tracks the version it asked for instead of a pending flag | typing 3.3 → 0.7 ms (p95 4.3 → 0.9); signs follow 50 ms after typing stops |
 
 ## Profiling him
 

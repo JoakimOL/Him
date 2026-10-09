@@ -35,4 +35,5 @@ whose action's first parameter is `int "count"` runs with the count (`boundCount
 Other bindings ignore it, as does a binding that already gives arguments
 (`move_line_down 20`). `0` only continues a count, and a digit that the keymap binds
 keeps its binding. The count is capped at 1,000,000.
-*Later:* `:` could gain a command that runs any action by its invocation text.
+*Later:* `:action` runs any action by its invocation text (`:action goto_line 12`), and the
+config file's `[keys.*]` tables produce the `Bindings` ([ADR toml-config](toml-config.md)).

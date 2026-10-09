@@ -16,7 +16,7 @@ and holds no handles, and actions cannot see the config.
   (bumped by edits, undo/redo and `replaceText`). Pickers have a generation. Every
   result names what it was computed for, and a stale one is dropped.
 - **Testing:** tests can assert the effects an action requested. The `settle` helper in
-  `test/Spec.hs` runs jobs on a real runtime, as the main loop does.
+  `test/Test/Util.hs` runs jobs on a real runtime, as the main loop does.
 - **`Him.Process`** runs external programs (stdin in; stdout and stderr read
   concurrently), and `Him.Json` is a small JSON library. Both are for the git and LSP
   phases.

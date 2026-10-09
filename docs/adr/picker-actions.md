@@ -2,7 +2,7 @@
 
 The user asked for a common picker API: two actions on two keys, so the file picker can
 open several files and the jumplist can jump or remove. The longer aim is for the picker
-to be a component of a public plugin API.
+to be a component of a public plugin API (it is: [ADR plugin-api](plugin-api.md)).
 - **Named actions.** A picker names its actions: `pkPrimary` (default `picker_open`)
   and `pkSecondary` (`Maybe`). `ret` (`picker_accept`) and `del` (`picker_secondary`)
   run them as `RunAction` invocations. The named action reads the chosen items with

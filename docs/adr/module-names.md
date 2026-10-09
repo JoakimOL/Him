@@ -9,5 +9,4 @@ holds the `EditorM` monad and its helpers. They are now `Him.Actions.*` and
 - One `changeDocument` / `replaceBuffer` helper replaced four hand-built undoable
   replacements.
 
-The old names stay in the older ADRs and log entries, which describe the code as it
-was then.
+The old names stay in the older ADRs, which describe the code as it was then.

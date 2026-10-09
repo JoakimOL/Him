@@ -21,7 +21,7 @@
   him compiles them itself with `-O2 -fno-strict-aliasing`; 299 of 301 built here.
   Where the sources come from, and the queries, is [ADR grammar-setup](grammar-setup.md)
   (`him --grammar`).
-- **Cost** (`bench/HighlightBench.hs`, log 24): a 7,241-line Rust file parses in 22 ms,
+- **Cost** (`bench/HighlightBench.hs`): a 7,241-line Rust file parses in 22 ms,
   and a 260-line window highlights in 3 ms. Loading a grammar and its query takes
   30–160 ms, once per document. All of it runs in jobs. Every edit re-parses fully for
   now; incremental parsing (roadmap 3b) would use the edits.

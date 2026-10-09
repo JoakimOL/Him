@@ -27,5 +27,8 @@ How it is read:
   defaults if missing; saving creates the directory. `:config-reload` replaces the
   loop's config, the runtime's server table and the editor settings.
 
+Later sections: `[plugins]` ([ADR plugin-api](plugin-api.md)), `[repl.<language>]` and
+`[keys.repl]` ([ADR repl](repl.md)), `[chat]` and `[keys.chat]` ([ADR ai-chat](ai-chat.md)).
+
 *Alternative:* a custom `keys = action` line format. It is simpler to parse, but it
 leaves no room to grow and is unfamiliar.

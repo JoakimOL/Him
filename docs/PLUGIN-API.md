@@ -1,6 +1,6 @@
 # Plugin API: design and plan
 
-*2026-10-05, branch `plugin-api`. Phases 0–4 are done ([ADR picker-actions](adr/picker-actions.md), [ADR plugin-building-blocks](adr/plugin-building-blocks.md), [ADR plugin-api](adr/plugin-api.md), [ADR personal-builds](adr/personal-builds.md)). Not done
+*2026-10-05, branch `plugin-api`. Phases 0–5 are done ([ADR picker-actions](adr/picker-actions.md), [ADR plugin-building-blocks](adr/plugin-building-blocks.md), [ADR plugin-api](adr/plugin-api.md), [ADR personal-builds](adr/personal-builds.md), [ADR plugin-canvas](adr/plugin-canvas.md)). Not done
 yet: `him --update`, and a real run of a personal build, which needs the network.* The goal is for users to write their own
 plugins **in Haskell** and switch them on and off with the `:plugin` commands. A plugin
 builds its UI from building blocks (pickers, status line segments, …) and can see the
@@ -20,9 +20,9 @@ editor's state and loaded buffers, much as Vim plugins can.
     toolchain is needed;
   - option 3: `him --rebuild` for users with GHC and stack.
 
-  Both read the same plugin list. They are written down here but not developed yet.
+  Both read the same plugin list, and both exist now (phase 4).
 
-## Where we are
+## Where we started
 
 | What plugins need | What exists | Gap |
 |---|---|---|
@@ -49,52 +49,60 @@ pure and keeps one plugin from breaking another's layout.
 ```haskell
 -- Him.Plugin: the stable surface. Everything else in Him.* is internal.
 data PluginSpec s = PluginSpec
-  { name, doc   :: Text
-  , initial     :: s                        -- the plugin's own state
-  , actions     :: [PluginAction s]         -- name, doc, params, handler
-  , commands    :: [PluginCommand s]        -- : commands
-  , bindings    :: [(Mode, Text, Text)]     -- default keys (the user's win)
-  , onEvent     :: Event -> PluginM s ()    -- see Events
-  , start, stop :: PluginM s ()             -- plEnable / plDisable
+  { psName, psDoc     :: Text
+  , psInitial         :: s                     -- the plugin's own state
+  , psDefaultOn       :: Bool                  -- False for contrib
+  , psActions         :: [PluginAction s]      -- name, doc, params, handler
+  , psCommands        :: [PluginCommand s]     -- : commands
+  , psBindings        :: [(Mode, Text, Text)]  -- default keys (the user's win)
+  -- … psPrefixNames, psKeymaps, psOptions, psSigns
+  , psOnEvent         :: Event -> PluginM s () -- see Events
+  , psStart, psStop   :: PluginM s ()          -- plEnable / plDisable
   }
 
--- PluginM s: the editor monad, plus get/put for the plugin's own state s.
--- `plugin :: PluginSpec s -> Plugin` (in Him.Plugin.Host) turns a spec into
--- today's Plugin record.
+-- PluginM s: the editor monad, plus getState/putState for the plugin's own state s.
+-- `hostPlugin :: PluginSpec s -> Plugin` (in Him.Plugin.Host) turns a spec into
+-- the editor's Plugin record.
 ```
 
 - **Queries** return stable *view* types, not `Editor`/`Document`:
-  - the view types: `BufferInfo` (id, path, language, dirty, line count, version),
-    `WindowInfo` (id, buffer, selection, size), `Mode`, `Options` (read-only),
+  - the view types: `BufferInfo` (id, path, name, kind, language, dirty, line count,
+    version), `WindowInfo` (id, buffer, focused), `Mode`, `Options` (read-only),
     `Diagnostic`;
-  - text reads: `lineAt`, `textRange`, `bufferText`;
-  - `currentBuffer`, `buffers`, `windows`, `selection`.
+  - text reads: `bufferText`, `bufferLine`;
+  - `currentBuffer`, `buffers`, `windows`, `cursor`, `selections`.
 
   The internal records can then keep changing.
 - **Commands:**
-  - Buffers: `openFile`, `setSelection`, `applyEdits` (through `changeDocument`, so
-    undo, the jumplist and LSP sync keep working), `runAction` (any action, as an
-    `Invocation`), `notify` (`info`/`failWith`).
-  - Processes: `spawn` (a process whose output arrives as events) and `startJob`.
-- **Events:** `BufferOpened`, `BufferSaved`, `BufferChanged id version`,
-  `BufferClosed`, `ModeChanged`, `FocusChanged`, `PickerChose action items`,
-  `ProcessOutput key line`, `ProcessExited`, `Tick` (housekeeping).
-  - Core code raises them into an event list, `edEvents`.
-  - `Session.housekeeping` delivers them. Only Session sees `cfgPlugins`, and this is
-    where git and the REPL already poll.
+  - Buffers: `openFile`, `focusBuffer`, `setCursor`, `replaceRange` (through
+    `changeDocument`, so undo, the jumplist and LSP sync keep working), `runAction`
+    (any action, as an `Invocation`), `notify` / `warn`, `closeBuffer`.
+  - Processes: `spawn` (a process whose output arrives as events), `sendInput`,
+    `stopProcess`. Timers: `startTimer`, `stopTimer`.
+- **Events:** `BufferOpened`, `BufferClosed`, `BufferEntered`, `BufferChanged id
+  version`, `BufferSaved`, `ModeChanged`, `CursorMoved`, `ProcessOutput key line`,
+  `ProcessExited`, `TimerFired`, `CanvasKey`, `CanvasClosed`.
+  - `Session.housekeeping` finds them by comparing the editor with what it saw last
+    time (`Him.PluginEvent.detectEvents`), and delivers them. Only Session sees
+    `cfgPlugins`.
+  - A picker's choice is not an event: `ret` / `del` run the plugin's named action,
+    which reads `chosenItems`.
 - **UI building blocks (declarative, owned by the core):**
-  - **Picker:** `openPicker PickerSpec { title, items :: [Item], primary, secondary }`.
-    Here `primary`/`secondary` name the plugin's actions ([ADR picker-actions](adr/picker-actions.md)), `Item` carries a
-    `PickValue` payload, and the choice arrives as `PickerChose`.
-  - **Status line segments:** `setStatus [Segment { side, priority, text, style }]` per
-    plugin (or per buffer). The core lays them out with the built-in segments. Git's
+  - **Picker:** `openPicker PickerSpec { pickerTitle, pickerItems :: [Item],
+    pickerPrimary, pickerSecondary }`. Here primary/secondary name the plugin's
+    actions ([ADR picker-actions](adr/picker-actions.md)), an `Item` carries a
+    `Target`, and the action reads the choice with `chosenItems`.
+  - **Status line segments:** `setSegments [Segment { segSide, segText, segFace,
+    segPriority, segDoc }]` per plugin (or per buffer). The core lays them out with the built-in segments. Git's
     branch and LSP status are the first users.
-  - **Signs and annotations:** `setSigns buffer [(line, Sign)]` and `setAnnotations
-    buffer [(range, Style, virtual text)]`. The gutter and text area draw them in place
+  - **Signs and annotations:** `setSigns buffer [SignSpan]` and `setAnnotations
+    buffer [Annotation]` (a line, virtual text, a face). The gutter and text area draw them in place
     of the hard-coded git and diagnostics paths.
-  - **Popup:** `showPopup InfoBox`, which exists already.
+  - **Popup:** `showPopup title rows`, an `InfoBox`.
   - **Scratch buffers:** `openScratch name text` (a read-only `DocKind`) for output
-    such as logs or results.
+    such as logs or results; `setScratchText` replaces the text.
+  - **Highlights, buffer keymaps, canvases** (phase 5): `setHighlights`,
+    `setBufferKeymap`, `showCanvas`.
   - Later: an input prompt (`ask "Name: "` → an event), timed notifications.
 
 ### State without losing `Eq`/`Show` on `Editor`
@@ -103,9 +111,9 @@ data PluginSpec s = PluginSpec
   segments, signs and annotations. So `Editor` keeps `Eq`/`Show`, and the renderer
   stays pure.
 - **A plugin's own state `s` is any Haskell type.**
-  - The host keeps it in an `IORef` created when the `Config` is built. Functions and
-    `IORef`s live in `Config`, as they do now.
-  - Switching a plugin off resets its state to `initial`.
+  - The editor keeps it as a `Dynamic` under the plugin's name (`edPluginStates`,
+    `Him.PluginState`), so each editor and each test has its own.
+  - Switching a plugin off resets its state to `psInitial`.
   - Tests can read the state through the spec.
 - **Escape hatch:** `liftEditor :: EditorM a -> PluginM s a`, from `Him.Plugin.Internal`.
   - It is for the built-in plugins while they move over.
@@ -113,19 +121,20 @@ data PluginSpec s = PluginSpec
 
 ### Module layout
 
-- `Him.Plugin`: the only module plugins import (it re-exports the next three).
-- `Him.Plugin.Types`: the view types, `Event`, `Segment`, `Sign`, `PickerSpec`, `Item`,
-  `apiVersion`.
-- `Him.Plugin.Query`, `Him.Plugin.Command`: the operations.
-- `Him.Plugin.Host`: `plugin :: PluginSpec s -> Plugin`, state cells, event delivery.
+- `Him.Plugin`: the only module plugins import. It holds the operations and
+  re-exports the types.
+- `Him.Plugin.Types`: `PluginSpec`, `PluginM`, the view types, `PickerSpec`, `Item`,
+  `apiVersion`. `Event` is in `Him.PluginEvent`, `Segment` and the other UI data in
+  `Him.PluginUI`.
+- `Him.Plugin.Host`: `hostPlugin :: PluginSpec s -> Plugin`.
 - `Him.Plugin.Internal`: the escape hatch.
 - `Him.Contrib.<Name>`: one module (or directory) per contrib plugin, importing only
   `Him.Plugin`.
 
 ## The contrib collection (option 1)
 
-- **Where:** `src/Him/Contrib/` in this repository, listed in `Him.Contrib.plugins`.
-  `Him.Config.Default` adds them to `allPlugins`, so `[plugins]`, `:plugins` and
+- **Where:** `src/Him/Contrib/` in this repository, listed in `Him.Contrib.contribPlugins`.
+  `Him.Config.Default` adds them to `plugins`, so `[plugins]`, `:plugins` and
   `:plugin-enable` know them.
 - **Off by default:** `Plugin` gets `plDefaultOn :: Bool`. It is true for git, LSP,
   REPL and chat, and false for contrib. `enabledPlugins` (UserConfig) uses it instead of
@@ -141,10 +150,11 @@ data PluginSpec s = PluginSpec
   - it does nothing until switched on: no cost at startup or per key when off (checked
     by a test).
 - **How a plugin gets in:** a pull request that adds the module, its tests and its line
-  in `Him.Contrib.plugins`. The API is versioned (`apiVersion`) so contrib plugins and
+  in `Him.Contrib.contribPlugins`. The API is versioned (`apiVersion`) so contrib plugins and
   the core change together in one place.
-- **Options:** a plugin's settings live under `[plugins.<name>]` in the TOML. Add a
-  small typed reader to `PluginSpec`, e.g. `options :: OptionSpec o`.
+- **Options:** a plugin's settings live under `[plugins.<name>]` in the TOML.
+  `psOptions` names them (others are refused), and `optionText`, `optionInt`,
+  `optionBool` read them.
 
 ## Later: options 2 and 3
 
@@ -193,7 +203,8 @@ data PluginSpec s = PluginSpec
    - Two small first plugins that use the building blocks. Suggestions:
      - `wordcount`: a status segment;
      - `recent-files`: a picker with a "forget" secondary.
-   - A tutorial section on writing one.
+   - A tutorial section on writing one (since dropped: the tutorial covers only the
+     core editor; the contrib plugins are the examples).
 4. **Later:** the plugin list format, `runWith extraPlugins`, the template repository
    with CI (option 2), and `him --rebuild` (option 3).
 5. **Done:** buffers and boxes of a plugin's own ([ADR plugin-canvas](adr/plugin-canvas.md)): highlights,

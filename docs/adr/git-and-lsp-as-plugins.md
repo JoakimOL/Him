@@ -8,14 +8,15 @@ A `Plugin` (in `Him.Config`) names everything a feature adds:
 - `plEnable` / `plDisable` for switching it while running.
 
 The core folds over `cfgPlugins` (the enabled ones) where it used to call git and LSP
-code by name: `App.housekeeping`, the job-result dispatch, and the per-batch flush.
+code by name: `Session.housekeeping`, the job-result dispatch, and the per-batch flush.
 `Config.Default.configWith enabled userBindings` builds the config:
 - the core's actions and bindings, plus those of the enabled plugins;
 - the user's bindings on top, minus those that name a switched-off plugin's actions
   (they come back with the plugin, rather than failing the config).
 
 How plugins are switched:
-- **At startup:** `[plugins] git = false` (all are on by default).
+- **At startup:** `[plugins] git = false` (all are on by default; later, contrib plugins are off by
+  default, [ADR plugin-api](plugin-api.md)).
 - **While running:** `:plugin-enable` / `:plugin-disable <name>` (`tab` completes the
   names; `ExArgs` gained `NameArgs`), and `:plugins` lists them. The loop keeps the
   `UserConfig`, makes the config again with the new set, and runs the hooks of the

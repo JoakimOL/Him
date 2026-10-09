@@ -62,3 +62,5 @@ of [ADR ai-chat](ai-chat.md).
   for the answer, and reports. With it, the real binary was driven in tmux through
   the whole flow: the edit is shown, approved straight after sending, saved only then,
   and a second message goes to the same process.
+
+*Later:* edits no longer wait for approval; they are reviewed after the turn ([ADR change-review](change-review.md)). Its own tools show as `◦ Searched the code` and the like ([ADR chat-panel](chat-panel.md)).

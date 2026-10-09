@@ -1,7 +1,7 @@
 # What plugins build on: events, processes, segments, signs, annotations
 
 This is phase 1 of the plugin API (`docs/PLUGIN-API.md`). The pieces are all core and
-pure where they can be, and they are meant to be what `Him.Plugin` exposes.
+pure where they can be, and `Him.Plugin` exposes them ([ADR plugin-api](plugin-api.md)).
 - **UI as data** (`Him.PluginUI`): each plugin has a `PluginUI` in `edPluginUI`
   (by plugin name) holding status line `Segment`s, gutter `SignSpan`s and end-of-line
   `Annotation`s by document. The renderer draws them, so a plugin never draws into the

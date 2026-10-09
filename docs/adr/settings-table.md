@@ -12,7 +12,9 @@ lists the known keys of its table), applying it (`userOptions`), and the
 `edOptions :: Options` on the editor (which replaced `edScrolloff` and `edShowHidden`),
 so actions and render components read them like any state. The settings are:
 - `[editor]`: `scrolloff`, `show-hidden-files`, `tab-width`, `expand-tab`,
-  `line-number` (absolute / relative / off), `escape-timeout` (read at startup only);
+  `line-number` (absolute / relative / off), `clipboard-provider`
+  ([ADR registers-and-clipboard](registers-and-clipboard.md)), `escape-timeout` (read at
+  startup only);
 - `[editor.cursor-shape]`: normal, insert, select, command;
 - `[editor.lsp]`: `auto-completion`, `completion-trigger-len`, `auto-signature-help`,
   `hover-lines`;

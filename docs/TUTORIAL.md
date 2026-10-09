@@ -15,12 +15,16 @@ this guide it can:
 - insert, change, delete, yank and paste, undo and redo
 - run `:w`, `:q`, `:q!`, `:wq`
 - search with `/`, `?`, `n`, `N`, `*`, including a live preview while you type
+- edit with many cursors at once
 - start faster and use less memory than Vim and Helix on a 14 MB file, and search it
   faster than both
 
-It is about 3,600 lines of Haskell plus two small C files. It uses no packages from
-Hackage, only the libraries that ship with GHC (`base`, `unix`, `text`, `bytestring`,
-`containers`, `transformers`, `stm`, `directory`).
+This guide covers that core editor. him has grown well beyond it since: pickers, git
+signs, tree-sitter highlighting, a language-server client, splits, a REPL, an AI chat
+and plugins. Those are described in `docs/PLAN.md` and the decision records in
+`docs/adr/`. Like the core, they use no packages from Hackage, only the libraries that
+ship with GHC (`base`, `unix`, `text`, `bytestring`, `containers`, `transformers`,
+`stm`, `directory`, and a few more), plus some C.
 
 The guide follows the order the editor was actually built in. Each part ends with
 something you can run. Along the way there are tasks, marked **▶ Task**: small pieces to
@@ -33,7 +37,7 @@ repository, so you can always compare.
 | 2 | Buffer, positions, selections, motions, edits | A pure core you can test without a terminal |
 | 3 | Commands, keymaps, modes, the main loop | Everything a key does is a *named command* |
 | 4 | Frames, components, diffing | Render to a pure grid, then send only the difference |
-| 5 | Undo, registers, search | Small modules on top of the core |
+| 5 | Undo, registers, search, many cursors | Small modules on top of the core |
 | 6 | A benchmark harness | Drive real editors in a pseudo-terminal |
 | 7 | Optimizations | Measure, find the real cost, fix it, measure again |
 
@@ -367,8 +371,9 @@ line ends, then extend over one class. Test: in `"hello world"` from `(0,4)` the
 is anchor `(0,5)`, head `(0,10)`. Write `prevWordStart` (`b`) as the mirror image using
 `prevPos`.
 
-`x` selects the whole line including its newline, and extends by one line if the range
-already covers whole lines. That's one small function with two cases.
+`x` selects the whole lines the range touches, including the newline, and extends by
+one line if the range already covers whole lines. That's one small function with two
+cases.
 
 ### 2.4 Edits are pure too
 
@@ -477,11 +482,11 @@ resolve (Keymap m) (k : ks) = case Map.lookup k m of
 ```
 
 Bindings are written as plain pairs, with a left-biased `unionKeymap` that merges
-prefixes. Select mode is "normal mode plus two overrides":
+prefixes. Select mode is "normal mode plus a few overrides":
 
 ```haskell
 normalBindings = [("h", "move_char_left"), ("w", "move_next_word_start"), ("g g", "goto_file_start"), ...]
-selectBindings = [("esc", "normal_mode"), ("v", "normal_mode")]
+selectBindings = [("esc", "normal_mode"), ("v", "normal_mode"), ("o", "flip_selections")]
 keymaps = Map.fromList [(Normal, normal), (Select, unionKeymap select normal), ...]
 ```
 
@@ -662,7 +667,8 @@ editor.
 
 ### 4.4 Themes: borrow a format, get 219 themes ([ADR helix-themes](adr/helix-themes.md))
 
-Highlighting (5.9) produces *scopes* with Helix's names (`keyword.control.import`). So
+Syntax highlighting (added later, see [ADR syntax-providers](adr/syntax-providers.md))
+produces *scopes* with Helix's names (`keyword.control.import`). So
 reading Helix's theme files, rather than inventing a format, makes every Helix theme
 work in him:
 
@@ -764,8 +770,6 @@ upper-case letters). Use it in a randomized test against `findMatch` for both
 directions. That's how him's fast search is tested: 1,500 random cases on buffers built
 from several blocks plus edits.
 
----
-
 ### 5.4 Many cursors ([ADR bottom-up-multi-range-edits](adr/bottom-up-multi-range-edits.md))
 
 Every motion already worked on all ranges, so multiple selections only needed edits to
@@ -791,392 +795,6 @@ On top of that, the Helix selection tools are small pure functions. `s` (select 
 matches inside the selection) reuses the search's block scanner and its incremental
 preview. `C` copies each range onto the next line where it fits, and `A-s` splits ranges
 into lines.
-
-### 5.5 Buffers, menus, and pickers ([ADR buffer-zipper](adr/buffer-zipper.md), [ADR menus-as-data](adr/menus-as-data.md))
-
-**Buffers without touching `edDoc`.** Dozens of functions read `edDoc`. Instead of
-replacing it with a list and an index, the other documents sit on either side of it, as
-a zipper:
-
-```haskell
-data Editor = Editor { edDoc :: Document, edBefore :: [Buffered], edAfter :: [Buffered], ... }
-data Buffered = Buffered { bufDoc :: Document, bufView :: View }
-```
-
-Switching buffers moves documents between the lists. Everything that edits "the
-document" keeps working unchanged.
-
-**Menus as derived data.** Helix shows which keys can follow `g` or `space`. The
-keymap trie already has that answer, so the info box is a function of the state:
-
-```haskell
-refreshInfo :: Config -> Editor -> Editor      -- runs after every key
-keyInfo config ed = do
-  sub <- lookupPrefix keymap (edPending ed)     -- the trie below "g"
-  pure (InfoBox "goto" [(showKey k, docOf b) | (k, b) <- children sub] BottomRight)
-```
-
-The `:` menu works the same way, from the ex-command table. Since the box is
-recomputed rather than updated, there is no "forgot to close the popup" bug.
-
-**A trap from the row cache.** Rows are copied from the previous frame when their
-`RowKey` is unchanged (7.6). A popup draws over those rows, so after it closes, the
-cached rows would bring it back. The fix is one line: a popup deletes the keys of the
-rows it covers. The test for it renders with a box, then without, and compares the
-result with a fresh render. With the line removed, the test fails.
-
-**Pickers** are a mode (`Picking`) with their own keymap, so the arrow keys, `ret` and
-`esc` are ordinary bindings. Typed characters reach the query through the fallback.
-The fuzzy score is the number of characters skipped between the first and last match,
-and every start position is tried, so `ab` matches `src/ab.hs` before `src/a/long/b.hs`.
-
-### 5.6 Ignore files and a directory viewer ([ADR gitignore-matcher](adr/gitignore-matcher.md), [ADR directory-documents](adr/directory-documents.md))
-
-**Gitignore without a regex engine.** A pattern compiles to a few tokens, and a
-backtracking matcher walks the path:
-
-```haskell
-data Tok = Lit Char | One | Star | AnyAll | Dirs | Class Bool [(Char, Char)]
--- "*.o"    -> [Dirs, Star, Lit '.', Lit 'o']   (no slash: match at any depth)
--- "/build" -> [Lit 'b', ...]                   (anchored)
-glob (Star : ts) s = any (glob ts) [drop n s | n <- [0 .. length (takeWhile (/= '/') s)]]
-glob (Dirs : ts) s = glob ts s || or [glob ts rest | ('/' : rest) <- tails s]
-```
-
-Each rule set remembers the directory of its file. The walk adds a directory's rules
-before listing it, and simply never enters an ignored directory. That one choice gives
-git's rule that nothing inside an ignored directory can be re-included.
-
-**A directory is just a document.** Emacs's dired shows a directory as a buffer of
-text, and that is the trick here too. A listing is a read-only `Document` whose lines are
-its entries, so `j`, `5 k`, `/name`, `g g` and the buffer commands work with no new code.
-What it adds is a keymap *layer*: in normal mode on a listing, `keymapMode` returns
-`Directory`, a binding set that inherits normal mode exactly as select mode does. It
-adds `ret` (open), `-` (up) and `g r` (refresh). The only other changes are guards that
-refuse edits and insert mode in a read-only document.
-
-File operations reuse the command line. `r` opens a prompt whose kind,
-`FilePrompt (RenameEntry dir old)`, says what `ret` will do, and the line starts out
-holding the old name. `d` collects the entries under *every* selection, so the
-multiple-selection tools from 5.4 double as dired's marks. One detail is worth a test of
-its own: deleting a symlink to a directory must unlink it, not delete what it points to.
-
-### 5.7 Effects, background jobs, and a picker that never blocks ([ADR effects-and-runtime](adr/effects-and-runtime.md), [ADR streaming-file-picker](adr/streaming-file-picker.md))
-
-Everything so far ran on the main thread, and that was fine, since a key costs well
-under a millisecond. A file picker over 200,000 files is different: the walk takes
-hundreds of milliseconds and ranking takes tens. Two ideas keep the editor responsive.
-
-**Effects as data.** An action that wants work done asks for it:
-
-```haskell
-simple "file_picker" GBuffers "Open a file from the working directory" $ do
-  gen <- freshGeneration
-  open (newPicker "files" []) {pkGeneration = gen, pkLoading = True}
-  request (StartJob (ScanFiles gen "."))
-```
-
-The main loop owns the runtime. It starts the job on a thread, and the job posts its
-results on the same channel as the keys (`EvJob (FilesFound gen batch)`). Results
-are handled by `handleEvent` like a key press, so there are no locks around the
-editor state. A tagged generation lets the picker ignore results meant for one that
-was closed.
-
-**Measure, then choose.** The first profile showed three separate costs. Each got
-the cheapest fix that worked:
-- *rejecting* a non-match: a precomputed lower-case key and an in-order check,
-  65 → 12 ms;
-- *sorting* every match: buckets keyed by rank, keeping the best 1000;
-- *walking*: parallel workers, plus types from `readdir` instead of a `stat` per file,
-  732 → about 370 ms.
-
-What remained was about 75 ms when every item matches. So instead of more micro-tuning,
-large pickers rank in a background job and keep showing their last results until the
-new ones arrive. Typing never waits.
-
-### 5.8 Git signs and staging lines ([ADR git](adr/git.md))
-
-Git is two diffs away. The index and HEAD versions of a file come from
-`git show :path` and `git show HEAD:path`, run in a background job. Two diffs follow:
-- index → buffer, the *unstaged* changes;
-- HEAD → index, the *staged* ones, whose lines are moved onto the buffer through the
-  first diff.
-
-The diff is ours (Myers, after trimming the common prefix and suffix), so the signs
-follow every keystroke, not only saves. A randomized test checks every diff against a
-textbook longest-common-subsequence: it must be correct *and* minimal.
-
-Staging, unstaging and resetting look like three features, but they are one function:
-
-```haskell
--- old with the selected changes towards new applied
-applySelected :: [Text] -> [Text] -> [Hunk] -> (Int -> Bool) -> [Text]
-
-stage   = applySelected index buffer (diffLines index buffer) selected
-unstage = applySelected head index  (diffLines head index)   (not . selected')
-reset   = applySelected index buffer (diffLines index buffer) (not . selected)
-```
-
-Reverting the selected changes is the same as applying the unselected ones. The new
-index version goes in with `git hash-object -w --stdin` and `git update-index
---cacheinfo`. No patches are built, so partial hunks cannot produce an invalid patch.
-
-### 5.9 Highlighting: one interface, tree-sitter behind it ([ADR syntax-providers](adr/syntax-providers.md), [ADR tree-sitter](adr/tree-sitter.md), [ADR regex-engine](adr/regex-engine.md))
-
-The requirement was "the code shouldn't care whether it is tree-sitter or TextMate".
-In Haskell that is a record of functions:
-
-```haskell
-data SyntaxProvider = SyntaxProvider { spName :: Text, spStart :: Language -> IO (Maybe SyntaxSession) }
-data SyntaxSession  = SyntaxSession  { ssUpdate :: Int -> Buffer -> [TextChange] -> IO ()
-                                     , ssHighlight :: Int -> Int -> IO (IntMap [LineSpan])
-                                     , ssClose :: IO () }
-```
-
-The editor asks for spans of the lines around the view, in a background job, and draws
-them. The tests plug in a provider that only knows the word `let`, and everything
-works: jobs, versions, rendering, the theme. Only then does tree-sitter come in.
-
-**A war story.** The first tree-sitter build crashed the test suite with "corrupted size
-vs. prev_size", but only for Haskell, only for longer files, and only after the
-highlight query had been compiled. The search narrowed the cause in steps:
-1. A plain C program with our runtime and Helix's `haskell.so` crashed the same way,
-   so it was not the Haskell bindings.
-2. The grammar built from source at `-O0` worked, but at `-O3` it crashed.
-3. AddressSanitizer pointed at `array_push` in the grammar's scanner.
-
-The grammar's old `array.h` reallocates through an `(Array *)` cast, and strict
-aliasing lets the compiler keep the stale pointer. The lesson: native code from
-elsewhere is part of your program's memory safety. him now builds its own grammars
-(`him --grammar`, with `-fno-strict-aliasing`) instead of trusting prebuilt
-ones.
-
-### 5.10 A language-server client without blocking ([ADR lsp-client](adr/lsp-client.md))
-
-LSP is JSON-RPC over a pipe. The design question is where the waiting happens, and the
-answer is: never on the main thread. Three pieces cooperate:
-- **The runtime** owns the server processes. A reader thread turns the byte stream into
-  messages with a pure framer (`feedFramer`, tested at every split point of a stream),
-  and a writer thread drains a queue. Requests from the server that need no decision,
-  such as "send me your configuration", are answered right there.
-- **The editor** builds messages as plain JSON values and sends them as an effect
-  (`LspSend`). It records what each request was for: `IntMap Pending`, keyed by id.
-- **Replies** arrive as events. `answered` is a pure function from `Pending` and the
-  result to an editor change: a hover popup, a jump, a picker, a completion menu.
-
-Positions are where clients often go wrong. LSP counts UTF-16 code units by default;
-him counts characters. The client offers UTF-8, which clangd and rust-analyzer accept,
-and converts columns per line (`toLspColumn` / `fromLspColumn`). The conversions are
-tested with an emoji, which is 1 character, 2 UTF-16 units and 4 UTF-8 bytes.
-
-The tests drive a real clangd: open a C file with a type error, wait for the
-diagnostic, hover, jump to a definition, fix the error and watch the diagnostic
-disappear, then complete a word.
-
-**Sending less.** The first version sent the whole file after every burst of typing.
-Incremental sync needs to know *what* changed. Rather than threading a change log
-through every edit function (and through undo, which swaps whole snapshots), the
-client compares the text it last sent with the text now (`Buffer.changeBetween`).
-That sounds expensive but is not. The rope shares unchanged blocks between versions,
-so a memory comparison skips them; only the edited block is compared line by line,
-and the remaining lines character by character. A one-character edit in 196,000 lines
-costs under a millisecond. A randomized test checks that applying the computed change
-to the old text gives the new one.
-
-**Where edits come back.** Rename, formatting and code actions all return edits. One
-function applies them, from the last position to the first so that earlier positions
-stay valid. One trap is worth knowing: clangd's "extract variable" is a *command*.
-The client runs it, and clangd answers by *asking the client* to apply an edit
-(`workspace/applyEdit`). A client that answers every server request automatically, as
-the first version did, silently drops that edit.
-
-**Seeing before choosing.** A list of references is only useful if you can see them.
-The picker's preview is a pure function of the editor state (`previewFor`). An item
-that is a place resolves to an open buffer's text, or to a file read in the background
-and cached while the picker is open. The renderer draws what that function returns:
-the text, "loading…", or why the file is not shown. Because the preview is derived
-data, moving the selection needs no bookkeeping beyond asking for a file that has not
-been read yet.
-
-**Queries the server answers.** Workspace symbols cannot be filtered locally; there
-are too many. So a picker can have a *source*. A `ServerQuery` picker sends each
-change of its query to the server, keeps showing the last answer, and drops answers to
-older queries, the same staleness rule as everywhere else.
-
-### 5.11 Splits and a REPL beside the code ([ADR window-splits](adr/window-splits.md), [ADR repl](adr/repl.md))
-
-**Splits** keep the old state for the focused window: `edDoc` and `edView` are still
-"what you are editing". The other windows are only `Window { winDoc, winView,
-winSelection }`, and the screen is a tree:
-
-```haskell
-data Layout = Leaf Int | Split Axis [Layout]   -- Axis: Beside (:vsplit) | Stacked (:hsplit)
-```
-
-- **Focusing** a window swaps it with the focused one: the focused window is put
-  away as a `Window`, and the other one's document becomes current, with its view and
-  selection. No action had to change.
-- **Drawing** an unfocused window uses the same components: `windowEditor` builds the
-  editor *as that window shows it*, and the gutter, text area and status line draw it
-  as usual.
-
-**The REPL plugin** turns a buffer into a terminal-like transcript:
-- The document remembers where the input starts.
-- Output from the process is inserted *before* that point, so it never interrupts
-  what you type. `ret` sends what follows it.
-- Code sent from a file (`space e`) is echoed into the transcript, because a REPL
-  reading a pipe does not echo.
-
-**Using it for testing while developing** (him itself is the example):
-
-```toml
-# ~/.config/him/config.toml
-[repl.haskell]
-args = ["ghci", "him:lib", "him:test:him-test"]   # the library and the tests
-```
-
-1. Open `src/Him/Window.hs`, then `:repl`. `stack ghci` starts in the project root
-   and loads everything.
-2. Write a function, select a call to it (`x`, or `v` and a motion), and press
-   `space e`. The result appears in the REPL window. Several lines are wrapped in
-   `:{ … :}` for you.
-3. Save (`:w`). The REPL runs `:reload` by itself, so the next `space e` uses the new
-   code.
-4. `:repl-send main` runs the whole test suite. To run one group, select an
-   expression such as `runTests [group "w" windowTestsPure]` and press `space e`.
-5. `C-c` (in the REPL buffer) or `:repl-interrupt` stops a runaway evaluation.
-
-**▶ Task 7b.** Write `insertOutput` for a transcript. Given the input start `p` and
-some output text, insert the text at `p`. Then move every cursor at or after `p`, so
-that one at the end of the typed input stays at the end. Test it with output that has
-no newline, and with output that has two.
-
-### 5.12 Text objects and an AI chat ([ADR match-mode](adr/match-mode.md), [ADR ai-chat](adr/ai-chat.md))
-
-**Match mode** (`m`) is small once selections are pure:
-- `m i w` and `m a (` ask `Him.TextObject.textObject` for a range around the cursor:
-  the run of word characters, the innermost pair around it, the paragraph.
-- Brackets are found by walking the text lazily backwards and forwards, counting
-  nesting.
-- `m s (` surrounds every selection through the same `applyEdits` that typing uses.
-
-**The chat** reuses three earlier pieces:
-- the transcript from the REPL (5.11), now `Him.Transcript`;
-- splits, for the window beside the code;
-- the provider idea from highlighting (5.9). A `ChatProvider` takes a request and
-  streams events back, so the tests drive the whole flow with a scripted provider.
-
-The interesting part is the model's edits. They are *proposed*, all in one turn, and
-reviewed like staged hunks ([ADR change-review](adr/change-review.md)):
-- A document under review keeps its text from before the chat's first change (the
-  base). The proposed changes are simply the diff from the base to the buffer.
-- Approving one applies it to the base, the way `git add -p` stages a hunk, and writes
-  the base to the file. Denying applies the reverse to the buffer.
-- The text area draws extra rows for each change: a header, and the removed lines.
-  These rows are not in the buffer.
-
-The chat buffer is laid out like an editor's chat panel ([ADR chat-panel](adr/chat-panel.md), `Him.Chat.Transcript`).
-Output goes *above* the prompt, so the input box stays at the bottom. The transcript
-only ever grows at its last line, so a line's number never changes: what each line is
-(your message, a code block, a tool line) is kept in a map by line number, and the
-renderer styles lines from it. The model's prose is wrapped as it streams by
-re-wrapping just the last line with each new chunk.
-
-The history sent to the model is append-only. The assistant's messages go back exactly
-as they came, thinking blocks included, which the API requires.
-
-With **Claude Code** as the provider ([ADR claude-code-provider](adr/claude-code-provider.md)), the model runs its own loop, so him's
-tools reach it over MCP. `him --mcp-bridge` is a tiny MCP server that Claude Code
-starts; it forwards each tool call through a named pipe to the running editor, and
-waits. The editor answers an edit only after you decide, so the model's turn simply
-pauses until then.
-
-**▶ Task 7c.** Write `textObject True 'w'`: given a line and a column, return the run
-of characters of the same kind (word, punctuation, blank) around it. Then make `m a w`
-include the blanks after the word, or before it at the end of a line.
-
-### 5.13 A plugin API, and writing a plugin ([ADR picker-actions](adr/picker-actions.md), [ADR plugin-building-blocks](adr/plugin-building-blocks.md), [ADR plugin-api](adr/plugin-api.md))
-
-Everything so far was compiled in, and so are plugins: like xmonad, him has no plugin
-loader. Instead, `Him.Plugin` is one module that a plugin imports, and the **contrib
-collection** (`src/Him/Contrib/`) is compiled into every release, off until you switch
-a plugin on:
-
-```toml
-[plugins]
-recent-files = true          # space o: the files opened lately
-
-[plugins.wordcount]          # a table instead, for settings
-enabled = true
-max-lines = 20000
-```
-
-`:plugins` lists every plugin in a picker; `ret` switches the chosen ones on or off.
-
-A plugin is a `PluginSpec s`, where `s` is its own state:
-
-```haskell
-wordCount :: PluginSpec (IntMap Int)
-wordCount =
-  (pluginSpec "wordcount" "The number of words in the buffer" IntMap.empty)
-    { psDefaultOn = False
-    , psOnEvent = \case
-        BufferChanged i _ -> recount i
-        _ -> pure ()
-    }
-
-recount :: BufferId -> PluginM (IntMap Int) ()
-recount i = do
-  n <- maybe 0 (length . T.words) <$> bufferText i
-  modifyState (IntMap.insert i n)
-  counts <- getState
-  setSegments [(segment (T.pack (show c) <> " words")) {segDoc = Just b} | (b, c) <- IntMap.toList counts]
-```
-
-The design keeps the editor's state pure:
-- **What a plugin shows is data.** Status line segments, gutter signs and end-of-line
-  annotations live in the `Editor`, and the renderer draws them. A plugin can't draw
-  into the frame, so plugins can't break each other's layout.
-- **Events are found, not raised.** After every key or job result, housekeeping
-  compares the documents' versions and saves, the mode and the focused buffer with what
-  it saw last time. No code path that edits or saves has to remember to tell the
-  plugins.
-- **Actions are named.** A picker names its primary (`ret`) and secondary (`del`)
-  actions, and `tab` marks items for both to act on. A plugin's picker names its own
-  actions, which read `chosenItems`.
-- **State lives in the editor.** It is a `Dynamic` per plugin, so two editors (or two
-  tests) never share it.
-
-**▶ Task 7d.** Write a plugin that shows, as an annotation on the cursor's line, how
-many times the word under the cursor occurs in the buffer. Which event do you need,
-and what happens to your annotation when the cursor moves to another buffer?
-
-Two more contrib plugins go further ([ADR plugin-canvas](adr/plugin-canvas.md)). `magit` (`space g g`) is a
-magit-like buffer. It runs git with `spawn`, writes the result into a scratch buffer,
-and colours it with `setHighlights` (sections, `+` and `-` lines). It then gives the
-buffer a keymap of its own with `setBufferKeymap`, so `s` stages the file or hunk under
-the cursor there and nowhere else. `tetris` (`:tetris`) draws into a **canvas**, a box
-in the middle of the screen that the plugin fills cell by cell. While the box is
-open it has the keys: its keymap moves the piece, other keys arrive as `CanvasKey`,
-and a timer makes the pieces fall:
-
-```haskell
-    , psKeymaps = [("game", [("left", "tetris_left"), ("space", "tetris_drop"), ("q", "tetris_quit")])]
-    , psOnEvent = \case
-        TimerFired "gravity" -> play fall
-        CanvasKey "board" "r" -> start          -- not in the keymap
-        CanvasClosed "board" -> stopTimer "gravity"
-        _ -> pure ()
-
-redraw = getState >>= mapM_ (\g -> showCanvas "board" (draw g) {canvasKeymap = Just "game"})
-```
-
-The game itself (`move`, `rotate`, `fall`, clearing rows) is pure and tested without
-an editor.
-
-**▶ Task 7e.** Give `magit` a `d` that discards the unstaged change under the
-cursor. It can't be undone, so how should it ask first? (A canvas, or a picker with
-one item, are two ways.)
 
 ---
 
@@ -1409,8 +1027,7 @@ and Vim and Helix only send the cells that changed. Four fixes followed:
    ```
 
    `prevRowOf` looks the row up *by line* (`screenRow + top - prevTop`), so rows survive
-   scrolling. (The key is a row *and* a column since splits put windows side by side,
-   [ADR window-splits](adr/window-splits.md).)
+   scrolling.
 3. **Terminal scrolling.** When the view moves by less than a screen, the diff sets a
    scroll region over the text area and scrolls it (`ESC[1;38r`, `ESC[1S`). It then
    compares the new frame with the *shifted* old one, so a `j` that scrolls writes one
@@ -1426,13 +1043,12 @@ compared cell by cell and style by style with the new frame. On its first run it
 and the bug was in the test: random overlapping writes produced half wide characters,
 which the real renderer never does. The generator now produces only valid frames.
 
-### 7.7 The second pass: catching Helix everywhere (strategies 14–20)
+### 7.7 The second pass: catching Helix everywhere
 
 After 7.6, him still lost to Helix when opening a large file, on edit-and-save, and
-tied on `n`. Every fix below was measured in isolation first. The full log is in
-`docs/BENCHMARK.md`.
+tied on `n`. Every fix below was measured in isolation first.
 
-**Opening (51 → 15–30 ms first paint; see `docs/BENCHMARK.md`).**
+**Opening (51 → 15–30 ms first paint).**
 1. **Count lines with the scan you already do.** `T.count "\n"` is a general substring
    search. Counting newlines inside the C scan that finds line starts made
    `loadDocument` 25 → 5.4 ms.
@@ -1451,7 +1067,7 @@ tied on `n`. Every fix below was measured in isolation first. The full log is in
    `encodeUtf8Builder` calls.
 5. **`hPutBuf` from pinned arrays.** A large region from a loaded file goes to the
    handle directly, without the builder's copy. That saved little, because the rest is
-   the kernel's `write`. It is still logged, because a small effect is a result too.
+   the kernel's `write`. It is still mentioned here, because a small effect is a result too.
 
 **Rendering (`n` 2.5 → about 1.4–2.0 ms, measured on a busy machine).** Measured inside the editor on a slow-clocked core,
 the cell diff cost more than rendering itself.
@@ -1470,29 +1086,27 @@ millisecond off every `n`.
 
 ### 7.8 Where it ended up
 
-Median of five runs, 200,000-line (14 MB) file, same machine. "Now" is 2026-10-02,
-with themes, plugins, splits and all (every plugin on; `docs/BENCHMARK.md` has the
-plugins-off and IDE-style runs):
+Median of five runs, 200,000-line (14 MB) file, same machine. "Now" is the full
+editor of today, commit `4e7df7b` (2026-10-09), with every plugin on.
+`docs/BENCHMARK.md` has the plugins-off and IDE-style runs:
 
 | Scenario | first version | now | vim | helix |
 |---|---:|---:|---:|---:|
-| startup (ms) | 6.3 | **~12** | 24.0 | 30.2 |
-| open 14 MB: first paint (ms) | — | 30.2 | 34.8 | **22.8** |
-| open 14 MB: peak RSS (MB) | 38.6 | **30.2** | 37.2 | 46.8 |
-| 2000 × `j` at once (ms) | 2809 | **≈20** | 62.2 | 628 |
-| 100 × jump to end and back (ms) | 505 | **7.0** | 34.3 | 114 |
-| edit and save (ms) | — | **13.0** | 22.7 | 18.2 |
-| per-key latency `j` (ms) | 4.6 | 1.3 | **0.5** | 2.0 |
-| per-key latency typing (ms) | 4.7 | 1.1 | **0.3** | 1.9 |
-| search, match at the end (ms) | — | **11.2** | 30.3 | 25.7 |
-| search, no match (ms) | — | **5.1** | 24.9 | 47.6 |
-| `n` (ms) | — | 2.8 | **1.6** | 2.8 |
+| startup (ms) | 6.3 | **14.9** | 29.1 | 33.3 |
+| open 14 MB: first paint (ms) | — | 35.5 | 39.7 | **23.8** |
+| open 14 MB: peak RSS (MB) | 38.6 | **31.9** | 37.4 | 47.2 |
+| 2000 × `j` at once (ms) | 2809 | **20.9** | 62.3 | 634 |
+| 100 × jump to end and back (ms) | 505 | **12.6** | 35.6 | 114 |
+| edit and save (ms) | — | **16.2** | 23.4 | 20.1 |
+| per-key latency `j` (ms) | 4.6 | 1.2 | **0.5** | 2.0 |
+| per-key latency typing (ms) | 4.7 | 1.2 | **0.5** | 1.7 |
+| search, match at the end (ms) | — | **11.5** | 29.6 | 24.6 |
+| search, no match (ms) | — | **5.3** | 24.3 | 45.5 |
+| `n` (ms) | — | 2.9 | **1.6** | 2.5 |
 
 The remaining gaps are documented in `docs/BENCHMARK.md`:
-- **Opening large plain files** is slower than Helix (30 vs 23 ms).
-- **Per-key latency** is about 2–3× Vim's.
-
-Each has a concrete next step.
+- **Opening large plain files** is slower than Helix (32–35 vs 24 ms).
+- **Per-key latency** is about 2× Vim's (1.2 vs 0.5 ms).
 
 ### Lessons
 
@@ -1515,13 +1129,14 @@ Each has a concrete next step.
 
 ## Where to go next
 
-The editor is deliberately unfinished. Good next exercises, in increasing difficulty:
+The core editor in this guide is deliberately small. Good next exercises, in
+increasing difficulty:
 
-- **Tree-sitter text objects:** `m i f` (inside a function) like Helix, from the
-  syntax tree the highlighter already has.
 - **Highlight all matches:** a render pass over the visible rows. Remember to add the
   highlight to `RowKey`.
 - **Regex search:** write a small backtracking or Thompson-NFA engine. `Him.Search` only
   needs a block-level matcher, so the rest stays as it is.
 
-`docs/PLAN.md` records every decision made so far and where to pick up.
+Everything him added beyond the core (pickers, git, highlighting, LSP, splits, the REPL,
+the chat, plugins) is described in `docs/PLAN.md` and the decision records in
+`docs/adr/`. `docs/PLAN.md` also says where to pick up.

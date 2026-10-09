@@ -1,6 +1,6 @@
 # Proposed changes are reviewed like staged hunks, in any order
 
-This replaces the approve-before-continuing flow of [ADR ai-chat](ai-chat.md)/42. The user asked for all
+This replaces the approve-before-continuing flow of [ADR ai-chat](ai-chat.md) and [ADR claude-code-provider](claude-code-provider.md). The user asked for all
 proposed edits at once, decided in any order with the cursor on one, and for edits
 that are easier to understand.
 
