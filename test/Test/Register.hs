@@ -68,6 +68,8 @@ registerTests = do
   replacedNamed <- typeKeys "x \" a y j x y j x \" a R" (start "one\ntwo\nthree\n")
   writeIORef clip ("CLIP", "")
   replacedClip <- typeKeys "v l space R" (start "abc")
+  -- y in select mode yanks and goes back to normal mode.
+  yankedSelect <- typeKeys "v l y" (start "abc")
   -- C-r in insert mode inserts a register.
   inserted <- typeKeys "\" a y i C-r a esc" (start "one")
   -- :registers lists them; the popup shows the clipboard's current text.
@@ -93,6 +95,7 @@ registerTests = do
     , test "R replaces the selection with the register" (assertEqual "one\none\n" (textOf replaced))
     , test "\" a R replaces with register a" (assertEqual "one\ntwo\none\n" (textOf replacedNamed))
     , test "v … space R replaces the selection with the clipboard, back in normal mode" (assertEqual ("CLIPc", Normal) (textOf replacedClip, edMode replacedClip))
+    , test "v l y yanks and returns to normal mode" (assertEqual (Just ["ab"], Normal) (reg '"' yankedSelect, edMode yankedSelect))
     , test "C-r a inserts register a" (assertEqual "oone" (textOf inserted))
     , test ":registers lists the registers, reading the clipboard again" (assertEqual (Just [("\"", "a"), ("+", "fresh")]) (infoRows <$> edPopup listed))
     , test ":clear-register a forgets a" (assertEqual [('b', ["a"])] (Map.toList (edRegisters clearedA)))

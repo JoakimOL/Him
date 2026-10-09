@@ -85,9 +85,11 @@ yank c = do
   d <- getDoc
   writeRegister c (map (selectionText (docBuffer d)) (ranges (docSelection d)))
 
+-- | Yank and say what was yanked. Yanking ends select mode, as in Helix.
 yankReporting :: Char -> EditorM ()
 yankReporting c = do
   yank c
+  gets edMode >>= \m -> when (m == Select) (setMode Normal)
   vs <- getRegister c
   let to = if c == defaultRegister then "" else " to " <> T.singleton c
   info $ case vs of
