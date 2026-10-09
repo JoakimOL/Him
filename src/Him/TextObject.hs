@@ -21,11 +21,23 @@ import Him.Position (Pos (..))
 import Him.Selection (Range (..))
 
 -- | The open and close characters for a key: either bracket of a pair
--- names the pair; any other character is its own pair (a quote, @*@).
+-- names the pair, and so does its letter ('pairLetters'); any other
+-- character is its own pair (a quote, @*@).
 pairFor :: Char -> (Char, Char)
 pairFor c = case find (\(o, cl) -> c == o || c == cl) brackets of
   Just p -> p
-  Nothing -> (c, c)
+  Nothing -> maybe (c, c) (\(_, p, _) -> p) (find (\(l, _, _) -> l == c) pairLetters)
+
+-- | Letters for pairs that are hard to type on many keyboards (AltGr, dead
+-- keys): @b@ (), @B@ {}, @r@ [], @c@ <> (crocodile), @q@ backticks.
+pairLetters :: [(Char, (Char, Char), T.Text)]
+pairLetters =
+  [ ('b', ('(', ')'), "parentheses ()")
+  , ('B', ('{', '}'), "braces {}")
+  , ('r', ('[', ']'), "square brackets []")
+  , ('c', ('<', '>'), "angle brackets <>")
+  , ('q', ('`', '`'), "backticks ``")
+  ]
 
 brackets :: [(Char, Char)]
 brackets = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')]
@@ -46,6 +58,7 @@ pairKeys :: [(Char, T.Text)]
 pairKeys =
   [(o, name <> " " <> T.pack [o, cl]) | ((o, cl), name) <- zip brackets ["parentheses", "square brackets", "braces", "angle brackets"]]
     <> [(q, name <> " " <> T.pack [q, q]) | (q, name) <- zip quotes ["double quotes", "single quotes", "backticks"]]
+    <> [(l, name) | (l, _, name) <- pairLetters]
 
 -- | The range a text object covers around a position: @inside@ (@m i@) or
 -- around (@m a@). Objects: @w@ a word, @W@ a WORD (non-blanks), @p@ a

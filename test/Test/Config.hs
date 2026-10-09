@@ -153,7 +153,7 @@ pluginTests =
             (Nothing, True, [False, False, True, True], False, ["git"])
             ( fmap actName (lookupAction "goto_definition" (cfgActions c))
             , isJust (lookupAction "git_stage_file" (cfgActions c))
-            , map found ["g d", "Z", "] g", "Y"]
+            , map found ["g d", "Z", "space g n", "Y"]
             , any (("lsp-info" `elem`) . exNames) (cfgExCommands c)
             , map plName (cfgPlugins c)
             )

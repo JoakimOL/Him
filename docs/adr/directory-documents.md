@@ -1,6 +1,6 @@
 # A directory is a read-only document, plus a keymap layer
 
-`:open dir` (or `him dir`, `space d`, `space D`) loads a listing, as in Emacs's dired.
+`:open dir` (or `him dir`, `space -`, `space .`) loads a listing, as in Emacs's dired.
 - **The document:** a `Document` whose `docKind` is `DirectoryDoc entries`. Line 0 is the
   path, line 1 is `../`, then subdirectories (ending in `/`) and files, sorted. The
   entries are kept in the kind, so a line maps to its entry even when a name contains

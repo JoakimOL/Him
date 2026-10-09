@@ -6,6 +6,7 @@ module Him.Actions.Lsp.Navigation
   , goToLocations
   , openAt
   , jumpDiagnostic
+  , jumpDiagnosticEnd
   , queryWorkspaceSymbols
   , workspaceSymbolsArrived
   ) where
@@ -107,6 +108,16 @@ jumpDiagnostic forward = jumping $ do
       x : _ -> Just x
       [] -> Nothing
     a <|> b = maybe b Just a
+
+-- | Go to the first (or the last) diagnostic of the file.
+jumpDiagnosticEnd :: Bool -> EditorM ()
+jumpDiagnosticEnd first = jumping $ do
+  ed <- get
+  let d = edDoc ed
+      positions = [Pos (sdLine sd) (sdStart sd) | sd <- shownDiagnostics (edLsp ed) (docLsp d) (docBuffer d)]
+  case (if first then id else reverse) positions of
+    p : _ -> modifyDoc (\doc -> doc {docSelection = single (point p)})
+    [] -> info "no diagnostics"
 
 -- * Completion
 

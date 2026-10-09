@@ -44,7 +44,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
       LineRow l -> drawRow f r l
       EmptyRow -> putText (rectRow rect + r) (rectCol rect) (themeTilde theme) "~" f
       HeaderRow n total h ->
-        band (themeReviewHeader theme) r (" ✎ " <> T.pack (show n) <> "/" <> T.pack (show total) <> "  −" <> T.pack (show (hOldCount h)) <> " +" <> T.pack (show (hNewCount h)) <> "  ·  space c a keep  ·  space c d discard  ·  ] c next") f
+        band (themeReviewHeader theme) r (" ✎ " <> T.pack (show n) <> "/" <> T.pack (show total) <> "  −" <> T.pack (show (hOldCount h)) <> " +" <> T.pack (show (hNewCount h)) <> "  ·  space c a keep  ·  space c d discard  ·  space c n next") f
       RemovedRow t -> band (themeRemoved theme) r (T.drop left (T.replace "\t" (T.replicate tabWidth " ") t)) f
     band st r t = putText (rectRow rect + r) (rectCol rect) st (T.take (rectWidth rect) t <> T.replicate (rectWidth rect - T.length t) " ")
     prevFrame = case prev of

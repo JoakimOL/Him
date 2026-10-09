@@ -19,7 +19,12 @@ module Him.Actions.Lsp
 import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.IntMap.Strict qualified as IntMap
 import Data.Map.Strict qualified as Map
+import Control.Monad.IO.Class (liftIO)
+import Data.List (sortOn)
 import Data.Maybe (fromMaybe)
+import Him.Key (KeyCode (..), plain)
+import System.Directory (getCurrentDirectory)
+import System.FilePath (makeRelative)
 import Data.Text qualified as T
 import Him.Action hiding (text)
 import Him.EditorM
@@ -47,12 +52,18 @@ lspPlugin :: Plugin
 lspPlugin =
   (plugin "lsp" "Language servers: diagnostics, hover, go to, completion, rename, format, code actions")
     { plActions = actions
+    , plPrefixNames = [([plain (KChar ' '), plain (KChar 'd')], "diagnostics")]
     , plBindings =
         Map.fromList
           [ ( Normal
             ,
               [ ("space k", "lsp_hover")
-              , ("space x", "diagnostics_picker")
+              , ("space d d", "diagnostics_picker")
+              , ("space d D", "workspace_diagnostics_picker")
+              , ("space d n", "goto_next_diagnostic")
+              , ("space d p", "goto_prev_diagnostic")
+              , ("space d f", "goto_first_diagnostic")
+              , ("space d l", "goto_last_diagnostic")
               , ("g d", "goto_definition")
               , ("g r", "goto_references")
               , ("g y", "goto_type_definition")
@@ -61,8 +72,6 @@ lspPlugin =
               , ("space a", "code_action")
               , ("space s", "document_symbols")
               , ("space S", "workspace_symbols")
-              , ("] d", "goto_next_diagnostic")
-              , ("[ d", "goto_prev_diagnostic")
               ]
             )
           , (Insert, [("C-x", "completion")])
@@ -161,6 +170,23 @@ actions =
       setMode Normal
   , simple "goto_next_diagnostic" GLsp "Go to the next diagnostic" (jumpDiagnostic True)
   , simple "goto_prev_diagnostic" GLsp "Go to the previous diagnostic" (jumpDiagnostic False)
+  , simple "goto_first_diagnostic" GLsp "Go to the first diagnostic of the file" (jumpDiagnosticEnd True)
+  , simple "goto_last_diagnostic" GLsp "Go to the last diagnostic of the file" (jumpDiagnosticEnd False)
+  , simple "workspace_diagnostics_picker" GLsp "List the diagnostics of every file the language servers reported on" $ do
+      ed <- get
+      cwd <- liftIO getCurrentDirectory
+      let items =
+            [ pickerItem
+                (T.pack (makeRelative cwd path <> ":" <> show (l + 1) <> ":" <> show (c + 1)) <> "  " <> severityName (diagSeverity dg))
+                (PickPosition path l c Nothing)
+                (T.takeWhile (/= '\n') (diagMessage dg))
+            | (path, ds) <- Map.toList (lsDiagnostics (edLsp ed))
+            , dg <- sortOn diagStart ds
+            , let (l, c) = diagStart dg
+            ]
+      if null items
+        then info "no diagnostics"
+        else openPicker (newPicker "diagnostics in the workspace" items)
   ]
   where
     -- One entry per diagnostic, not per line it covers.

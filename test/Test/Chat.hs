@@ -372,9 +372,9 @@ flowTests = do
         proposed <- settleChat (T.isInfixOf "2 changes to review" . transcript) =<< typeKeys "space c c h i ret" (newEditor (24, 100) start)
         diskAfterProposing <- TIO.readFile "a.txt"
         -- Out of order: the second first (approve), then the first (deny).
-        secondApproved <- typeKeys "] c space c a" proposed
+        secondApproved <- typeKeys "space c n space c a" proposed
         diskAfterApprove <- TIO.readFile "a.txt"
-        firstDenied <- typeKeys "[ c space c d" secondApproved
+        firstDenied <- typeKeys "space c p space c d" secondApproved
         diskAfterDeny <- TIO.readFile "a.txt"
         -- The next message tells the model what became of them.
         finished <- settleChat (T.isInfixOf "Done." . T.takeEnd 40 . transcript) =<< typeKeys "space c c o k ret" firstDenied

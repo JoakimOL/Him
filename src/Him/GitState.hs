@@ -69,7 +69,7 @@ tracking = \case
 data SignKind = SignAdded | SignChanged | SignRemoved
   deriving stock (Eq, Show)
 
--- | The buffer lines where changes start, sorted (for @] g@ / @[ g@).
+-- | The buffer lines where changes start, sorted (for @space g n@ / @space g p@).
 changeStarts :: GitTracking -> [Int]
 changeStarts t = mergeSorted (map start (gtUnstaged t)) (map start (gtStaged t))
   where

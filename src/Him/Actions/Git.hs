@@ -35,7 +35,7 @@ import Him.PluginUI (Face (..), GutterSign (..), PluginUI (..), Segment (..), Si
 -- as a plugin (ADR git-and-lsp-as-plugins).
 gitPlugin :: Plugin
 gitPlugin =
-  (plugin "git" "Signs for changed lines, ] g / [ g, staging selected lines (space g)")
+  (plugin "git" "Signs for changed lines, staging selected lines, next / previous change (space g)")
     { plActions = actions
     , plBindings =
         Map.fromList
@@ -46,8 +46,8 @@ gitPlugin =
               , ("space g S", "git_stage_file")
               , ("space g U", "git_unstage_file")
               , ("space g r", "git_reset_selection")
-              , ("] g", "goto_next_change")
-              , ("[ g", "goto_prev_change")
+              , ("space g n", "goto_next_change")
+              , ("space g p", "goto_prev_change")
               ]
             )
           ]

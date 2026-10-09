@@ -188,8 +188,8 @@ normalBindings =
        , ("tab", "jump_forward")
        , ("C-s", "save_selection")
        , ("space ?", "command_palette")
-       , ("space d", "directory_of_buffer")
-       , ("space D", "directory_of_cwd")
+       , ("space -", "directory_of_buffer")
+       , ("space .", "directory_of_cwd")
        , ("g n", "buffer_next")
        , ("g p", "buffer_previous")
        , ("i", "insert_mode")
@@ -245,6 +245,7 @@ commandBindings =
 directoryBindings :: [(Text, Text)]
 directoryBindings =
   [ ("ret", "directory_open")
+  , ("u", "directory_parent")
   , ("-", "directory_parent")
   , ("^", "directory_parent")
   , ("backspace", "directory_parent")
@@ -349,13 +350,11 @@ prefixNames =
   Map.fromList
     [ ([plain (KChar 'g')], "goto")
     , ([plain (KChar ' ')], "space")
-    , ([plain (KChar ']')], "next")
     , ([plain (KChar 'm')], "match")
     , ([ctrlW], "window")
     , ([ctrlW, plain (KChar 'n')], "new split")
     , ([plain (KChar ' '), plain (KChar 'w')], "window")
     , ([plain (KChar ' '), plain (KChar 'w'), plain (KChar 'n')], "new split")
-    , ([plain (KChar '[')], "previous")
     ]
 
 ctrlW :: Key

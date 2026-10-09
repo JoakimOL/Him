@@ -20,7 +20,7 @@ that are easier to understand.
   - A review with no changes left is done.
 - **Deciding:** `space c a` / `space c d` act on the change under the cursor
   (`hunkAtLine`: its new lines, or for a removal the line after it), and `space c A`
-  / `D` act on all of them. `] c` / `[ c` move between changes, and `space c l` lists
+  / `D` act on all of them. `space c n` / `space c p` move between changes, and `space c l` lists
   them in a picker with a preview. When a turn ends with proposals, the editor window
   takes the focus, in normal mode, with the cursor on the first change.
 - **Your own unsaved edits are kept out of approvals** (`approveOnto`). Approving
@@ -37,7 +37,7 @@ that are easier to understand.
 - **Showing a change** (`Him.Review.displayRows`): the text area and the gutter draw
   rows, not just buffer lines.
   - Above each change's new lines there is a header row ("change 1/2 (-1 +2) space
-    c a/d: approve/deny ] c: next") and its removed lines (red, from the base, with
+    c a/d: approve/deny space c n: next") and its removed lines (red, from the base, with
     `-` in the gutter).
   - The new lines are highlighted with `+` in the gutter.
   - These extra rows are never in the buffer. The cursor, `cursorPosition` and the

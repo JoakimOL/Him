@@ -14,7 +14,7 @@ picker and adding entries by hand.
 - **What jumps:** an action wraps its work in `jumping`, which pushes the place
   before if the cursor moved or the document changed. Helix's set: `g g` (and
   `<count> g g`, `goto_line`), `g e`, `%`, `g d` / `g y` / `g i` / `g r` (via `openAt`),
-  `] d` / `[ d`, `] g` / `[ g`, and switching documents (`g n` / `g p`, `:o`,
+  `space d n` / `space d p`, `space g n` / `space g p`, and switching documents (`g n` / `g p`, `:o`,
   accepting any picker that goes to a place). Searches (`/`, `?`, `n`, `N`) are
   jumps too, as in Vim.
 - **By hand:** `C-s` (`save_selection`) pushes the selection. `space j` lists the

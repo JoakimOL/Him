@@ -44,7 +44,7 @@ stack install                # build and install the built binary
   - `space /` searches the project's files as you type.
   - A jumplist, as in Helix: `C-o` / `tab`, `C-s` to save a place, `space j` to
     list (and prune) it.
-  - `space d` lists a directory (create, rename, delete).
+  - `space -` lists the file's directory, `space .` the working one (create, rename, delete).
   - `space ?` lists every command with its keys.
   - Splits: `C-w v` / `C-w s` (or `space w`), `:vsplit`, `:hsplit`.
 - **The `:` line** shows the commands as you type; `tab` completes, and `tab` / `S-tab`
@@ -56,9 +56,9 @@ stack install                # build and install the built binary
 - **Themes:** any Helix theme (`:theme onedark`), or your own.
 - **Plugins**, each of which can be switched off (`[plugins]` in the config,
   `:plugin-disable`):
-  - **git:** signs for changed lines; `space g s` stages the selected lines, `] g`
-    jumps.
-  - **lsp:** diagnostics, `space k` hover, `g d`, `g r`, `space r` rename,
+  - **git:** signs for changed lines; `space g s` stages the selected lines, `space g n` / `space g p`
+    jump between changes.
+  - **lsp:** diagnostics (`space d`: this file's, the workspace's, next / previous), `space k` hover, `g d`, `g r`, `space r` rename,
     `space a` code actions, completion, `:format`. Servers: clangd, rust-analyzer,
     haskell-language-server, typescript-language-server, pylsp, gopls.
   - **repl:** `:repl` opens one beside the file (`stack ghci` in a Haskell project),
@@ -73,7 +73,7 @@ stack install                # build and install the built binary
     copies a code block. The model proposes all its changes in one go; they show up
     in the editor with the lines they remove, and nothing is written until you keep
     them. With the cursor on a change, `space c a` / `space c d` keep or discard it
-    (in any order); `] c` / `[ c` move between them, `A` / `D` do all.
+    (in any order); `space c n` / `space c p` move between them, `A` / `D` do all.
   - **contrib**, off until switched on: `wordcount`, `recent-files` (`space o`),
     `magit` (`space g g`: a magit-like status buffer; `s` / `u` stage and
     unstage files, hunks or the selected lines, `tab` shows hunks, `c` commits) and `tetris` (`:tetris`).

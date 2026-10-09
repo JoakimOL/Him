@@ -96,6 +96,7 @@ there are no numbers, so branches that add decisions do not conflict.
 - [plugin-api](adr/plugin-api.md): `Him.Plugin`, the public plugin API, and the contrib collection
 - [personal-builds](adr/personal-builds.md): Personal builds, as in xmonad: `himMain`, `him --rebuild`, and a template repository
 - [plugin-canvas](adr/plugin-canvas.md): Plugins colour buffers, give them keys, draw canvases and keep time
+- [layout-friendly-keys](adr/layout-friendly-keys.md): Default keys avoid AltGr and dead keys; next / previous live in their menus
 - [no-test-framework](adr/no-test-framework.md): No test framework
 
 ## 4. Module map
@@ -213,14 +214,14 @@ Each milestone ends with something runnable, and with this file updated.
   `space b` (buffer picker) ([ADR menus-as-data](adr/menus-as-data.md)).
 - [x] **Ignore files and a directory viewer.** The file picker honours `.gitignore`
   and `.ignore` ([ADR gitignore-matcher](adr/gitignore-matcher.md)). Directories open as dired-style listings: `ret`, `-`, `g r`,
-  `space d` / `space D`, `:cd`, `:pwd` ([ADR directory-documents](adr/directory-documents.md)).
+  `space -` / `space .`, `:cd`, `:pwd` ([ADR directory-documents](adr/directory-documents.md)).
 - [x] **File operations in listings.** `a`, `+`, `r`, `d` (with confirmation),
   and `g .` for dotfiles ([ADR directory-documents](adr/directory-documents.md)).
 - [x] **Foundation, palette, async picker** (roadmap phases 0–1). Effects and
   background jobs ([ADR effects-and-runtime](adr/effects-and-runtime.md)), `:action`, `Him.Json`, `Him.Process`; the command palette
   `space ?`; the streaming, parallel file picker with background filtering ([ADR streaming-file-picker](adr/streaming-file-picker.md)).
 - [x] **Git** (roadmap phase 2). Gutter signs for added/changed/removed lines,
-  staged ones dimmer; `] g` / `[ g`; stage, unstage or reset the selected lines or the
+  staged ones dimmer; `space g n` / `space g p`; stage, unstage or reset the selected lines or the
   file from the editor ([ADR git](adr/git.md)).
 - [x] **Syntax highlighting** (roadmap phase 3). One provider interface ([ADR syntax-providers](adr/syntax-providers.md));
   the tree-sitter provider with a vendored runtime and grammars built by
@@ -302,7 +303,7 @@ them in the editor.
 | Mode | Keys |
 |---|---|
 | Normal (moving) | counts (`5 j`); `h j k l`, arrows, `home`/`end`; `w b e` (words); `g g` / `g e` (first / last line), `<count> g g` (that line), `g h` / `g l` (line start / end); `C-f` / `C-b` (also `pagedown` / `pageup`), `C-d` / `C-u` (half pages); `f t F T` + a character, `A-.` repeats; `m m` (the matching bracket); `C-z` suspends. |
-| Normal (selecting) | `x` (the selection's whole lines; repeat to extend), `X` (the whole lines, never adding one), `;` (collapse), `v` (select mode), `%` (all), `s` (matches inside the selection), `C` (copy the selection to the next line), `,` / `A-,` (keep / remove the primary), `(` / `)` (rotate), `A-s` (split into lines); `m i` / `m a` + `w W p m ( [ { < " ' \`` (inside / around a text object). |
+| Normal (selecting) | `x` (the selection's whole lines; repeat to extend), `X` (the whole lines, never adding one), `;` (collapse), `v` (select mode), `%` (all), `s` (matches inside the selection), `C` (copy the selection to the next line), `,` / `A-,` (keep / remove the primary), `(` / `)` (rotate), `A-s` (split into lines); `m i` / `m a` + `w W p m ( [ { < " ' \`` (inside / around a text object; `b B r c q` name `() {} [] <> \`\`` without AltGr or dead keys). |
 | Normal (editing) | `i a I A` (insert before / after / at the line's start / end), `o` / `O` (on a new line below / above), `d` (delete), `c` (change), `y` (yank), `p` / `P` (paste after / before), `"` + a register before any of them (`+` clipboard, `*` primary, `_` discard), `r` + a character (replace each selected character), `R` (replace with the register), `space y` / `space p` / `space P` / `space R` (the clipboard), `u` / `U` (undo / redo); `m s` + a character (surround), `m r` + two (replace the pair), `m d` + one (delete the pair; `m` the closest). |
 | Normal (search) | `/` / `?` (with preview), `n` / `N`, `*` (selection as the pattern). |
 | Select | Normal mode where motions extend; `o` puts the cursor at the selection's other end (as in Vim); `v` / `esc` back; `y` yanks and goes back. |
@@ -310,14 +311,14 @@ them in the editor.
 | Command line | typing, `tab` (complete names, paths, themes, plugins; again to cycle the candidates), `S-tab` (cycle back), `backspace`, `ret`, `esc`. |
 | Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`/`S-tab`, `tab` (mark, for `ret`/`del` to act on all marked), `ret`, `del` (the picker's second action: the jumplist removes the entry), `esc`. |
 | Jumplist | `C-o` (back), `C-i` / `tab` (forward), both with a count; `C-s` (save the selection). |
-| Directory listings | `space d` (the file's directory), `space D` (the working directory), `:o dir`; in a listing: `ret`, `-` / `^` / `backspace` (parent), `g r` (refresh), `a` (new file or `dir/`), `+` (new directory), `r` (rename), `d` (delete, asks), `g .` (dotfiles). |
+| Directory listings | `space -` (the file's directory), `space .` (the working directory), `:o dir`; in a listing: `ret`, `u` / `-` / `^` / `backspace` (parent), `g r` (refresh), `a` (new file or `dir/`), `+` (new directory), `r` (rename), `d` (delete, asks), `g .` (dotfiles). |
 | Windows | `C-w` or `space w`, then `v` / `s` (split side by side / stacked), `w` (next), `h j k l` (focus), `H J K L` (swap), `q` (close), `o` (only), `n v` / `n s` (split with a scratch buffer). |
-| git plugin | `] g` / `[ g` (next / previous change); `space g s` / `u` (stage / unstage the selected lines), `S` / `U` (the file), `r` (reset the lines). |
-| lsp plugin | `space k` (hover), `g d` / `g y` / `g i` / `g r` (definition, type definition, implementation, references), `space s` / `space S` (symbols / in the project), `space r` (rename), `space a` (code actions), `space x` / `] d` / `[ d` (diagnostics); insert mode: completion (`C-x`, `tab` / `C-n` / `C-p`, `ret`), signature help. |
+| git plugin | `space g n` / `space g p` (next / previous change); `space g s` / `u` (stage / unstage the selected lines), `S` / `U` (the file), `r` (reset the lines). |
+| lsp plugin | `space k` (hover), `g d` / `g y` / `g i` / `g r` (definition, type definition, implementation, references), `space s` / `space S` (symbols / in the project), `space r` (rename), `space a` (code actions), `space d` (diagnostics: `d` this file's, `D` the workspace's, `n` / `p` next / previous, `f` / `l` first / last); insert mode: completion (`C-x`, `tab` / `C-n` / `C-p`, `ret`), signature help. |
 | repl plugin | `space e` (send the selection or line), `space E` (reload); in the REPL buffer (insert): `ret` sends, `C-c` interrupts. |
 | magit (contrib) | `space g g` / `:magit` (the status buffer); in it: `s` / `u` (stage / unstage the selected lines of a hunk, else the file, hunk or section), `tab` (show the file's hunks), `ret` (open there), `c` (`:magit-commit message`), `g r` (refresh), `q` (close). |
 | tetris (contrib) | `:tetris`; `left` / `right` / `h` / `l`, `up` / `k` / `x` (rotate), `z` (rotate back), `down` / `j`, `space` (drop), `p` (pause), `q` / `esc` (quit), `r` (again, after the end). |
-| chat plugin | `space c c` (open the chat), `space c s` (put the selection into the message), `space c y` (copy a code block), `space c n` (new chat); proposed changes: `space c a` / `space c d` (keep / discard the one under the cursor), `space c A` / `space c D` (all), `] c` / `[ c` (next / previous), `space c l` (list); in the chat (insert): `ret` sends, `A-ret` a line break, `up` / `down` earlier messages, `C-c` stops the answer, `C-l` a new chat. |
+| chat plugin | `space c c` (open the chat), `space c s` (put the selection into the message), `space c y` (copy a code block), `space c N` (new chat); proposed changes: `space c a` / `space c d` (keep / discard the one under the cursor), `space c A` / `space c D` (all), `space c n` / `space c p` (next / previous), `space c l` (list); in the chat (insert): `ret` sends, `A-ret` a line break, `up` / `down` earlier messages, `C-c` stops the answer, `C-l` a new chat. |
 
 `:` commands (`tab` completes, and the `:` menu lists them as you type):
 - **files and buffers:** `:w [path]`, `:wa`, `:wq` / `:x`, `:wqa`, `:q` (closes the window; quits with the last), `:q!`, `:qa`, `:qa!`, `:o` / `:e path…`, `:reload` (`!`), `:reload-all`, `:new`, `:bc` (`!`), `:cd`, `:pwd`;
@@ -332,6 +333,7 @@ them in the editor.
   `action name group doc spec run` when it takes arguments (`int`, `text`, `choice`,
   `optional`). Add it to an action list in `Him.Actions.*`. The name is public, because
   bindings and config files use it.
+- **New default keys** avoid AltGr and dead keys ([ADR layout-friendly-keys](adr/layout-friendly-keys.md)).
 - **A key:** add `("g h", "goto_line_start")` to the mode's list in `Him.Config.Default`
   (or a plugin's `plBindings`). `buildConfig` rejects unknown actions and bad arguments,
   and a test checks the defaults. Prefix titles (`"match"`, `"window"`) go in

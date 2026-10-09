@@ -33,6 +33,10 @@ import Him.Process (ProcessResult (..), runProcess)
 import System.Exit (ExitCode (..))
 import Him.Directory (entriesIn, entryAt)
 import Him.Key
+import Data.Map.Strict qualified as Map
+import Him.Json (Value (..))
+import Him.Lsp.Protocol (Diagnostic (..), Severity (..))
+import Him.Lsp.State (LspState (..))
 import Him.Mode (Mode (..))
 import Him.Position (Pos (..))
 import Him.Selection
@@ -71,6 +75,10 @@ integrationTests = do
   selectLinesUp <- selectionAfter "one\ntwo\nthree" "j l v k x"
   extendLines <- selectionAfter "one\ntwo\nthree" "l v j X"
   extendWhole <- selectionAfter "one\ntwo\nthree" "x X"
+  -- The workspace's diagnostics, as the servers published them.
+  let withDiagnostics = (start "x") {edLsp = (edLsp (start "x")) {lsDiagnostics = Map.fromList [("/w/b.hs", [Diagnostic (4, 2) (4, 3) SevError "boom\nmore" "" JNull]), ("/w/a.hs", [Diagnostic (0, 0) (0, 1) SevWarning "careful" "" JNull])]}}
+  workspaceDiags <- typeKeys "space d D" withDiagnostics
+  diagnosticsMenu <- typeKeys "space d" (start "x")
   flipped <- selectionAfter "one\ntwo\nthree" "v j l o"
   flippedUp <- selectionAfter "one\ntwo\nthree" "j v j o k"
   change <- textAfter "foo bar" "e c b a z esc"
@@ -185,6 +193,11 @@ integrationTests = do
     , test "x keeps a backward selection backward" (assertEqual (Pos 1 3, Pos 0 0) selectLinesUp)
     , test "X selects the whole lines the selection touches" (assertEqual (Pos 0 0, Pos 1 3) extendLines)
     , test "X on whole lines adds none" (assertEqual (Pos 0 0, Pos 0 3) extendWhole)
+    , test "space d D lists every file's diagnostics" $
+        assertEqual
+          (Just [(PickPosition "/w/a.hs" 0 0 Nothing, "careful"), (PickPosition "/w/b.hs" 4 2 Nothing, "boom")])
+          (fmap (\p -> [(piTarget i, piDetail i) | i <- toList (pkItems p)]) (edPicker workspaceDiags))
+    , test "space d is the diagnostics menu" (assertEqual (Just "diagnostics") (infoTitle <$> edInfo diagnosticsMenu))
     , test "o in select mode puts the cursor at the selection's other end" (assertEqual (Pos 1 1, Pos 0 0) flipped)
     , test "after o, select mode extends from the other end" (assertEqual (Pos 2 0, Pos 0 0) flippedUp)
     , test "e c replaces a word" (assertEqual "baz bar" change)
@@ -384,9 +397,10 @@ openBufferTests = do
   entered <- keys "ret" listing
   backUp <- keys "minus" entered
   caretUp <- keys "^" entered
+  uUp <- keys "u" entered
   openedFile <- keys "j ret" listing
-  backToListing <- keys "space D" =<< keys "space d" openedFile
-  ofFile <- keys "space d" openedFile
+  backToListing <- keys "space ." =<< keys "space -" openedFile
+  ofFile <- keys "space -" openedFile
   refused <- keys "i" listing
   refusedDelete <- keys "x d" listing
   refusedWrite <- ex "w" listing
@@ -411,7 +425,7 @@ openBufferTests = do
   createdTwice <- typeLine "a.txt" =<< keys "a" ops
   newExists <- mapM exists ["new.txt", "deep/x.txt", "made", "plus"]
   -- Open a.txt, go back to the listing, rename a.txt: the buffer follows.
-  withA <- keys "space d" =<< keys "ret" =<< findEntry "a.txt" ops
+  withA <- keys "space -" =<< keys "ret" =<< findEntry "a.txt" ops
   renamed <- typeLine "renamed.txt" =<< keys "r backspace backspace backspace backspace backspace" =<< findEntry "a.txt" withA
   renameExists <- mapM exists ["a.txt", "renamed.txt"]
   notDeleted <- typeLine "n" =<< keys "d" =<< findEntry "b.txt" renamed
@@ -514,10 +528,11 @@ openBufferTests = do
           (docPath (edDoc listing), lines' listing, cursorLine listing, keymapMode listing)
     , test "ret enters a directory in the same buffer" (assertEqual (Just (dcanon <> "/sub"), bufferIndex listing) (docPath (edDoc entered), bufferIndex entered))
     , test "^ goes up too" (assertEqual (Just dcanon) (docPath (edDoc caretUp)))
+    , test "u goes up in a listing" (assertEqual (Just dcanon) (docPath (edDoc uUp)))
     , test "- goes up, onto the directory it came from" (assertEqual (Just dcanon, 2) (docPath (edDoc backUp), cursorLine backUp))
     , test "ret on a file opens it as a buffer" (assertEqual (Just (dcanon <> "/a.txt"), (2, 3)) (docPath (edDoc openedFile), bufferIndex openedFile))
-    , test "space d shows the file's directory, on the file" (assertEqual (Just dcanon, 3, (1, 3)) (docPath (edDoc ofFile), cursorLine ofFile, bufferIndex ofFile))
-    , test "space D opens the working directory" (assertEqual (Just cwd, Directory) (docPath (edDoc backToListing), keymapMode backToListing))
+    , test "space - shows the file's directory, on the file" (assertEqual (Just dcanon, 3, (1, 3)) (docPath (edDoc ofFile), cursorLine ofFile, bufferIndex ofFile))
+    , test "space . opens the working directory" (assertEqual (Just cwd, Directory) (docPath (edDoc backToListing), keymapMode backToListing))
     , test "insert mode is refused in a listing" (assertEqual (Normal, Just (Status Error "a directory listing is read-only (ret opens an entry, - goes up)")) (edMode refused, edStatus refused))
     , test "deleting is refused in a listing" (assertEqual (lines' listing) (lines' refusedDelete))
     , test ":w is refused in a listing" (assertEqual (Just (Status Error "a directory listing cannot be written")) (edStatus refusedWrite))

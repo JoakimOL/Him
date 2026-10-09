@@ -38,7 +38,7 @@ pure).
   (`chat_approve` / `chat_deny`), and `:chat-keep` / `:chat-discard` are new aliases.
   Messages to the model still say "approved" and "rejected".
 - **Input.** `up` / `down` recall the messages sent (on the input's first / last
-  line; elsewhere they move a line), and `C-l` (or `space c n`) starts a new
+  line; elsewhere they move a line), and `C-l` (or `space c N`) starts a new
   conversation. `space c y` copies the code block under the cursor (or the last one)
   into the register. A new chat shows a short welcome with the keys.
 - **Smaller fixes found on the way:**

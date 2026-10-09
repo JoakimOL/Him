@@ -15,6 +15,10 @@ and this project adheres to the
 - `y` in select mode goes back to normal mode.
 - `o` in select mode puts the cursor at the other end of the selection, to extend it from there (`flip_selections`).
 - `command_mode_with <text>` opens the `:` line with text typed.
+- Keys that need AltGr or dead keys on European layouts moved: next / previous are in their menus (`space g n` / `p` for git changes, `space c n` / `p` for proposed changes, `space c N` a new chat), and `] g`, `[ g`, `] d`, `[ d`, `] c`, `[ c` are gone. Directory views moved to `space -` (the file's) and `space .` (the working directory).
+- A `space d` diagnostics menu: `d` this file's, `D` the workspace's (new), `n` / `p` next / previous, `f` / `l` first / last.
+- Letters for pairs in match mode: `b` (), `B` {}, `r` [], `c` <>, `q` backticks (`m i B`, `m s r`, …).
+- `u` goes up in a directory listing.
 - `him --grammar` sets up highlighting with no other editor installed: it fetches the tree-sitter grammars (pinned revisions) with `git` and builds them; the highlight queries are built into him. `him --build-grammars` and the Helix runtime for queries are gone.
 - Commit messages are highlighted (the language asked for a grammar named `git-commit`; it is `gitcommit`).
 - `r` + a character replaces every selected character with it (line breaks stay; `r ret` splits), as in Helix.

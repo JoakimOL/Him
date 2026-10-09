@@ -7,7 +7,7 @@
 -- header and the lines it removes, and nothing is written. Review them in
 -- any order with the cursor on one: @space c a@ keeps it (written to the
 -- file), @space c d@ discards it (the old lines come back); @space c A@ /
--- @D@ do all; @] c@ / @[ c@ move between them, @space c l@ lists them. The
+-- @D@ do all; @space c n@ / @space c p@ move between them, @space c l@ lists them. The
 -- decisions go to the model with the next message.
 module Him.Actions.Chat
   ( chatPlugin
@@ -70,9 +70,9 @@ chatPlugin =
               , ("space c l", "chat_changes")
               , ("space c s", "chat_add_selection")
               , ("space c y", "chat_copy_code")
-              , ("space c n", "chat_new")
-              , ("] c", "chat_next_change")
-              , ("[ c", "chat_prev_change")
+              , ("space c N", "chat_new")
+              , ("space c n", "chat_next_change")
+              , ("space c p", "chat_prev_change")
               ]
             )
           , (Chat, [("ret", "chat_submit"), ("A-ret", "insert_newline"), ("C-c", "chat_cancel"), ("up", "chat_history_previous"), ("down", "chat_history_next"), ("C-l", "chat_new")])
@@ -405,7 +405,7 @@ endOfTurn i = do
         MarkReview
         ( [T.pack (show n) <> " change" <> (if n == 1 then "" else "s") <> " to review"]
             <> ["  " <> T.pack (rvPath rv) <> counts rv | rv <- reviews]
-            <> ["In the editor, cursor on a change: space c a keep · space c d discard · ] c next · space c A / D all · space c l list"]
+            <> ["In the editor, cursor on a change: space c a keep · space c d discard · space c n next · space c A / D all · space c l list"]
         )
       case reviews of
         rv : _ | h : _ <- rvHunks rv -> showChange rv h
@@ -530,11 +530,11 @@ decideAtCursor approve = do
   case reviewFor ed (docId d) of
     Nothing -> failWith "no proposed changes in this buffer (space c l lists them)"
     Just rv -> case hunkAtLine (Buffer.lineCount (docBuffer d)) line (rvHunks rv) of
-      Nothing -> failWith "the cursor is not on a proposed change (] c goes to the next)"
+      Nothing -> failWith "the cursor is not on a proposed change (space c n goes to the next)"
       Just (_, h) -> do
         ok <- decide approve rv h
         left <- gets (\e -> maybe 0 (length . rvHunks) (reviewFor e (docId d)))
-        when ok $ info ((if approve then "kept" else "discarded") <> (if left == 0 then "; no changes left here" else "; " <> T.pack (show left) <> " left here (] c: next)"))
+        when ok $ info ((if approve then "kept" else "discarded") <> (if left == 0 then "; no changes left here" else "; " <> T.pack (show left) <> " left here (space c n: next)"))
 
 -- | Approve (write to the file) or deny (put back) one change; 'False' when
 -- it could not be approved.
@@ -626,7 +626,7 @@ setBase i rv base' = modify' (modifyChat i (\c -> c {csReviews = [if rvDoc r == 
 note :: Int -> Text -> EditorM ()
 note i t = modify' (modifyChat i (\c -> c {csDecisions = csDecisions c <> [t]}))
 
--- | @] c@ / @[ c@: the next or previous change in this buffer (wrapping).
+-- | @space c n@ / @space c p@: the next or previous change in this buffer (wrapping).
 jumpChange :: Bool -> EditorM ()
 jumpChange forward = do
   refreshReviews

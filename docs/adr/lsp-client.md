@@ -44,7 +44,7 @@
   left modified, and the current buffer stays current.
 - **Features:**
   - diagnostics: a gutter sign over git signs, an underline in the severity's colour,
-    the cursor line's message in the bottom row, `] d` / `[ d`, and `space x`;
+    the cursor line's message in the bottom row, `space d n` / `space d p`, and `space d d` (now under the `space d` menu, [ADR layout-friendly-keys](layout-friendly-keys.md));
   - `space k` hover, in a popup at the cursor;
   - `g d` definition and `g r` references (one location jumps, several open a picker);
   - completion in insert mode, automatic or on `C-x`, in a `Completing` keymap layer
