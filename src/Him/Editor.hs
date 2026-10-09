@@ -239,9 +239,10 @@ data Editor = Editor
   -- refer to, so they can follow later edits.
   , edPluginUI :: !(Map Text PluginUI)
   -- ^ What each plugin shows, by plugin name (ADR plugin-building-blocks).
-  , edKeyHints :: !KeyHints
+  , edKeyHints :: KeyHints
   -- ^ Which keys run which action in the running config, for texts that
-  -- name keys ("Him.KeyHints"; set by "Him.Session").
+  -- name keys ("Him.KeyHints"; set by "Him.Session"). Lazy: built from
+  -- every binding, so only when a text first needs it, not at startup.
   , edCanvas :: !(Maybe OpenCanvas)
   -- ^ A plugin's canvas over everything; it has the keys (ADR plugin-canvas).
   , edPluginOptions :: !(Map Text (Map Text Value))

@@ -131,8 +131,16 @@ jumplistPicker ed = (newPicker title items) {pkSecondary = Just "jumplist_remove
 -- before the list is used): positions follow edits made since they were
 -- recorded, jumps into closed documents and lists of closed windows go.
 syncJumps :: Editor -> Editor
-syncJumps ed0 = tidy (IntMap.foldlWithKey' one ed0 (edJumpTexts ed0))
+syncJumps ed0
+  | settled = ed0
+  | otherwise = tidy (IntMap.foldlWithKey' one ed0 (edJumpTexts ed0))
   where
+    -- The usual case, no tracked text changed and no window closed, leaves
+    -- the editor as it is, instead of rebuilding its maps after every key.
+    settled =
+      and [maybe False ((== version) . docVersion) (IntMap.lookup doc docs) | (doc, (version, _)) <- IntMap.toList (edJumpTexts ed0)]
+        && all (\w -> w == edFocus ed0 || IntMap.member w (edWindows ed0)) (IntMap.keys (edJumps ed0))
+    docs = IntMap.fromList [(docId d, d) | d <- allDocuments ed0]
     one ed doc (version, old) = case find ((== doc) . docId) (allDocuments ed) of
       Nothing -> ed {edJumps = IntMap.map (mapJumps (\j -> if jumpDoc j == doc then Nothing else Just j)) (edJumps ed)}
       Just d
