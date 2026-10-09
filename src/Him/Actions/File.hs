@@ -3,6 +3,7 @@ module Him.Actions.File
   ( exCommands
   , actions
   , openFile
+  , closeCurrent
   ) where
 
 import Control.Exception (IOException, try)

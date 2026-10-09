@@ -7,12 +7,18 @@
 -- * change it: 'openFile', 'replaceRange', 'setCursor', 'runAction',
 --   'notify', …
 -- * show things: status line 'Segment's, gutter signs, 'Annotation's,
---   pickers, popups, scratch buffers. These are data the editor draws;
---   setting them again replaces them.
+--   'Highlight's in a buffer's text, pickers, popups, scratch buffers
+--   with keys of their own ('setBufferKeymap'), and a 'Canvas' in the
+--   middle of the screen that the plugin fills cell by cell and that gets
+--   the keys while open. These are data the editor draws; setting them
+--   again replaces them.
 -- * run programs: 'spawn' (their output arrives as 'ProcessOutput').
+-- * keep time: 'startTimer' ('TimerFired' every period).
 -- * keep state of any type: 'getState', 'putState'.
 --
--- "Him.Contrib.WordCount" and "Him.Contrib.RecentFiles" are examples.
+-- "Him.Contrib.WordCount", "Him.Contrib.RecentFiles",
+-- "Him.Contrib.Magit" (a buffer with highlights and keys) and
+-- "Him.Contrib.Tetris" (a canvas, keys and a timer) are examples.
 module Him.Plugin
   ( -- * Plugins
     PluginSpec (..)
@@ -76,10 +82,14 @@ module Him.Plugin
   , setCursor
   , replaceRange
   , runAction
+  , closeBuffer
     -- * Programs
   , spawn
   , sendInput
   , stopProcess
+    -- * Timers
+  , startTimer
+  , stopTimer
     -- * What it shows
   , Face (..)
   , face
@@ -92,8 +102,18 @@ module Him.Plugin
   , setSigns
   , Annotation (..)
   , setAnnotations
+  , Highlight (..)
+  , setHighlights
+  , setBufferKeymap
   , showPopup
   , openScratch
+  , setScratchText
+    -- * Canvases
+  , Canvas (..)
+  , canvas
+  , showCanvas
+  , closeCanvas
+  , canvasShown
     -- * Pickers
   , PickerSpec (..)
   , Item (..)
@@ -116,10 +136,10 @@ import Him.Actions.File qualified as File
 import Him.Actions.Jump (jumping)
 import Him.Buffer qualified as Buffer
 import Him.Document (DocKind (..), Document (..), clampSelection, changeDocument, displayName, isReadOnly, newDocument)
-import Him.Editor hiding (Severity (..), buffers)
+import Him.Editor hiding (Severity (..), buffers, closeBuffer)
 import Him.Editor qualified as Ed
 import Him.EditorM qualified as EditorM
-import Him.Effect (Effect (ProcessSend, ProcessStart, ProcessStop, RunAction))
+import Him.Effect (Effect (ProcessSend, ProcessStart, ProcessStop, RunAction, TimerStart, TimerStop))
 import Him.Ex (ExArgs (..), ExCommand (..))
 import Him.Invocation (parseInvocation)
 import Him.Json (Value, asBool, asInt, asText)
@@ -334,6 +354,19 @@ runAction inv = case parseInvocation inv of
   Left e -> warn e
   Right parsed -> liftEditor (EditorM.request (RunAction parsed))
 
+-- | Close a buffer (a plugin's scratch buffer when it is done).
+closeBuffer :: BufferId -> PluginM s ()
+closeBuffer i = do
+  current <- liftEditor (gets (docId . edDoc))
+  if current == i
+    then liftEditor File.closeCurrent
+    else do
+      focusBuffer i
+      now <- liftEditor (gets (docId . edDoc))
+      if now == i
+        then liftEditor File.closeCurrent >> focusBuffer current
+        else pure ()
+
 -- * Programs
 
 -- | Start a program (by name, for this plugin; one running under the
@@ -353,6 +386,17 @@ stopProcess name = processKey name >>= liftEditor . EditorM.request . ProcessSto
 processKey :: Text -> PluginM s Text
 processKey name = (\p -> p <> ":" <> name) <$> pluginName
 
+-- * Timers
+
+-- | Start a timer (by name, for this plugin; one running under the name
+-- is replaced): every so many milliseconds the plugin gets
+-- 'TimerFired'. It runs until 'stopTimer' or the plugin is switched off.
+startTimer :: Text -> Int -> PluginM s ()
+startTimer name ms = processKey name >>= \key -> liftEditor (EditorM.request (TimerStart key ms))
+
+stopTimer :: Text -> PluginM s ()
+stopTimer name = processKey name >>= liftEditor . EditorM.request . TimerStop
+
 -- * What it shows
 
 ui :: (PluginUI -> PluginUI) -> PluginM s ()
@@ -369,6 +413,26 @@ setSigns i spans = ui (\u -> u {puSigns = if null spans then IntMap.delete i (pu
 -- | The plugin's annotations in a buffer: text after the ends of lines.
 setAnnotations :: BufferId -> [Annotation] -> PluginM s ()
 setAnnotations i anns = ui (\u -> u {puAnnotations = if null anns then IntMap.delete i (puAnnotations u) else IntMap.insert i anns (puAnnotations u)})
+
+-- | The plugin's highlights in a buffer (replacing the ones it had): faces
+-- over parts of lines, drawn over the syntax highlighting. They stay
+-- where they are when the text changes; set them again then.
+setHighlights :: BufferId -> [Highlight] -> PluginM s ()
+setHighlights i hs = ui (\u -> u {puHighlights = if null hs then IntMap.delete i (puHighlights u) else IntMap.insert i byLine (puHighlights u)})
+  where
+    byLine = IntMap.fromListWith (flip (<>)) [(hlLine h, [h]) | h <- hs]
+
+-- | Give a buffer one of the plugin's keymaps ('psKeymaps', by name): in
+-- normal and select mode there, its keys come before the usual ones
+-- ('Nothing' takes it away). A git status buffer binds @s@ to stage.
+setBufferKeymap :: BufferId -> Maybe Text -> PluginM s ()
+setBufferKeymap i keymap = do
+  full <- traverse fullName keymap
+  ui (\u -> u {puKeymaps = maybe (IntMap.delete i) (IntMap.insert i) full (puKeymaps u)})
+
+-- | The full name of one of the plugin's keymaps.
+fullName :: Text -> PluginM s Text
+fullName name = (\p -> p <> ":" <> name) <$> pluginName
 
 -- | A box with a title and rows (a name and a description), until the
 -- next key.
@@ -389,6 +453,39 @@ openScratch name t = liftEditor $ do
     Nothing -> do
       modify' (openBuffer (newDocument Nothing (Buffer.fromText t)) {docKind = ScratchDoc name})
       gets (docId . edDoc)
+
+-- | Replace a scratch buffer's text, keeping its cursor (moved back
+-- inside the text if it no longer fits) and without showing it.
+setScratchText :: BufferId -> Text -> PluginM s ()
+setScratchText i t = liftEditor $
+  modify' $ modifyDocument i $ \doc ->
+    let buf = Buffer.fromText t
+     in changeDocument buf (clampSelection buf (docSelection doc)) doc
+
+-- * Canvases
+
+-- | Show the plugin's canvas (by name), or draw it anew. Its keymap is
+-- one of the plugin's ('psKeymaps', by name). Another plugin's canvas is
+-- replaced.
+showCanvas :: Text -> Canvas -> PluginM s ()
+showCanvas name cv = do
+  owner <- pluginName
+  keymap <- traverse fullName (canvasKeymap cv)
+  liftEditor (modify' (\e -> e {edCanvas = Just (OpenCanvas owner name cv {canvasKeymap = keymap}), edPopup = Nothing}))
+
+-- | Close the plugin's canvas, if it is showing one.
+closeCanvas :: PluginM s ()
+closeCanvas = do
+  owner <- pluginName
+  liftEditor (modify' (\e -> e {edCanvas = if fmap ocOwner (edCanvas e) == Just owner then Nothing else edCanvas e}))
+
+-- | The name of the plugin's canvas on screen, if any.
+canvasShown :: PluginM s (Maybe Text)
+canvasShown = do
+  owner <- pluginName
+  liftEditor (gets (\e -> [ocName oc | Just oc <- [edCanvas e], ocOwner oc == owner])) >>= \case
+    name : _ -> pure (Just name)
+    [] -> pure Nothing
 
 -- * Pickers
 

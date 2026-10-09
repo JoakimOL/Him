@@ -26,6 +26,10 @@ actions exTable =
       modify' (\e -> e {edPrompt = ExPrompt})
       setCmdLine ""
       setMode CmdLine
+  , action "command_mode_with" GPrompt "Enter a : command that starts with this text (command_mode_with \"magit-commit \")" (text "text") $ \t -> do
+      modify' (\e -> e {edPrompt = ExPrompt})
+      setCmdLine t
+      setMode CmdLine
   , simple "cmdline_cancel" GPrompt "Leave the command line" cancel
   , simple "cmdline_backspace" GPrompt "Delete the last character (leave if empty)" $
       gets edCmdLine >>= \case

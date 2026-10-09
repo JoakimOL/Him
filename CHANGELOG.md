@@ -9,8 +9,11 @@ and this project adheres to the
 ## Unreleased
 
 - The picker's preview is highlighted.
-- `y` in select mode goes back to normal mode.
+- Plugin API (version 2): highlights over a buffer's text, keymaps of a plugin's own for its buffers, a canvas in the middle of the screen with its own keys, and timers ([ADR plugin-canvas](docs/adr/plugin-canvas.md)).
+- Contrib plugins `magit` (`space g g`: a magit-like status buffer to stage, unstage and commit files and hunks) and `tetris` (`:tetris`).
 - `X` selects the whole lines a selection touches. `x` in select mode does too, instead of keeping the old anchor.
+- `y` in select mode goes back to normal mode.
+- `command_mode_with <text>` opens the `:` line with text typed.
 - `him --grammar` sets up highlighting with no other editor installed: it fetches the tree-sitter grammars (pinned revisions) with `git` and builds them; the highlight queries are built into him. `him --build-grammars` and the Helix runtime for queries are gone.
 - Commit messages are highlighted (the language asked for a grammar named `git-commit`; it is `gitcommit`).
 - `r` + a character replaces every selected character with it (line breaks stay; `r ret` splits), as in Helix.

@@ -86,6 +86,13 @@ data Effect
   | ProcessStop !Text
   | -- | Stop every process of a plugin (it was switched off).
     ProcessStopAll !Text
+  | -- | Start a plugin's timer (ADR plugin-canvas): key (@plugin:name@; one with the
+    -- same key is stopped first) and period in milliseconds. Each period
+    -- brings a 'TimerTick'.
+    TimerStart !Text !Int
+  | TimerStop !Text
+  | -- | Stop every timer of a plugin.
+    TimerStopAll !Text
   deriving stock (Eq, Show)
 
 -- | What a register read from the clipboard is for.
@@ -178,6 +185,8 @@ data JobResult
     PreviewHighlighted !FilePath !(IntMap [LineSpan])
   | -- | A line of output from a plugin process (by key).
     ProcessLine !Text !Text
+  | -- | A plugin's timer went off (by key).
+    TimerTick !Text
   | -- | It ended: the exit code (-1: it could not start; the reason came
     -- as a line before).
     ProcessDone !Text !Int

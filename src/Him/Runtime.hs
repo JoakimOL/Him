@@ -70,6 +70,8 @@ data Runtime = Runtime
   -- server has started (or failed to).
   , rtProcesses :: MVar (Map Text (Unique, Spawned))
   -- ^ Plugin processes, by key (@plugin:name@).
+  , rtTimers :: MVar (Map Text ThreadId)
+  -- ^ Plugin timers, by key (@plugin:name@).
   }
 
 newRuntime :: Config -> (Event -> IO ()) -> IO Runtime
@@ -81,7 +83,8 @@ newRuntime config post = do
   chats <- newMVar Map.empty
   servers <- newMVar Map.empty
   processes <- newMVar Map.empty
-  pure (Runtime post jobs (cfgSyntaxProviders config) sessions configRef replProcesses chats servers processes)
+  timers <- newMVar Map.empty
+  pure (Runtime post jobs (cfgSyntaxProviders config) sessions configRef replProcesses chats servers processes timers)
 
 -- | Use another config's tables from now on (after a reload; running
 -- servers and REPLs keep running).
@@ -173,6 +176,15 @@ perform rt = \case
   ProcessSend key text -> Map.lookup key <$> readMVar (rtProcesses rt) >>= mapM_ ((`sendSpawned` text) . snd)
   ProcessStop key -> takeProcesses rt (== key) >>= mapM_ stopSpawned
   ProcessStopAll owner -> takeProcesses rt ((== owner) . T.takeWhile (/= ':')) >>= mapM_ stopSpawned
+  TimerStart key ms -> modifyMVar_ (rtTimers rt) $ \m -> do
+    mapM_ killThread (Map.lookup key m)
+    let tick = threadDelay (max 10 ms * 1000) >> rtPost rt (EvJob (TimerTick key)) >> tick
+    t <- forkIO tick
+    pure (Map.insert key t m)
+  TimerStop key -> modifyMVar_ (rtTimers rt) (\m -> Map.delete key m <$ mapM_ killThread (Map.lookup key m))
+  TimerStopAll owner -> modifyMVar_ (rtTimers rt) $ \m -> do
+    let (taken, kept) = Map.partitionWithKey (\k _ -> T.takeWhile (/= ':') k == owner) m
+    kept <$ mapM_ killThread (Map.elems taken)
   _ -> pure ()
 
 -- | Take the processes whose keys match out of the table.
@@ -203,6 +215,7 @@ shutdown :: Runtime -> IO ()
 shutdown rt = do
   readMVar (rtRepls rt) >>= mapM_ stopRepl
   readMVar (rtProcesses rt) >>= mapM_ (stopSpawned . snd)
+  readMVar (rtTimers rt) >>= mapM_ killThread
   readMVar (rtChats rt) >>= mapM_ (sessClose . ceSession)
   servers <- readMVar (rtServers rt)
   mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) (Map.elems servers)

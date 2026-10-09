@@ -7,7 +7,9 @@ module Him.Contrib
   ) where
 
 import Him.Config (Plugin)
+import Him.Contrib.Magit (magit)
 import Him.Contrib.RecentFiles (recentFiles)
+import Him.Contrib.Tetris (tetris)
 import Him.Contrib.WordCount (wordCount)
 import Him.Plugin.Host (hostPlugin)
 
@@ -15,4 +17,6 @@ contribPlugins :: [Plugin]
 contribPlugins =
   [ hostPlugin wordCount
   , hostPlugin recentFiles
+  , hostPlugin magit
+  , hostPlugin tetris
   ]

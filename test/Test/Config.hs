@@ -159,7 +159,7 @@ pluginTests =
             )
   , test "[plugins] switches plugins off; unknown names are errors" $
       assertEqual
-        (Right (Set.fromList ["chat", "git", "repl"]), Left ["unknown plugin gti (known: chat, git, lsp, recent-files, repl, wordcount)"])
+        (Right (Set.fromList ["chat", "git", "repl"]), Left ["unknown plugin gti (known: chat, git, lsp, magit, recent-files, repl, tetris, wordcount)"])
         (enabledPlugins <$> parseUserConfig "[plugins]\nlsp = false\n", parseUserConfig "[plugins]\ngti = false\n")
   , test "without sign-drawing plugins the gutter has no sign lane" $
       let ed = (newEditor (5, 40) (newDocument Nothing (buf "hello"))) {edSignLane = False}

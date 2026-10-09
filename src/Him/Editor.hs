@@ -51,7 +51,7 @@ import Him.Lsp.State (Attachment (..), Completion, DocLsp (..), LspState, emptyL
 import Him.Position (Pos (..))
 import Him.Picker (PickTarget (..), Picker)
 import Him.PluginEvent (Seen, unseen)
-import Him.PluginUI (PluginUI, emptyPluginUI)
+import Him.PluginUI (OpenCanvas, PluginUI, emptyPluginUI)
 import Him.PluginState (PluginStates, noStates)
 import Him.Json (Value)
 import Him.Jumplist (Jump (..), Jumplist (..))
@@ -238,6 +238,8 @@ data Editor = Editor
   -- refer to, so they can follow later edits.
   , edPluginUI :: !(Map Text PluginUI)
   -- ^ What each plugin shows, by plugin name (ADR plugin-building-blocks).
+  , edCanvas :: !(Maybe OpenCanvas)
+  -- ^ A plugin's canvas over everything; it has the keys (ADR plugin-canvas).
   , edPluginOptions :: !(Map Text (Map Text Value))
   -- ^ Plugins' settings (@[plugins.<name>]@), by plugin (ADR plugin-api).
   , edPluginStates :: !PluginStates
@@ -285,6 +287,7 @@ newEditor size doc =
     , edJumps = IntMap.empty
     , edJumpTexts = IntMap.empty
     , edPluginUI = Map.empty
+    , edCanvas = Nothing
     , edPluginOptions = Map.empty
     , edPluginStates = noStates
     , edSeen = unseen

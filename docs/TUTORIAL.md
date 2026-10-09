@@ -1151,6 +1151,33 @@ The design keeps the editor's state pure:
 many times the word under the cursor occurs in the buffer. Which event do you need,
 and what happens to your annotation when the cursor moves to another buffer?
 
+Two more contrib plugins go further ([ADR plugin-canvas](adr/plugin-canvas.md)). `magit` (`space g g`) is a
+magit-like buffer. It runs git with `spawn`, writes the result into a scratch buffer,
+and colours it with `setHighlights` (sections, `+` and `-` lines). It then gives the
+buffer a keymap of its own with `setBufferKeymap`, so `s` stages the file or hunk under
+the cursor there and nowhere else. `tetris` (`:tetris`) draws into a **canvas**, a box
+in the middle of the screen that the plugin fills cell by cell. While the box is
+open it has the keys: its keymap moves the piece, other keys arrive as `CanvasKey`,
+and a timer makes the pieces fall:
+
+```haskell
+    , psKeymaps = [("game", [("left", "tetris_left"), ("space", "tetris_drop"), ("q", "tetris_quit")])]
+    , psOnEvent = \case
+        TimerFired "gravity" -> play fall
+        CanvasKey "board" "r" -> start          -- not in the keymap
+        CanvasClosed "board" -> stopTimer "gravity"
+        _ -> pure ()
+
+redraw = getState >>= mapM_ (\g -> showCanvas "board" (draw g) {canvasKeymap = Just "game"})
+```
+
+The game itself (`move`, `rotate`, `fall`, clearing rows) is pure and tested without
+an editor.
+
+**▶ Task 7e.** Give `magit` a `d` that discards the unstaged change under the
+cursor. It can't be undone, so how should it ask first? (A canvas, or a picker with
+one item, are two ways.)
+
 ---
 
 ## Part 6: Benchmarking against Vim and Helix

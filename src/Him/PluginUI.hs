@@ -1,5 +1,7 @@
--- | What plugins show (ADR plugin-building-blocks): status line segments, gutter signs and
--- annotations at the end of lines. A plugin sets them as data; the core
+-- | What plugins show (ADR plugin-building-blocks, ADR plugin-canvas): status line segments,
+-- gutter signs, annotations at the end of lines, highlights in a buffer's text,
+-- a buffer's own keys, and a canvas (a box in the middle of the screen the
+-- plugin fills cell by cell). A plugin sets them as data; the core
 -- draws them, so rendering stays pure and plugins cannot draw over each
 -- other. Pure.
 module Him.PluginUI
@@ -13,9 +15,15 @@ module Him.PluginUI
   , GutterSign (..)
   , SignSpan (..)
   , Annotation (..)
+  , Highlight (..)
+  , Canvas (..)
+  , canvas
+  , OpenCanvas (..)
   , segmentsFor
   , signsIn
   , annotationsIn
+  , highlightsIn
+  , keymapOf
   , dropDocuments
   ) where
 
@@ -89,6 +97,49 @@ data Annotation = Annotation
   }
   deriving stock (Eq, Show)
 
+-- | Characters @[hlFrom, hlTo)@ of a line drawn in a face, over the
+-- syntax highlighting (a plugin's own colouring of a buffer, e.g. a git
+-- status buffer's sections and diff lines).
+data Highlight = Highlight
+  { hlLine :: !Int
+  , hlFrom :: !Int
+  , hlTo :: !Int
+  , hlFace :: !Face
+  }
+  deriving stock (Eq, Show)
+
+-- | A box in the middle of the screen that a plugin draws cell by cell
+-- (a game, a dashboard). While it is open it has the keys: those its
+-- keymap binds run their actions, the others reach the plugin as
+-- 'Him.PluginEvent.CanvasKey'; an unbound @esc@ closes it.
+data Canvas = Canvas
+  { canvasTitle :: !Text
+  , canvasWidth :: !Int
+  , canvasHeight :: !Int
+  -- ^ The inside, in cells (the border is extra). It shrinks to fit the
+  -- screen.
+  , canvasRows :: ![[(Text, Face)]]
+  -- ^ Top to bottom, each row a run of texts in faces (one cell per
+  -- character); what is missing is blank.
+  , canvasKeymap :: !(Maybe Text)
+  -- ^ The plugin's keymap to use while it is open (its name in
+  -- 'Him.Plugin.psKeymaps').
+  }
+  deriving stock (Eq, Show)
+
+-- | An empty canvas of a title and an inside size.
+canvas :: Text -> Int -> Int -> Canvas
+canvas title w h = Canvas title w h [] Nothing
+
+-- | The canvas on screen: its plugin and name, and what it shows. Its
+-- keymap is the full name (@plugin:keymap@).
+data OpenCanvas = OpenCanvas
+  { ocOwner :: !Text
+  , ocName :: !Text
+  , ocCanvas :: !Canvas
+  }
+  deriving stock (Eq, Show)
+
 -- | One plugin's part of the screen.
 data PluginUI = PluginUI
   { puSegments :: ![Segment]
@@ -96,11 +147,16 @@ data PluginUI = PluginUI
   -- ^ By document id.
   , puAnnotations :: !(IntMap [Annotation])
   -- ^ By document id.
+  , puHighlights :: !(IntMap (IntMap [Highlight]))
+  -- ^ By document id, then line.
+  , puKeymaps :: !(IntMap Text)
+  -- ^ The keymap (full name, @plugin:keymap@) over normal mode's in a
+  -- document, by document id.
   }
   deriving stock (Eq, Show)
 
 emptyPluginUI :: PluginUI
-emptyPluginUI = PluginUI [] IntMap.empty IntMap.empty
+emptyPluginUI = PluginUI [] IntMap.empty IntMap.empty IntMap.empty IntMap.empty
 
 -- | The segments for a window showing a document, best first.
 segmentsFor :: Int -> Map Text PluginUI -> [Segment]
@@ -134,11 +190,30 @@ annotationsIn doc from to uis =
     , anLine a <= to
     ]
 
+-- | The highlights on a document's lines in @[from, to]@, by line; an
+-- earlier plugin's win where they overlap.
+highlightsIn :: Int -> Int -> Int -> Map Text PluginUI -> IntMap [Highlight]
+highlightsIn doc from to uis =
+  IntMap.unionsWith
+    (<>)
+    [ fst (IntMap.split (to + 1) (snd (IntMap.split (from - 1) byLine)))
+    | ui <- Map.elems uis
+    , Just byLine <- [IntMap.lookup doc (puHighlights ui)]
+    ]
+
+-- | The keymap a plugin set for a document, if any (the first plugin's).
+keymapOf :: Int -> Map Text PluginUI -> Maybe Text
+keymapOf doc uis = case [k | ui <- Map.elems uis, Just k <- [IntMap.lookup doc (puKeymaps ui)]] of
+  k : _ -> Just k
+  [] -> Nothing
+
 -- | Forget what the plugins show for documents that are no longer open.
 dropDocuments :: IntSet -> Map Text PluginUI -> Map Text PluginUI
 dropDocuments open = Map.map $ \ui ->
   ui
     { puSigns = IntMap.restrictKeys (puSigns ui) open
     , puAnnotations = IntMap.restrictKeys (puAnnotations ui) open
+    , puHighlights = IntMap.restrictKeys (puHighlights ui) open
+    , puKeymaps = IntMap.restrictKeys (puKeymaps ui) open
     , puSegments = [s | s <- puSegments ui, maybe True (`IntSet.member` open) (segDoc s)]
     }

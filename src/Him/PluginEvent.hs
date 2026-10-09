@@ -1,5 +1,7 @@
 -- | Events for plugins (ADR plugin-building-blocks): buffers opened, changed, saved, closed,
--- entered, mode changes, and the cursor moving. They are found by comparing the editor with
+-- entered, mode changes, and the cursor moving; also their processes'
+-- output, their timers and their canvas's keys (ADR plugin-canvas), which are routed to
+-- the plugin rather than found. They are found by comparing the editor with
 -- what was seen after the last event, so no code path that opens, edits
 -- or saves has to remember to raise them. Pure.
 module Him.PluginEvent
@@ -34,6 +36,13 @@ data Event
     ProcessOutput !Text !Text
   | -- | The process ended, with its exit code.
     ProcessExited !Text !Int
+  | -- | A timer the plugin started went off (by its name).
+    TimerFired !Text
+  | -- | A key the plugin's open canvas got that its keymap does not bind
+    -- (the canvas's name, the key as written in bindings: @"left"@, @"C-x"@).
+    CanvasKey !Text !Text
+  | -- | Its canvas was closed by the user (an unbound @esc@).
+    CanvasClosed !Text
   deriving stock (Eq, Show)
 
 -- | What was seen after the last event: each document's version and

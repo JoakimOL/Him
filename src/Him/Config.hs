@@ -62,6 +62,9 @@ data Config = Config
   , cfgAllPlugins :: [Plugin]
   -- ^ Every plugin this build has, on or off: the built-in ones, contrib,
   -- and a personal build's own ("Him.Main", ADR personal-builds).
+  , cfgKeymapLayers :: Map Text (Keymap Bound)
+  -- ^ The enabled plugins' own keymaps, by full name (@plugin:keymap@):
+  -- for their buffers (over normal mode's) and canvases (alone), ADR plugin-canvas.
   }
 
 -- | A feature that can be switched off (ADR git-and-lsp-as-plugins): git signs and staging,
@@ -84,6 +87,9 @@ data Plugin = Plugin
   , plSigns :: Bool
   -- ^ It draws in the gutter's sign lane (the lane is left out when no
   -- enabled plugin does).
+  , plKeymaps :: [(Text, [(Text, Text)])]
+  -- ^ Its own keymaps by full name (@plugin:keymap@): keys and action
+  -- invocations, for its buffers and canvases (ADR plugin-canvas).
   , plHousekeeping :: EditorM ()
   -- ^ After every event: notice what changed and start jobs.
   , plBeforeRender :: EditorM ()
@@ -101,7 +107,7 @@ data Plugin = Plugin
 
 -- | A plugin that adds nothing yet; fill in what it has.
 plugin :: Text -> Text -> Plugin
-plugin name doc = Plugin name doc [] Map.empty [] [] [] True False (pure ()) (pure ()) (const (pure ())) (const (pure ())) (pure ()) (pure ())
+plugin name doc = Plugin name doc [] Map.empty [] [] [] True False [] (pure ()) (pure ()) (const (pure ())) (const (pure ())) (pure ()) (pure ())
 
 -- | Per mode, @(keys, action invocation)@ pairs such as
 -- @("g g", "goto_file_start")@ or @("C-d", "move_line_down 20")@. Within a
@@ -157,5 +163,6 @@ buildConfig actions bindings fallback = do
           , cfgClipboardProviders = systemProviders
           , cfgPlugins = []
           , cfgAllPlugins = []
+          , cfgKeymapLayers = Map.empty
           }
     errs -> Left (T.intercalate "\n" errs)

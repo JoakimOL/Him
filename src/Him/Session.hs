@@ -17,12 +17,12 @@ import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Data.Map.Strict qualified as Map
 import Data.Char (digitToInt, isDigit)
 import Data.List (partition)
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Set qualified as Set
 import Data.IntSet qualified as IntSet
 import Him.PluginEvent (detectEvents)
 import Him.PluginEvent qualified as PE
-import Him.PluginUI (dropDocuments)
+import Him.PluginUI (Canvas (..), OpenCanvas (..), dropDocuments, keymapOf)
 import Him.Selection (primary, rangeHead)
 import Data.Text qualified as T
 import Him.Buffer qualified as Buffer
@@ -49,8 +49,8 @@ import Him.Picker (PickTarget (..), Picker (..), newPicker, pickerItem)
 import Him.Mode (Mode (..))
 import Him.Editor
 import Him.Event (Event (..))
-import Him.Key (Key (..), KeyCode (..))
-import Him.Keymap (Keymap, Resolved (..), emptyKeymap, resolve)
+import Him.Key (Key (..), KeyCode (..), plain, showKey)
+import Him.Keymap (Keymap, Resolved (..), emptyKeymap, resolve, unionKeymap)
 import Him.Log (logMsg)
 import Him.Render (ensureCursorVisible)
 import System.Exit (die)
@@ -98,6 +98,7 @@ handleEvent config (EvJob result) = do
   case result of
     ProcessLine key line -> toOwner key (`PE.ProcessOutput` line)
     ProcessDone key code -> toOwner key (`PE.ProcessExited` code)
+    TimerTick key -> toOwner key PE.TimerFired
     _ -> pure ()
   runEffects config
   housekeeping config
@@ -105,11 +106,36 @@ handleEvent config (EvJob result) = do
     toOwner key event =
       let (owner, name) = T.breakOn ":" key
        in mapM_ (\p -> plEvent p (event (T.drop 1 name))) [p | p <- cfgPlugins config, plName p == owner]
-handleEvent config (EvKey key) = do
-  -- A key some command waits for (the character after f) is that
-  -- command's, not the keymap's.
-  awaited <- Motion.awaitedKey key
-  if awaited then afterKey config else keyThroughKeymap config key
+handleEvent config (EvKey key) =
+  gets edCanvas >>= \case
+    -- An open canvas has every key (ADR plugin-canvas).
+    Just oc -> canvasKey config oc key >> afterKey config
+    Nothing -> do
+      -- A key some command waits for (the character after f) is that
+      -- command's, not the keymap's.
+      awaited <- Motion.awaitedKey key
+      if awaited then afterKey config else keyThroughKeymap config key
+
+-- | A key while a plugin's canvas is open: its keymap's bindings run;
+-- other keys go to the plugin as 'PE.CanvasKey', except an unbound @esc@,
+-- which closes the canvas ('PE.CanvasClosed').
+canvasKey :: Config -> OpenCanvas -> Key -> Command.EditorM ()
+canvasKey config oc key = do
+  pending <- gets edPending
+  let keys = pending <> [key]
+      keymap = fromMaybe emptyKeymap (canvasKeymap (ocCanvas oc) >>= (`Map.lookup` cfgKeymapLayers config))
+      setPending ks = modify' (\e -> e {edPending = ks})
+      toOwner ev = sequence_ [plEvent p ev | p <- cfgPlugins config, plName p == ocOwner oc]
+  case resolve keymap keys of
+    NeedMore -> setPending keys
+    Found bound -> setPending [] >> boundRun bound
+    NoMatch
+      | null pending && key == plain KEsc -> do
+          modify' (\e -> e {edCanvas = Nothing})
+          toOwner (PE.CanvasClosed (ocName oc))
+      | otherwise -> do
+          setPending []
+          mapM_ (toOwner . PE.CanvasKey (ocName oc) . showKey) keys
 
 keyThroughKeymap :: Config -> Key -> Command.EditorM ()
 keyThroughKeymap config key = do
@@ -121,7 +147,11 @@ keyThroughKeymap config key = do
   ed <- get
   let pending = edPending ed
       keys = pending <> [key]
-      keymap = Map.findWithDefault emptyKeymap (keymapMode ed) (cfgKeymaps config)
+      modeKeymap = Map.findWithDefault emptyKeymap (keymapMode ed) (cfgKeymaps config)
+      -- A plugin's keymap for the buffer goes over normal mode's (ADR plugin-canvas).
+      keymap = case keymapOf (docId (edDoc ed)) (edPluginUI ed) >>= (`Map.lookup` cfgKeymapLayers config) of
+        Just layer | keymapMode ed `elem` [Normal, Select] -> unionKeymap layer modeKeymap
+        _ -> modeKeymap
       setPending ks = modify' (\e -> e {edPending = ks})
       clearCount = modify' (\e -> e {edCount = Nothing})
   when (null pending) $ modify' (\e -> e {edStatus = Nothing})
@@ -217,6 +247,9 @@ switchPlugins old new = do
   forM_ gone $ \p -> do
     modify' (\e -> e {edPluginUI = Map.delete (plName p) (edPluginUI e)})
     request (ProcessStopAll (plName p))
+    request (TimerStopAll (plName p))
+    -- Its canvas too.
+    modify' (\e -> e {edCanvas = if fmap ocOwner (edCanvas e) == Just (plName p) then Nothing else edCanvas e})
   mapM_ plEnable added
   -- A plugin switched on hears about what is open already, as it would
   -- have at startup (ADR plugin-api).
@@ -269,6 +302,9 @@ runEffects config = go (8 :: Int)
       ProcessSend _ _ -> pure ()
       ProcessStop _ -> pure ()
       ProcessStopAll _ -> pure ()
+      TimerStart _ _ -> pure ()
+      TimerStop _ -> pure ()
+      TimerStopAll _ -> pure ()
       ChatAnswer {} -> pure ()
       PluginCommand (Just _) -> pure ()
       ClipboardSet c vs -> Register.clipboardSet (cfgClipboardProviders config) c vs

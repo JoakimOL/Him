@@ -16,6 +16,7 @@ import Test.Jump
 import Test.Chat
 import Test.Repl
 import Test.PluginApi
+import Test.PluginCanvas
 import Test.Grammar
 
 main :: IO ()
@@ -37,6 +38,7 @@ main = do
   chat <- chatTests
   repl <- replTests
   pluginApi <- pluginApiTests
+  pluginCanvas <- pluginCanvasTests
   grammars <- grammarIO
   runTests
     [ group "Him.Key" keyTests
@@ -87,6 +89,7 @@ main = do
     , group "windows (splits)" windows
     , group "REPL" repl
     , group "plugin building blocks (ADR plugin-building-blocks)" pluginApi
+    , group "highlights, buffer keys, canvases, timers (ADR plugin-canvas)" pluginCanvas
     , group "keys through the default config" integration
     , group "rebinding keys to actions" rebinding
     , group "buffers" bufferIO

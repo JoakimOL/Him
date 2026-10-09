@@ -26,7 +26,8 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.List (find)
 import Data.Text qualified as T
-import Him.Action (Action (..), Invocation (..), parseInvocation)
+import Him.Action (Action (..), ActionRegistry, Bound, Invocation (..), bindText, parseInvocation)
+import Him.Keymap (Keymap, fromBindings)
 import Him.EditorM (EditorM, failWith, request)
 import Him.Effect (Effect (..))
 import Him.Ex (ExArgs (..), ExCommand (..))
@@ -314,15 +315,23 @@ configWithPlugins every enabled user = do
       offActions = Set.fromList [actName a | p <- every, plName p `Set.notMember` enabled, a <- plActions p]
       usable (_, inv) = either (const True) ((`Set.notMember` offActions) . invAction) (parseInvocation inv)
   config <- buildConfig (actionsWith every on) (overrideBindings (Map.map (filter usable) user) (bindingsWith on)) fallback
+  layers <- traverse (layer (cfgActions config)) (Map.fromList (concatMap plKeymaps on))
   pure
     config
-      { cfgExCommands = exCommandsWith every on
+      { cfgKeymapLayers = layers
+      , cfgExCommands = exCommandsWith every on
       , cfgPrefixNames = prefixNames <> Map.fromList (concatMap plPrefixNames on)
       , cfgSyntaxProviders = syntaxProviders
       , cfgChatProviders = chatProviders
       , cfgPlugins = on
       , cfgAllPlugins = every
       }
+
+-- | A plugin's keymap, checked against the actions (ADR plugin-canvas).
+layer :: ActionRegistry -> [(Text, Text)] -> Either Text (Keymap Bound)
+layer registry pairs = do
+  bound <- traverse (\(keys, inv) -> either (\e -> Left (keys <> ": " <> e)) (Right . (keys,)) (bindText registry inv)) pairs
+  fromBindings bound
 
 -- | Chat providers (ADR ai-chat); @[chat] provider@ names the one used.
 chatProviders :: [ChatProvider]

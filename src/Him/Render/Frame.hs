@@ -24,7 +24,7 @@ import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Syntax.Span (LineSpan)
-import Him.PluginUI (Annotation)
+import Him.PluginUI (Annotation, Highlight)
 import Him.Terminal.Ansi (Color (..), CursorShape (..), PackedStyle, Style, packStyle, packedDefault)
 
 data Cell = Cell
@@ -62,6 +62,8 @@ data RowKey = RowKey
   -- ^ Underlined ranges and their severity.
   , rkAnnotations :: ![Annotation]
   -- ^ Plugins' text after the line's end (ADR plugin-building-blocks).
+  , rkHighlights :: ![Highlight]
+  -- ^ Plugins' colouring of the line (ADR plugin-canvas).
   }
   deriving stock (Eq, Show)
 

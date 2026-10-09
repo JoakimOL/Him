@@ -18,6 +18,7 @@ import Him.Window (Box (..))
 import Him.Mode (Mode (..))
 import Him.Options (CursorKind (..), Options (..), cursorKindFor)
 import Him.Position (Pos (..))
+import Him.Render.Canvas
 import Him.Render.CommandLine
 import Him.Render.Frame
 import Him.Render.Gutter
@@ -102,6 +103,7 @@ render theme prev ed =
       | otherwise = Nothing
     frame =
       drawCommandLine theme ed cmdR
+        . drawCanvas theme ed overlay
         . drawPicker theme ed overlay
         . drawInfo theme ed overlay (cursorPosition ed textR)
         . drawCompletion theme ed overlay (cursorPosition ed textR)
@@ -124,6 +126,8 @@ render theme prev ed =
     -- above it).
     overlay = Rect 0 0 (max 0 (rows - 2)) cols
     cursor = case edMode ed of
+      -- A canvas has no cursor (ADR plugin-canvas).
+      _ | Just _ <- edCanvas ed -> Nothing
       CmdLine -> Just (commandLineCursor ed cmdR)
       Picking -> pickerCursor ed overlay
       _ -> cursorPosition ed textR

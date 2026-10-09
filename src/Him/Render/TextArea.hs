@@ -29,7 +29,7 @@ import Him.Terminal.Ansi (Style (..), defaultStyle, packStyle, patchStyle, unpac
 import Him.Selection
 import Him.TextWidth (displayCol, glyphs, isWide, layoutLine)
 import Him.View (View (..))
-import Him.PluginUI (Annotation (..), annotationsIn)
+import Him.PluginUI (Annotation (..), Highlight (..), annotationsIn, highlightsIn)
 
 -- | Draws the visible lines. Rows whose 'RowKey' is the same as in the
 -- previous frame are copied from it instead of being laid out again.
@@ -126,6 +126,7 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
       InlineBold -> defaultStyle {styleBold = True}
       InlineHeading -> bold (themeDirectoryHeader theme)
     annotationsByLine = annotationsIn (docId doc) top bottom (edPluginUI ed)
+    highlightsByLine = highlightsIn (docId doc) top bottom (edPluginUI ed)
     diagnosticsByLine =
       IntMap.fromListWith (<>) [(sdLine sd, [(sdStart sd, sdEnd sd, sdSeverity sd)]) | sd <- shownDiagnosticsIn (edLsp ed) (docLsp doc) buf top bottom]
     sevRank = \case
@@ -143,7 +144,8 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
           remember (copyCells (prevRowOf screenRow) screenRow (rectCol rect) (rectWidth rect) p f)
       | otherwise = remember (putCells screenRow (rectCol rect) visible f)
       where
-        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls syntax [(a, b, sevRank sev) | (a, b, sev) <- underlines] annotations
+        key = RowKey line text spans cursors left (rectCol rect) (rectWidth rect) cls syntax [(a, b, sevRank sev) | (a, b, sev) <- underlines] annotations highlights
+        highlights = IntMap.findWithDefault [] line highlightsByLine
         annotations = IntMap.findWithDefault [] line annotationsByLine
         underlines = IntMap.findWithDefault [] line diagnosticsByLine
         -- Diagnostics are underlined (as the theme says).
@@ -151,9 +153,11 @@ drawTextArea theme focused prev ed rect frame0 = foldl' drawDisplayRow frame0 (z
           sev : _ -> Just sev
           [] -> Nothing
         syntax = IntMap.findWithDefault [] line (siSpans (docSyntax doc))
-        -- The syntax style of each highlighted span, under the selection.
+        -- The syntax style of each highlighted span, under the selection;
+        -- plugins' highlights go over the syntax's.
         syntaxStyles =
-          [(lsStart sp, lsEnd sp, over st base) | sp <- syntax, Just st <- [scopeStyle theme (lsScope sp)]]
+          [(hlFrom h, hlTo h, over (faceStyle theme (hlFace h)) base) | h <- highlights]
+            <> [(lsStart sp, lsEnd sp, over st base) | sp <- syntax, Just st <- [scopeStyle theme (lsScope sp)]]
             <> [(a, b, over (inlineStyle k) base) | cls == 4, (a, b, k) <- inlineSpans text]
         syntaxAt i = case [st | (a, b, st) <- syntaxStyles, a <= i, i < b] of
           st : _ -> st

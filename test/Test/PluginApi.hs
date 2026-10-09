@@ -158,7 +158,7 @@ pluginApiTests = do
           )
     , test "the :plugins picker lists them all; ret switches the chosen one" $
         assertEqual
-          (Just ["git", "lsp", "repl", "chat", "wordcount", "recent-files"], [PluginCommand (Just ("git", False))])
+          (Just ["git", "lsp", "repl", "chat", "wordcount", "recent-files", "magit", "tetris"], [PluginCommand (Just ("git", False))])
           (map piLabel . pkMatches <$> edPicker pluginsPicker, [e | e@(PluginCommand _) <- edEffects toggled])
     , test "[plugins.<name>]: enabled and settings; unknown settings are errors" $
         assertEqual

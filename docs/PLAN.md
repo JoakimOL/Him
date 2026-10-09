@@ -95,6 +95,7 @@ there are no numbers, so branches that add decisions do not conflict.
 - [plugin-building-blocks](adr/plugin-building-blocks.md): What plugins build on: events, processes, segments, signs, annotations
 - [plugin-api](adr/plugin-api.md): `Him.Plugin`, the public plugin API, and the contrib collection
 - [personal-builds](adr/personal-builds.md): Personal builds, as in xmonad: `himMain`, `him --rebuild`, and a template repository
+- [plugin-canvas](adr/plugin-canvas.md): Plugins colour buffers, give them keys, draw canvases and keep time
 - [no-test-framework](adr/no-test-framework.md): No test framework
 
 ## 4. Module map
@@ -132,8 +133,8 @@ Pure modules are marked *(pure)*.
 | `Him.EditorM` | The monad actions run in and its helpers (`edit`, `motion`, `request`, `info`). |
 | `Him.Action`, `Him.Invocation` | Named actions with typed parameters; invocations as text ([ADR actions](adr/actions.md)). |
 | `Him.Actions.*` | The actions: `Motion`, `Edit`, `Search`, `Match`, `File` (`:` commands for files, buffers, quitting), `CommandLine`, `Picker`, `Directory`, `Window`, `Syntax`, `Jump` (the jumplist and `jumping`); the plugins `Git`, `Lsp` (+ `Lsp.Core`, `.Navigation`, `.Edits`, `.Completion`), `Repl`, `Chat`. |
-| `Him.Plugin` (+ `.Types`, `.Host`, `.Internal`), `Him.PluginState`, `Him.Contrib` (+ `.WordCount`, `.RecentFiles`) | The public plugin API, plugins' state, the contrib collection ([ADR plugin-api](adr/plugin-api.md)). |
-| `Him.PluginUI`, `Him.PluginEvent`, `Him.Spawn` | What plugins show (segments, signs, annotations); events found by comparing with what was seen; plugin processes ([ADR plugin-building-blocks](adr/plugin-building-blocks.md)) *(the first two pure)*. |
+| `Him.Plugin` (+ `.Types`, `.Host`, `.Internal`), `Him.PluginState`, `Him.Contrib` (+ `.WordCount`, `.RecentFiles`, `.Magit`, `.Tetris`) | The public plugin API, plugins' state, the contrib collection ([ADR plugin-api](adr/plugin-api.md), [ADR plugin-canvas](adr/plugin-canvas.md)). |
+| `Him.PluginUI`, `Him.PluginEvent`, `Him.Spawn` | What plugins show (segments, signs, annotations, highlights, a buffer's keymap, a canvas); events found by comparing with what was seen, and routed ones (process output, timers, canvas keys); plugin processes ([ADR plugin-building-blocks](adr/plugin-building-blocks.md), [ADR plugin-canvas](adr/plugin-canvas.md)) *(the first two pure)*. |
 | `Him.Main`, `Him.Rebuild` | The program as `himMain [Plugin]`; `him --rebuild` and starting a personal build ([ADR personal-builds](adr/personal-builds.md)). |
 | `Him.Ex`, `Him.Info`, `Him.Palette`, `Him.Picker` | `:` commands; the info box after a prefix; the command palette; pickers and fuzzy ranking. |
 | `Him.Config`, `Him.Config.Default` | `Config` and the `Plugin` record ([ADR git-and-lsp-as-plugins](adr/git-and-lsp-as-plugins.md)); the default bindings, actions and plugins; `configWith`. |
@@ -148,7 +149,7 @@ Pure modules are marked *(pure)*.
 | `Him.Effect`, `Him.Event`, `Him.Runtime` | Effects and jobs as data; events; the runtime that runs jobs, language servers, REPLs and chat requests ([ADR effects-and-runtime](adr/effects-and-runtime.md)). |
 | `Him.Process`, `Him.Json`, `Him.Log` | Running programs; JSON; debug logging. |
 | `Him.Terminal.*` | Raw mode, input decoding, output, size, escape sequences (incl. OSC 10/11 colours). |
-| `Him.Render`, `Him.Render.*` | Layout per window and the components: `Gutter`, `TextArea`, `StatusLine`, `CommandLine`, `Info`, `Picker`, `Completion`; `Frame` and `Diff` ([ADR row-reuse-and-scrolling](adr/row-reuse-and-scrolling.md)). |
+| `Him.Render`, `Him.Render.*` | Layout per window and the components: `Gutter`, `TextArea`, `StatusLine`, `CommandLine`, `Info`, `Picker`, `Completion`, `Canvas` (a plugin's box, [ADR plugin-canvas](adr/plugin-canvas.md)); `Frame` and `Diff` ([ADR row-reuse-and-scrolling](adr/row-reuse-and-scrolling.md)). |
 | `Him.Theme`, `Him.Theme.Load`, `Him.Render.Theme` | Helix theme files *(pure)*; finding and loading them; the render-side theme ([ADR helix-themes](adr/helix-themes.md)). |
 
 **Subsystems**
@@ -314,13 +315,15 @@ them in the editor.
 | git plugin | `] g` / `[ g` (next / previous change); `space g s` / `u` (stage / unstage the selected lines), `S` / `U` (the file), `r` (reset the lines). |
 | lsp plugin | `space k` (hover), `g d` / `g y` / `g i` / `g r` (definition, type definition, implementation, references), `space s` / `space S` (symbols / in the project), `space r` (rename), `space a` (code actions), `space x` / `] d` / `[ d` (diagnostics); insert mode: completion (`C-x`, `tab` / `C-n` / `C-p`, `ret`), signature help. |
 | repl plugin | `space e` (send the selection or line), `space E` (reload); in the REPL buffer (insert): `ret` sends, `C-c` interrupts. |
+| magit (contrib) | `space g g` / `:magit` (the status buffer); in it: `s` / `u` (stage / unstage the file, hunk or section), `tab` (show the file's hunks), `ret` (open there), `c` (`:magit-commit message`), `g r` (refresh), `q` (close). |
+| tetris (contrib) | `:tetris`; `left` / `right` / `h` / `l`, `up` / `k` / `x` (rotate), `z` (rotate back), `down` / `j`, `space` (drop), `p` (pause), `q` / `esc` (quit), `r` (again, after the end). |
 | chat plugin | `space c c` (open the chat), `space c s` (put the selection into the message), `space c y` (copy a code block), `space c n` (new chat); proposed changes: `space c a` / `space c d` (keep / discard the one under the cursor), `space c A` / `space c D` (all), `] c` / `[ c` (next / previous), `space c l` (list); in the chat (insert): `ret` sends, `A-ret` a line break, `up` / `down` earlier messages, `C-c` stops the answer, `C-l` a new chat. |
 
 `:` commands (`tab` completes, and the `:` menu lists them as you type):
 - **files and buffers:** `:w [path]`, `:wa`, `:wq` / `:x`, `:wqa`, `:q` (closes the window; quits with the last), `:q!`, `:qa`, `:qa!`, `:o` / `:e path…`, `:reload` (`!`), `:reload-all`, `:new`, `:bc` (`!`), `:cd`, `:pwd`;
 - **windows:** `:vsplit` / `:vs [files]`, `:hsplit` / `:hs [files]`, `:vnew`, `:hnew`;
 - **config:** `:theme [name]`, `:config-open`, `:config-reload`, `:plugins`, `:plugin-enable` / `:plugin-disable <name>`, `:action <invocation>`;
-- **plugins:** `:format`, `:lsp-info`, `:lsp-start`, `:lsp-stop`, `:lsp-restart`; `:repl [language]`, `:repl-send <text>`, `:repl-reload`, `:repl-interrupt`, `:repl-stop`, `:repl-restart`; `:chat`, `:chat-new`, `:chat-keep [all]` (`:chat-approve`), `:chat-discard [all]` (`:chat-deny`).
+- **plugins:** `:magit`, `:magit-commit <message>`, `:tetris` (contrib), `:format`, `:lsp-info`, `:lsp-start`, `:lsp-stop`, `:lsp-restart`; `:repl [language]`, `:repl-send <text>`, `:repl-reload`, `:repl-interrupt`, `:repl-stop`, `:repl-restart`; `:chat`, `:chat-new`, `:chat-keep [all]` (`:chat-approve`), `:chat-discard [all]` (`:chat-deny`).
 
 ## 7. How to extend
 
@@ -340,6 +343,9 @@ them in the editor.
 - **A plugin:** a `Plugin` record (`Him.Config`): actions, bindings, commands, hooks
   (housekeeping, per batch, job results, enable/disable); add it to `plugins` in
   `Him.Config.Default` ([ADR git-and-lsp-as-plugins](adr/git-and-lsp-as-plugins.md)). It can be switched off like the others.
+  Outside the core, a `PluginSpec` built on `Him.Plugin` only ([ADR plugin-api](adr/plugin-api.md)); a buffer of its
+  own with highlights and keys, or a canvas with keys and a timer, is [ADR plugin-canvas](adr/plugin-canvas.md)
+  (`Him.Contrib.Magit`, `Him.Contrib.Tetris` are the examples).
 - **A provider:** a highlighter is a `SyntaxProvider` ([ADR syntax-providers](adr/syntax-providers.md)), a chat backend a
   `ChatProvider` ([ADR ai-chat](adr/ai-chat.md)); register it in `Him.Config.Default`. A clipboard backend is
   a `ClipboardProvider` in `Him.Clipboard.systemProviders` ([ADR registers-and-clipboard](adr/registers-and-clipboard.md)).
@@ -350,8 +356,11 @@ them in the editor.
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-06.* Everything the user asked for so far is done; the latest
-work is setting up highlighting without Helix (`him --grammar`, [ADR grammar-setup](adr/grammar-setup.md)),
+*Last updated 2026-10-09.* Everything the user asked for so far is done; the latest
+work is more plugin building blocks ([ADR plugin-canvas](adr/plugin-canvas.md): highlights, a buffer's own
+keymap, canvases, timers) with two contrib plugins on them (`magit`, a git status buffer like Emacs's,
+and `tetris`); a highlighted picker preview; `X`; `y` leaving select mode; `x` in
+select mode selecting whole lines. Before that came setting up highlighting without Helix (`him --grammar`, [ADR grammar-setup](adr/grammar-setup.md)),
 `r` and `O`, and before that, on the `plugin-api` branch, the plugin API: building blocks ([ADR plugin-building-blocks](adr/plugin-building-blocks.md)),
 `Him.Plugin` and contrib ([ADR plugin-api](adr/plugin-api.md)), personal builds ([ADR personal-builds](adr/personal-builds.md)). Before that came
 registers and the system clipboard ([ADR registers-and-clipboard](adr/registers-and-clipboard.md)), cycling the `:` line's completions with
@@ -419,7 +428,10 @@ marks ([ADR picker-actions](adr/picker-actions.md)) and the jumplist ([ADR jumpl
   - A directory listing does not refresh by itself (`g r`). Deleting a file leaves its
     buffer open.
   - The info box and picker measure text by characters, so wide characters can
-    misalign their right border.
+    misalign their right border; a canvas is one cell per character too.
+  - Plugin keymaps (`psKeymaps`) cannot be rebound in the config file, and the info
+    box after a prefix does not list a buffer keymap's keys. `magit` has no
+    discard and no line-level staging; `:magit-commit` takes the message on the `:` line.
   - An unfocused window's selection is not moved by edits made in another window on
     the same document; it is clamped ([ADR window-splits](adr/window-splits.md)).
   - A proposed change that overlaps an unsaved edit of your own (made before the

@@ -196,6 +196,9 @@ data PluginSpec s = PluginSpec
    - A tutorial section on writing one.
 4. **Later:** the plugin list format, `runWith extraPlugins`, the template repository
    with CI (option 2), and `him --rebuild` (option 3).
+5. **Done:** buffers and boxes of a plugin's own ([ADR plugin-canvas](adr/plugin-canvas.md)): highlights,
+   keymaps for a plugin's buffers, a canvas with its own keys, timers. `magit`
+   (magit-like) and `tetris` are the contrib plugins that prove them.
 
 ## Open questions for the user
 

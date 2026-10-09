@@ -33,7 +33,7 @@ import Him.PluginEvent (Event)
 -- | The plugin API's version: raised when it changes in a way plugins
 -- notice.
 apiVersion :: Int
-apiVersion = 1
+apiVersion = 2
 
 -- | A plugin: what it adds, and what it does when things happen. @s@ is
 -- its own state (any type), which starts as 'psInitial' and goes back to
@@ -52,6 +52,10 @@ data PluginSpec s = PluginSpec
   -- user's keys win.
   , psPrefixNames :: [(Text, Text)]
   -- ^ Titles of key prefixes (@("space x", "my plugin")@).
+  , psKeymaps :: [(Text, [(Text, Text)])]
+  -- ^ Keymaps of its own, by name: keys and action invocations. One is
+  -- used in a buffer ('Him.Plugin.setBufferKeymap', over normal mode's
+  -- keys) or while its canvas is open ('Him.Plugin.canvasKeymap').
   , psOptions :: [(Text, Text)]
   -- ^ Its settings under @[plugins.<name>]@: key and what it does
   -- (others are refused when the config is read).
@@ -66,7 +70,7 @@ data PluginSpec s = PluginSpec
 
 -- | A plugin that adds nothing yet: fill in what it has.
 pluginSpec :: Text -> Text -> s -> PluginSpec s
-pluginSpec name doc initial = PluginSpec name doc initial True [] [] [] [] [] False (const (pure ())) (pure ()) (pure ())
+pluginSpec name doc initial = PluginSpec name doc initial True [] [] [] [] [] [] False (const (pure ())) (pure ()) (pure ())
 
 -- | What plugin code knows: its name and its initial state.
 data Ctx s = Ctx

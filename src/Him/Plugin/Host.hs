@@ -21,6 +21,7 @@ hostPlugin spec =
     , plBindings = Map.fromListWith (flip (<>)) [(m, [(keys, inv)]) | (m, keys, inv) <- psBindings spec]
     , plPrefixNames = mapMaybe (\(keys, name) -> (,name) <$> parseKeys keys) (psPrefixNames spec)
     , plSigns = psSigns spec
+    , plKeymaps = [(psName spec <> ":" <> name, keys) | (name, keys) <- psKeymaps spec]
     , plOptions = psOptions spec
     , plDefaultOn = psDefaultOn spec
     , plEvent = run . psOnEvent spec
