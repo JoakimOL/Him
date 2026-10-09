@@ -414,7 +414,8 @@ marks ([ADR picker-actions](adr/picker-actions.md)) and the jumplist ([ADR jumpl
     text), and file operations in code actions.
   - Highlighting needs `him --grammar` once ([ADR grammar-setup](adr/grammar-setup.md)); without grammars, files
     are plain and only `$HIM_LOG` says why. Syntax sessions are not closed with their
-    buffer. The preview is not highlighted.
+    buffer. The preview highlights a file's first 20000 lines (a search hit further down
+    shows plain).
   - A directory listing does not refresh by itself (`g r`). Deleting a file leaves its
     buffer open.
   - The info box and picker measure text by characters, so wide characters can

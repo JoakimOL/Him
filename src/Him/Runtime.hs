@@ -48,6 +48,7 @@ import Him.Grep (Hit (..), grepFile)
 import Him.Search (compileNeedle)
 import Data.Foldable (for_)
 import Him.Syntax (SyntaxProvider, SyntaxSession (..), startSyntax)
+import Him.Language (detectLanguage, languages)
 import Data.Unique (Unique, newUnique)
 import Him.Spawn (Spawned, sendSpawned, spawnLines, stopSpawned)
 
@@ -206,6 +207,11 @@ shutdown rt = do
   servers <- readMVar (rtServers rt)
   mapM_ (\started -> tryReadMVar started >>= mapM_ (either (const (pure ())) (stopServer . fst))) (Map.elems servers)
 
+-- | A preview highlights at most this many lines from the top (a search
+-- hit further down shows plain).
+previewHighlightLines :: Int
+previewHighlightLines = 20000
+
 runJob :: Runtime -> Job -> IO ()
 runJob rt = \case
   ScanFiles gen opts root -> do
@@ -318,6 +324,16 @@ runJob rt = \case
       (_, Right bytes) | BS.elem 0 bytes -> pure (Left "binary file")
       _ -> either Left (Right . docBuffer) <$> loadDocument file
     post (EvJob (PreviewLoaded file result))
+    -- Then its highlighting, from a session of its own (closed after).
+    for_ result $ \buffer -> for_ (detectLanguage languages file (Buffer.lineAt 0 buffer)) $ \language ->
+      startSyntax (rtProviders rt) language >>= \case
+        Nothing -> pure ()
+        Just (_, s) -> do
+          ssUpdate s 0 buffer []
+          spans <- ssHighlight s 0 (min (Buffer.lineCount buffer) previewHighlightLines - 1)
+          ssClose s
+          _ <- evaluate (IntMap.size spans)
+          post (EvJob (PreviewHighlighted file spans))
   Highlight doc version buffer from to -> do
     session <- Map.lookup doc <$> readMVar (rtSessions rt)
     case session of

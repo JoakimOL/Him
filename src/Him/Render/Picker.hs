@@ -12,7 +12,9 @@ import Him.Picker
 import Him.Options (Options (..))
 import Him.Render.Frame
 import Him.Render.Theme
-import Him.Terminal.Ansi (Style (..))
+import Data.IntMap.Strict qualified as IntMap
+import Him.Syntax.Span (LineSpan (..))
+import Him.Terminal.Ansi (Style (..), packStyle, patchStyle)
 
 -- | Where the box goes inside the area: most of it, centred.
 box :: Rect -> Rect
@@ -91,19 +93,28 @@ drawPicker theme ed area f = case edPicker ed of
             putText (top + h - 1) divider (themePopup theme) "┴" dividers
        in case content of
             Left why -> putText (top + 1) (col + 1) (themePopup theme) {styleFg = styleFg (themePopupDetail theme)} (T.take (pw - 1) why) titled
-            Right (buf, line) ->
+            Right (buf, line, spans) ->
               let firstLine = max 0 (line - rows `div` 3)
                   numberW = length (show (firstLine + rows))
                   shown =
                     [ (r, l, Buffer.lineAt l buf)
                     | (r, l) <- zip [top + 1 ..] [firstLine .. min (Buffer.lineCount buf - 1) (firstLine + rows - 1)]
                     ]
-                  rowText l text =
-                    let number = T.justifyRight numberW ' ' (T.pack (show (l + 1)))
-                        body = T.replace "\t" (T.replicate (optTabWidth (edOptions ed)) " ") text
-                     in T.take pw (" " <> number <> " " <> body) <> T.replicate (pw - 2 - numberW - T.length body) " "
+                  tabWidth = optTabWidth (edOptions ed)
+                  -- The line number, then the text with its syntax styles
+                  -- over the row's style; tabs become spaces.
+                  rowCells l text =
+                    let base = styleOf l
+                        number = " " <> T.justifyRight numberW ' ' (T.pack (show (l + 1))) <> " "
+                        styled = [(lsStart sp, lsEnd sp, patchStyle base st) | sp <- IntMap.findWithDefault [] l spans, Just st <- [scopeStyle theme (lsScope sp)]]
+                        styleAt i = case [st | (a, b, st) <- styled, a <= i, i < b] of
+                          st : _ -> st
+                          [] -> base
+                        cell st c = Cell c (packStyle st)
+                        body = concat [if c == '\t' then replicate tabWidth (cell (styleAt i) ' ') else [cell (styleAt i) c] | (i, c) <- zip [0 ..] (T.unpack text)]
+                     in take pw (map (cell base) (T.unpack number) <> body <> repeat (cell base ' '))
                   styleOf l = if l == line then themePopupSelected theme else themePopup theme
-               in foldl' (\acc (r, l, text) -> putText r col (styleOf l) (T.take pw (rowText l text)) acc) titled shown
+               in foldl' (\acc (r, l, text) -> putCells r col (rowCells l text) acc) titled shown
 
 -- | The terminal cursor sits at the end of the query.
 pickerCursor :: Editor -> Rect -> Maybe (Int, Int)

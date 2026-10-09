@@ -7,6 +7,10 @@
   - an open buffer gives its own text, unsaved changes included;
   - any other file is read by a `LoadPreview` job (one per path) and cached in
     `edPreviews` while the picker is open; the cache is dropped when the picker closes.
+- **Highlighting:** an open buffer's preview uses the spans it has. A file read for the
+  preview is highlighted by the same providers in the `LoadPreview` job, after its text
+  is posted (`PreviewHighlighted`), with a session of its own that is closed after,
+  for its first 20000 lines.
 - **What is not shown:** binary files (a NUL in the first 8 KB) and files over 20 MB
   show a note instead.
 - **Drawing:** the box keeps one border, with a divider between the list and the

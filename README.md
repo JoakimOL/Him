@@ -40,7 +40,7 @@ stack install                # build and install the built binary
   clipboard tool is found by itself (wl-clipboard, xclip, xsel, pbcopy, tmux, or the
   terminal's OSC 52); `[editor] clipboard-provider` picks one.
 - **Files, buffers, windows.**
-  - `space f` / `space b` pickers with a preview.
+  - `space f` / `space b` pickers with a highlighted preview.
   - `space /` searches the project's files as you type.
   - A jumplist, as in Helix: `C-o` / `tab`, `C-s` to save a place, `space j` to
     list (and prune) it.

@@ -174,6 +174,8 @@ data JobResult
     ReplExited !Int !Text
   | -- | A file read for the preview, or why not.
     PreviewLoaded !FilePath !(Either Text Buffer)
+  | -- | The highlighting of a file read for the preview, per line.
+    PreviewHighlighted !FilePath !(IntMap [LineSpan])
   | -- | A line of output from a plugin process (by key).
     ProcessLine !Text !Text
   | -- | It ended: the exit code (-1: it could not start; the reason came

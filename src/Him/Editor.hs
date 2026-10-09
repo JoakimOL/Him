@@ -57,6 +57,8 @@ import Him.Json (Value)
 import Him.Jumplist (Jump (..), Jumplist (..))
 import Data.Sequence qualified as Seq
 import Him.Search (Direction)
+import Him.Syntax (SyntaxInfo (..))
+import Him.Syntax.Span (LineSpan)
 import Him.Selection (Selection, primary, rangeHead)
 import Him.Buffer (Buffer)
 import Him.Buffer qualified as Buffer
@@ -154,7 +156,8 @@ data Await
 -- | A file's text for the picker's preview.
 data Preview
   = PreviewLoading
-  | PreviewText !Buffer
+  | -- | The text, and its highlighting once a provider made it.
+    PreviewText !Buffer !(IntMap [LineSpan])
   | -- | Why there is nothing to show (binary, too large, unreadable).
     PreviewNone !Text
   deriving stock (Eq, Show)
@@ -373,29 +376,31 @@ mapDocuments f ed =
     g b = b {bufDoc = f (bufDoc b)}
 
 -- | What the picker's preview shows for an item: its file's title, and the
--- text with the line to centre on, or why there is none. 'Nothing' for
+-- text with the line to centre on and its highlighting (what is known of
+-- it), or why there is none. 'Nothing' for
 -- items that are not places (actions, code actions). An open buffer's own
 -- text is used (with unsaved changes); other files come from the cache
 -- ('edPreviews').
-previewFor :: Editor -> PickTarget -> Maybe (Text, Either Text (Buffer, Int))
+previewFor :: Editor -> PickTarget -> Maybe (Text, Either Text (Buffer, Int, IntMap [LineSpan]))
 previewFor ed = \case
   PickBuffer i -> case drop i (fst (buffers ed)) of
     b : _ ->
       let d = bufDoc b
-       in Just (maybe "[scratch]" T.pack (docPath d), Right (docBuffer d, posLine (rangeHead (primary (docSelection d)))))
+       in Just (maybe "[scratch]" T.pack (docPath d), Right (docBuffer d, posLine (rangeHead (primary (docSelection d))), spansOf d))
     [] -> Nothing
   PickFile file -> place file 0
   PickPosition file line _ _ -> place file line
   PickJump i -> do
     j <- IntMap.lookup (edFocus ed) (edJumps ed) >>= Seq.lookup i . jlJumps
     d <- find ((== jumpDoc j) . docId) (allDocuments ed)
-    pure (displayName d, Right (docBuffer d, posLine (rangeHead (primary (jumpSelection j)))))
+    pure (displayName d, Right (docBuffer d, posLine (rangeHead (primary (jumpSelection j))), spansOf d))
   _ -> Nothing
   where
-    place file line = Just (T.pack file, maybe cached (\d -> Right (docBuffer d, line)) (openDoc file))
+    spansOf d = siSpans (docSyntax d)
+    place file line = Just (T.pack file, maybe cached (\d -> Right (docBuffer d, line, spansOf d)) (openDoc file))
       where
         cached = case Map.lookup file (edPreviews ed) of
-          Just (PreviewText b) -> Right (b, line)
+          Just (PreviewText b spans) -> Right (b, line, spans)
           Just (PreviewNone why) -> Left why
           _ -> Left "loading…"
     openDoc file =

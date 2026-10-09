@@ -23,11 +23,14 @@ import Him.Position (Pos (..))
 import Him.Render.Diff (diffFrames)
 import Him.Render.Frame (blankFrame, putCells, putText)
 import Him.Selection
-import Him.Terminal.Ansi (Color (..), Style (..), Underline (..), defaultStyle, packStyle, sgr, unpackStyle)
+import Him.Terminal.Ansi (Color (..), Style (..), Underline (..), defaultStyle, packStyle, patchStyle, sgr, unpackStyle)
 import Him.TextWidth (isWide)
 import Him.Render (render)
 import Him.Render.Frame (Cell (..), Frame (..), ScrollInfo (..), continuation)
-import Him.Render.Theme (Theme (..), defaultTheme)
+import Him.Render.Theme (Theme (..), defaultTheme, scopeStyle)
+import Data.IntMap.Strict qualified as IntMap
+import Him.Syntax (SyntaxInfo (..), noSyntax)
+import Him.Syntax.Span (LineSpan (..))
 import Data.Foldable (toList)
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
@@ -41,9 +44,27 @@ renderTests =
           ed = ed0 {edPicker = Just (newPicker "t" [pickerItem "a.txt:30" (PickPosition "a.txt" 29 0 Nothing) ""]), edMode = Picking}
           f = render defaultTheme Nothing ed
        in assertEqual (Just ("a.txt", True), True)
-            ( fmap (\(t, c) -> (t, either (const False) ((== 29) . snd) c)) (previewFor ed (PickPosition "a.txt" 29 0 Nothing))
+            ( fmap (\(t, c) -> (t, either (const False) (\(_, l, _) -> l == 29) c)) (previewFor ed (PickPosition "a.txt" 29 0 Nothing))
             , any (T.isInfixOf "30 line 30") [rowText f r | r <- [0 .. 23]]
             )
+  , test "the preview draws the document's syntax spans" $
+      let doc = (newDocument (Just "a.txt") (buf "let x")) {docSyntax = noSyntax {siSpans = IntMap.singleton 0 [LineSpan 0 3 "keyword"]}}
+          ed0 = newEditor (24, 100) doc
+          ed = ed0 {edPicker = Just (newPicker "t" [pickerItem "a.txt" (PickFile "a.txt") ""]), edMode = Picking}
+          f = render defaultTheme Nothing ed
+          -- The preview's row (the text area's gutter also reads "1 let x").
+          rows = [r | r <- [0 .. 23], "│" `T.isInfixOf` fst (T.breakOn "1 let x" (rowText f r)), "1 let x" `T.isInfixOf` rowText f r]
+          cells = concat [maybe [] toList (Seq.lookup r (frameCells f)) | r <- take 1 rows]
+          at c = [st | Cell ch st <- cells, ch == c]
+          selected = themePopupSelected defaultTheme
+          keyword = maybe selected (patchStyle selected) (scopeStyle defaultTheme "keyword")
+       in assertEqual (True, True) (packStyle keyword `elem` at 'l', packStyle selected `elem` at 'x')
+  , test "a preview's highlighting arrives after its text" $
+      let ed0 = newEditor (24, 100) (newDocument Nothing (buf ""))
+          spans = IntMap.singleton 0 [LineSpan 0 2 "keyword"]
+          loaded = runNoIO (Picker.applyJobResult (PreviewLoaded "b.txt" (Right (buf "hi")))) ed0 {edPicker = Just (newPicker "t" [pickerItem "b.txt" (PickFile "b.txt") ""]), edMode = Picking}
+          lit = runNoIO (Picker.applyJobResult (PreviewHighlighted "b.txt" spans)) loaded
+       in assertEqual (Just (PreviewText (buf "hi") spans)) (Map.lookup "b.txt" (edPreviews lit))
   , test "a marked item has a dot, and the count says how many" $
       let ed0 = newEditor (24, 80) (newDocument Nothing (buf ""))
           ed = ed0 {edPicker = Just (toggleMark (newPicker "t" [pickerItem "x" (PickValue "") "", pickerItem "y" (PickValue "") ""])), edMode = Picking}
@@ -53,7 +74,7 @@ renderTests =
       let ed0 = newEditor (24, 100) (newDocument Nothing (buf ""))
           ed = ed0 {edPicker = Just (newPicker "t" [pickerItem "b.txt" (PickFile "b.txt") ""]), edMode = Picking}
        in assertEqual
-            (Just ("b.txt", Left "loading…"), [StartJob (LoadPreview (optPreviewMaxSize defaultOptions) "b.txt")], Just (PreviewText (buf "hi")))
+            (Just ("b.txt", Left "loading…"), [StartJob (LoadPreview (optPreviewMaxSize defaultOptions) "b.txt")], Just (PreviewText (buf "hi") mempty))
             ( previewFor ed (PickFile "b.txt")
             , edEffects (runNoIO pickerHousekeeping ed)
             , Map.lookup "b.txt" (edPreviews (runNoIO (Picker.applyJobResult (PreviewLoaded "b.txt" (Right (buf "hi")))) ed))

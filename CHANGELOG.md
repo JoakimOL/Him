@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- The picker's preview is highlighted.
 - `y` in select mode goes back to normal mode.
 - `X` selects the whole lines a selection touches. `x` in select mode does too, instead of keeping the old anchor.
 - `him --grammar` sets up highlighting with no other editor installed: it fetches the tree-sitter grammars (pinned revisions) with `git` and builds them; the highlight queries are built into him. `him --build-grammars` and the Helix runtime for queries are gone.

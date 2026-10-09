@@ -177,7 +177,13 @@ applyJobResult result =
         | gen == pkGeneration p -> Just (modify' (\e -> e {edPicker = Just p {pkLoading = False}}))
       PreviewLoaded file loaded ->
         Just $ modify' $ \e ->
-          e {edPreviews = capped (Map.insert file (either PreviewNone PreviewText loaded) (edPreviews e))}
+          e {edPreviews = capped (Map.insert file (either PreviewNone (`PreviewText` mempty) loaded) (edPreviews e))}
+      PreviewHighlighted file spans ->
+        Just $ modify' $ \e ->
+          let withSpans = \case
+                PreviewText b _ -> PreviewText b spans
+                other -> other
+           in e {edPreviews = Map.adjust withSpans file (edPreviews e)}
       GrepFound gen query new n
         | gen == pkGeneration p && query == pkQuery p ->
             -- The first hits for a new query replace the last query's.
