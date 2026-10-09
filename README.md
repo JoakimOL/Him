@@ -76,7 +76,7 @@ stack install                # build and install the built binary
     (in any order); `] c` / `[ c` move between them, `A` / `D` do all.
   - **contrib**, off until switched on: `wordcount`, `recent-files` (`space o`),
     `magit` (`space g g`: a magit-like status buffer; `s` / `u` stage and
-    unstage files and hunks, `tab` shows hunks, `c` commits) and `tetris` (`:tetris`).
+    unstage files, hunks or the selected lines, `tab` shows hunks, `c` commits) and `tetris` (`:tetris`).
 - `C-z` suspends the editor (`fg` brings it back).
 
 ## Configuration

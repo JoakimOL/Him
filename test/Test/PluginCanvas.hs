@@ -113,6 +113,19 @@ pluginCanvasTests = do
     , test "git status on a new repository" (assertEqual "main (no commits yet)" (fst (parseStatus "## No commits yet on main\0")))
     , test "a diff splits into files and hunks" (assertEqual [("a.txt", 2, 4), ("gone", 1, 3)] [(fdPath d, length (fdHunks d), length (fdHeader d)) | d <- parseDiff diffLines])
     , test "a hunk's patch is the file header and the hunk" (assertEqual (Just (T.unlines (take 4 diffLines <> ["@@ -9 +9 @@", "-x", "+y"]))) (parseDiff diffLines `atHunk` 1))
+    , test "staging chosen lines: other additions go, other removals stay" $
+        assertEqual
+          (Just (T.unlines (header <> ["@@ -1,4 +1,4 @@", " one", "-two", "+TWO", " three", " four"])))
+          (linesPatch False twoChanges (Set.fromList [(0, 2), (0, 3)]))
+    , test "unstaging chosen lines is the other way round" $
+        assertEqual
+          (Just (T.unlines (header <> ["@@ -1,3 +1,4 @@", " one", "+TWO", " three", " FOUR"])))
+          (linesPatch True twoChanges (Set.fromList [(0, 3)]))
+    , test "a hunk with no chosen change is left out, and the next one's new start follows" $
+        assertEqual
+          (Just (T.unlines (header <> ["@@ -10,2 +10,3 @@", " x", "+y", " z"])))
+          (linesPatch False (FileDiff "a.txt" header [Hunk "@@ -1,2 +1,3 @@" [" a", "+b", " c"], Hunk "@@ -10,2 +11,3 @@" [" x", "+y", " z"]]) (Set.fromList [(0, 1), (1, 2)]))
+    , test "only context chosen: no patch" (assertEqual Nothing (linesPatch False twoChanges (Set.fromList [(0, 1)])))
     , test "the layout marks each line" $
         let (texts, hls, rows) = layout "main" [Change Unstaged 'M' "a.txt"] (Map.fromList [((Unstaged, "a.txt"), d) | d <- take 1 (parseDiff diffLines)]) (Set.singleton (Unstaged, "a.txt"))
          in assertEqual
@@ -139,6 +152,8 @@ pluginCanvasTests = do
     atHunk ds k = case ds of
       d : _ -> hunkPatch d k
       [] -> Nothing
+    header = ["diff --git a/a.txt b/a.txt", "--- a/a.txt", "+++ b/a.txt"]
+    twoChanges = FileDiff "a.txt" header [Hunk "@@ -1,4 +1,4 @@" [" one", "-two", "+TWO", " three", "-four", "+FOUR"]]
     diffLines =
       [ "diff --git a/a.txt b/a.txt"
       , "index 1..2 100644"

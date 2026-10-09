@@ -10,7 +10,7 @@ and this project adheres to the
 
 - The picker's preview is highlighted.
 - Plugin API (version 2): highlights over a buffer's text, keymaps of a plugin's own for its buffers, a canvas in the middle of the screen with its own keys, and timers ([ADR plugin-canvas](docs/adr/plugin-canvas.md)).
-- Contrib plugins `magit` (`space g g`: a magit-like status buffer to stage, unstage and commit files and hunks) and `tetris` (`:tetris`).
+- Contrib plugins `magit` (`space g g`: a magit-like status buffer to stage, unstage and commit files, hunks and selected lines) and `tetris` (`:tetris`).
 - `X` selects the whole lines a selection touches. `x` in select mode does too, instead of keeping the old anchor.
 - `y` in select mode goes back to normal mode.
 - `command_mode_with <text>` opens the `:` line with text typed.

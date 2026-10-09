@@ -2,7 +2,8 @@
 -- magit (@space g g@, @:magit@). It lists the branch, the untracked
 -- files, the unstaged and the staged changes, coloured with highlights;
 -- its own keys work in it: @s@ / @u@ stage and unstage the file, hunk or
--- section under the cursor, @tab@ shows a file's hunks, @ret@ opens the
+-- section under the cursor (with lines of hunks selected, only those
+-- lines), @tab@ shows a file's hunks, @ret@ opens the
 -- file there, @c@ commits (@:magit-commit message@), @g r@ refreshes, @q@
 -- closes it. An example of a buffer with highlights, a keymap and
 -- processes.
@@ -18,6 +19,7 @@ module Him.Contrib.Magit
   , parseDiff
   , layout
   , hunkPatch
+  , linesPatch
   ) where
 
 import Control.Exception (IOException, try)
@@ -99,8 +101,8 @@ magit =
     , psActions =
         [ action "magit" "Show the git status buffer" (modifyState (\s -> s {stShow = True}) >> refresh)
         , action "magit_refresh" "Run git status again" refresh
-        , action "magit_stage" "Stage the file, hunk or section under the cursor" (atCursor stage)
-        , action "magit_unstage" "Unstage the file, hunk or section under the cursor" (atCursor unstage)
+        , action "magit_stage" "Stage the selected lines of a diff, or the file, hunk or section under the cursor" (orLines False (atCursor stage))
+        , action "magit_unstage" "Unstage the selected lines of a diff, or the file, hunk or section under the cursor" (orLines True (atCursor unstage))
         , action "magit_toggle" "Show or hide the hunks of the file under the cursor" (atCursor toggle)
         , action "magit_open" "Open the file under the cursor, at the hunk's line" (atCursor open)
         , action "magit_commit" "Commit the staged changes (asks for the message)" (runAction "command_mode_with \"magit-commit \"")
@@ -234,6 +236,27 @@ unstage = \case
   RowNone -> pure ()
   _ -> notify "not staged"
 
+-- | With a selection (not just the cursor) over lines of shown hunks:
+-- stage (or unstage) only the changed lines it covers, in every range.
+-- Otherwise the given action.
+orLines :: Bool -> PluginM St () -> PluginM St ()
+orLines reverse' otherwise' = do
+  s <- getState
+  current <- currentBuffer
+  ranges' <- selections
+  let section = if reverse' then Staged else Unstaged
+      spanned = [l | (a, h) <- ranges', a /= h, l <- [min (posLine a) (posLine h) .. max (posLine a) (posLine h)]]
+      chosen = Map.fromListWith (<>) [(path, [(k, i)]) | l <- spanned, Just (RowHunkLine sec path k i) <- [IntMap.lookup l (stRows s)], sec == section]
+      patches = [p | (path, picked) <- Map.toList chosen, Just d <- [Map.lookup (section, path) (stDiffs s)], Just p <- [linesPatch reverse' d (Set.fromList picked)]]
+  if Just (biId current) /= stBuffer s || Map.null chosen
+    then otherwise'
+    else
+      if null patches
+        then notify "no changed lines selected"
+        else do
+          mapM_ (\(a, _) -> setCursor a) (take 1 ranges')
+          applyPatch reverse' (T.concat patches)
+
 -- | Run git in the repository; the status follows when it is done.
 git :: [String] -> PluginM St ()
 git args = getState >>= \s -> spawn "op" "git" args (stRoot s)
@@ -246,12 +269,16 @@ applyHunk reverse' path k = do
   let section = if reverse' then Staged else Unstaged
   case Map.lookup (section, path) (stDiffs s) >>= \d -> hunkPatch d k of
     Nothing -> warn "no such hunk"
-    Just patch -> do
-      file <- stateFile "hunk.patch"
-      written <- liftIO (try @IOException (TIO.writeFile file patch))
-      case written of
-        Left e -> warn (T.pack (show e))
-        Right () -> git (["apply", "--cached"] <> ["--reverse" | reverse'] <> [file])
+    Just patch -> applyPatch reverse' patch
+
+-- | Apply a patch to the index (reversed: take it out), through a file.
+applyPatch :: Bool -> Text -> PluginM St ()
+applyPatch reverse' patch = do
+  file <- stateFile "hunk.patch"
+  written <- liftIO (try @IOException (TIO.writeFile file patch))
+  case written of
+    Left e -> warn (T.pack (show e))
+    Right () -> git (["apply", "--cached"] <> ["--reverse" | reverse'] <> [file])
 
 toggle :: Row -> PluginM St ()
 toggle = \case
@@ -352,6 +379,53 @@ hunkPatch :: FileDiff -> Int -> Maybe Text
 hunkPatch d k = case drop k (fdHunks d) of
   h : _ | k >= 0 -> Just (T.unlines (fdHeader d <> [hkHeader h] <> hkLines h))
   _ -> Nothing
+
+-- | A patch of some lines of a file's diff: the chosen (hunk, line)
+-- pairs (lines counted from 1 within the hunk). Changes not chosen are
+-- left out: an added line is dropped, a removed one becomes context. For
+-- unstaging (reversed, applied with @--reverse@) it is the other way
+-- round. 'Nothing' when no chosen line is a change.
+linesPatch :: Bool -> FileDiff -> Set (Int, Int) -> Maybe Text
+linesPatch reverse' d chosen
+  | null hunks' = Nothing
+  | otherwise = Just (T.unlines (fdHeader d <> concat (shift 0 hunks')))
+  where
+    hunks' = [(h, kept) | (k, h) <- zip [0 ..] (fdHunks d), let kept = keep k (hkLines h), any isChange [l | (l, True) <- kept]]
+    isChange l = "+" `T.isPrefixOf` l || "-" `T.isPrefixOf` l
+    -- Each line, and whether it is a chosen change.
+    keep k ls = go Nothing (zip [1 ..] ls)
+      where
+        go _ [] = []
+        go previous ((i, l) : rest)
+          -- "\ No newline at end of file" goes with the line before it.
+          | "\\" `T.isPrefixOf` l = [(l, False) | previous == Just True] <> go previous rest
+          | otherwise = case T.uncons l of
+              Just (c, body)
+                | c == dropped && not chosenHere -> go (Just False) rest
+                | c == contexted && not chosenHere -> (" " <> body, False) : go (Just True) rest
+              _ -> (l, chosenHere && isChange l) : go (Just True) rest
+          where
+            chosenHere = Set.member (k, i) chosen
+    (dropped, contexted) = if reverse' then ('-', '+') else ('+', '-')
+    -- New headers: the counts of what is left, and the new side's start
+    -- moved by the hunks before.
+    shift _ [] = []
+    shift delta ((h, kept) : rest) =
+      let ls = map fst kept
+          count p = length (filter p ls)
+          old = count (\l -> not ("+" `T.isPrefixOf` l || "\\" `T.isPrefixOf` l))
+          new = count (\l -> not ("-" `T.isPrefixOf` l || "\\" `T.isPrefixOf` l))
+          start = oldStart (hkHeader h)
+          rest' = T.drop 2 (snd (T.breakOn "@@" (T.drop 2 (hkHeader h))))
+          header = "@@ -" <> range start old <> " +" <> range (start + delta) new <> " @@" <> rest'
+       in (header : ls) : shift (delta + new - old) rest
+    range start n = T.pack (show start) <> "," <> T.pack (show n)
+
+-- | The first line (from 1, as in the header) of a hunk in the old file.
+oldStart :: Text -> Int
+oldStart header = case T.takeWhile isDigit (T.drop 1 (snd (T.breakOn "-" header))) of
+  digits | not (T.null digits) -> read (T.unpack digits)
+  _ -> 0
 
 -- | The first line (from 0) of a hunk in the new file: @+c@ of
 -- @\@\@ -a,b +c,d \@\@@.

@@ -315,7 +315,7 @@ them in the editor.
 | git plugin | `] g` / `[ g` (next / previous change); `space g s` / `u` (stage / unstage the selected lines), `S` / `U` (the file), `r` (reset the lines). |
 | lsp plugin | `space k` (hover), `g d` / `g y` / `g i` / `g r` (definition, type definition, implementation, references), `space s` / `space S` (symbols / in the project), `space r` (rename), `space a` (code actions), `space x` / `] d` / `[ d` (diagnostics); insert mode: completion (`C-x`, `tab` / `C-n` / `C-p`, `ret`), signature help. |
 | repl plugin | `space e` (send the selection or line), `space E` (reload); in the REPL buffer (insert): `ret` sends, `C-c` interrupts. |
-| magit (contrib) | `space g g` / `:magit` (the status buffer); in it: `s` / `u` (stage / unstage the file, hunk or section), `tab` (show the file's hunks), `ret` (open there), `c` (`:magit-commit message`), `g r` (refresh), `q` (close). |
+| magit (contrib) | `space g g` / `:magit` (the status buffer); in it: `s` / `u` (stage / unstage the selected lines of a hunk, else the file, hunk or section), `tab` (show the file's hunks), `ret` (open there), `c` (`:magit-commit message`), `g r` (refresh), `q` (close). |
 | tetris (contrib) | `:tetris`; `left` / `right` / `h` / `l`, `up` / `k` / `x` (rotate), `z` (rotate back), `down` / `j`, `space` (drop), `p` (pause), `q` / `esc` (quit), `r` (again, after the end). |
 | chat plugin | `space c c` (open the chat), `space c s` (put the selection into the message), `space c y` (copy a code block), `space c n` (new chat); proposed changes: `space c a` / `space c d` (keep / discard the one under the cursor), `space c A` / `space c D` (all), `] c` / `[ c` (next / previous), `space c l` (list); in the chat (insert): `ret` sends, `A-ret` a line break, `up` / `down` earlier messages, `C-c` stops the answer, `C-l` a new chat. |
 
@@ -431,7 +431,7 @@ marks ([ADR picker-actions](adr/picker-actions.md)) and the jumplist ([ADR jumpl
     misalign their right border; a canvas is one cell per character too.
   - Plugin keymaps (`psKeymaps`) cannot be rebound in the config file, and the info
     box after a prefix does not list a buffer keymap's keys. `magit` has no
-    discard and no line-level staging; `:magit-commit` takes the message on the `:` line.
+    discard; `:magit-commit` takes the message on the `:` line.
   - An unfocused window's selection is not moved by edits made in another window on
     the same document; it is clamped ([ADR window-splits](adr/window-splits.md)).
   - A proposed change that overlaps an unsaved edit of your own (made before the
