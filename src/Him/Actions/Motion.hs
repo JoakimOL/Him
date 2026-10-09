@@ -23,7 +23,7 @@ import Him.Actions.Match (awaitedMatchKey)
 import Him.Actions.Register (awaitedRegister)
 import Him.Options (Options (..))
 import Him.Buffer (Buffer)
-import Him.Selection (Selection, collapse, keepPrimary, mapRanges, removePrimary, rotatePrimary)
+import Him.Selection (Selection, collapse, normalize, keepPrimary, mapRanges, removePrimary, rotatePrimary)
 
 actions :: [Action]
 actions =
@@ -40,7 +40,9 @@ actions =
   , repeated "move_next_word_start" GSelection "Select to the start of the next word" nextWordStart
   , repeated "move_prev_word_start" GSelection "Select back to the start of the previous word" prevWordStart
   , repeated "move_next_word_end" GSelection "Select to the end of the next word" nextWordEnd
-  , repeated "select_line" GSelection "Select the whole line (repeat to extend)" selectLine
+  , action "select_line" GSelection "Select the whole lines (repeat to extend)" count $ \n ->
+      replicateM_ n (reshape selectLine)
+  , simple "extend_to_line_bounds" GSelection "Extend the selection to the whole lines it touches" (reshape extendToLineBounds)
   , simple "collapse_selection" GSelection "Reduce the selection to the cursor" $
       modifyDoc (\d -> d {docSelection = mapRanges collapse (docSelection d)})
   , action "page_down" GMovement "Move down a page" count (page 1 1)
@@ -68,6 +70,11 @@ actions =
 -- | Reshape the whole selection, given the buffer.
 withBuffer :: (Buffer -> Selection -> Selection) -> EditorM ()
 withBuffer f = modifyDoc (\d -> d {docSelection = f (docBuffer d) (docSelection d)})
+
+-- | Apply a motion that reshapes each range from its own extent, so select
+-- mode's extending (keeping the old anchor) does not apply.
+reshape :: Motion -> EditorM ()
+reshape m = withBuffer (\b -> normalize . mapRanges (m b))
 
 -- | An optional repeat count, at least 1. A count typed before the key
 -- (@5 j@) fills it.

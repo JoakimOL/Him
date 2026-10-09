@@ -19,6 +19,7 @@ module Him.Motion
   , nextWordEnd
   , prevWordStart
   , selectLine
+  , extendToLineBounds
   , findChar
     -- * Whole selections
   , selectAll
@@ -147,17 +148,36 @@ prevWordStart b r = Range start end Nothing
     wordLast = skipWhile prevPos isGap b start
     end = extendWhile prevPos (== classAt b wordLast) b wordLast
 
--- | @x@: select the whole line including its line end. If the range already
--- covers whole lines, extend it by one more line.
+-- | @x@: select the whole lines the range touches, including the last
+-- line's end. If the range already covers whole lines, extend it by one
+-- more line. The range keeps its direction.
 selectLine :: Motion
 selectLine b r
-  | coversLines = Range (Pos sl 0) (lineEndOf (min (lineCount b - 1) (el + 1))) Nothing
-  | otherwise = Range (Pos sl 0) (lineEndOf el) Nothing
+  | coversLines b r = lineBounds b r (min (lineCount b - 1) (el + 1))
+  | otherwise = lineBounds b r el
   where
-    Pos sl sc = rangeStart r
-    e@(Pos el _) = rangeEnd r
-    lineEndOf l = Pos l (lineLength l b)
-    coversLines = sc == 0 && e == lineEndOf el
+    Pos el _ = rangeEnd r
+
+-- | @X@: select the whole lines the range touches, never adding one.
+extendToLineBounds :: Motion
+extendToLineBounds b r = lineBounds b r (posLine (rangeEnd r))
+
+-- | Whether the range runs from a line's start to a line's end.
+coversLines :: Buffer -> Range -> Bool
+coversLines b r = sc == 0 && rangeEnd r == Pos el (lineLength el b)
+  where
+    Pos _ sc = rangeStart r
+    Pos el _ = rangeEnd r
+
+-- | From the start of the range's first line to the end of line @el@,
+-- facing the way the range faced.
+lineBounds :: Buffer -> Range -> Int -> Range
+lineBounds b r el
+  | rangeHead r < rangeAnchor r = Range end start Nothing
+  | otherwise = Range start end Nothing
+  where
+    start = Pos (posLine (rangeStart r)) 0
+    end = Pos el (lineLength el b)
 
 -- | One range over the whole buffer.
 selectAll :: Buffer -> Selection

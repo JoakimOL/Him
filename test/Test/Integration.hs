@@ -67,6 +67,10 @@ integrationTests = do
   wordDelete <- textAfter "hello world" "w d"
   lineDelete <- textAfter "one\ntwo\nthree" "j x d"
   lineTwice <- textAfter "one\ntwo\nthree" "x x d"
+  selectLines <- selectionAfter "one\ntwo\nthree" "l v j x"
+  selectLinesUp <- selectionAfter "one\ntwo\nthree" "j l v k x"
+  extendLines <- selectionAfter "one\ntwo\nthree" "l v j X"
+  extendWhole <- selectionAfter "one\ntwo\nthree" "x X"
   change <- textAfter "foo bar" "e c b a z esc"
   gotoEnd <- textAfter "one\ntwo\nthree" "g e x d"
   gotoTop <- textAfter "one\ntwo" "j g g x d"
@@ -175,6 +179,10 @@ integrationTests = do
     , test "w d deletes a word and its blanks" (assertEqual "world" wordDelete)
     , test "x d deletes a line" (assertEqual "one\nthree" lineDelete)
     , test "x x d deletes two lines" (assertEqual "three" lineTwice)
+    , test "x in select mode selects every line the selection touches" (assertEqual (Pos 0 0, Pos 1 3) selectLines)
+    , test "x keeps a backward selection backward" (assertEqual (Pos 1 3, Pos 0 0) selectLinesUp)
+    , test "X selects the whole lines the selection touches" (assertEqual (Pos 0 0, Pos 1 3) extendLines)
+    , test "X on whole lines adds none" (assertEqual (Pos 0 0, Pos 0 3) extendWhole)
     , test "e c replaces a word" (assertEqual "baz bar" change)
     , test "g e goes to the last line" (assertEqual "one\ntwo" gotoEnd)
     , test "g g goes to the first line" (assertEqual "two" gotoTop)

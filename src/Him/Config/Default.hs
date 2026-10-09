@@ -137,6 +137,7 @@ normalBindings =
        , ("b", "move_prev_word_start")
        , ("e", "move_next_word_end")
        , ("x", "select_line")
+       , ("X", "extend_to_line_bounds")
        , ("f", "find_next_char")
        , ("t", "find_till_char")
        , ("F", "find_prev_char")
