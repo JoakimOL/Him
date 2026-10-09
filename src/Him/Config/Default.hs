@@ -218,6 +218,7 @@ selectBindings :: [(Text, Text)]
 selectBindings =
   [ ("esc", "normal_mode")
   , ("v", "normal_mode")
+  , ("o", "flip_selections")
   ]
 
 insertBindings :: [(Text, Text)]

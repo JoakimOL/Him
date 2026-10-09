@@ -23,7 +23,7 @@ import Him.Actions.Match (awaitedMatchKey)
 import Him.Actions.Register (awaitedRegister)
 import Him.Options (Options (..))
 import Him.Buffer (Buffer)
-import Him.Selection (Selection, collapse, normalize, keepPrimary, mapRanges, removePrimary, rotatePrimary)
+import Him.Selection (Range (..), Selection, collapse, normalize, keepPrimary, mapRanges, removePrimary, rotatePrimary)
 
 actions :: [Action]
 actions =
@@ -43,6 +43,8 @@ actions =
   , action "select_line" GSelection "Select the whole lines (repeat to extend)" count $ \n ->
       replicateM_ n (reshape selectLine)
   , simple "extend_to_line_bounds" GSelection "Extend the selection to the whole lines it touches" (reshape extendToLineBounds)
+  , simple "flip_selections" GSelection "Swap each selection's ends: the cursor goes to the other end (o in select mode)" $
+      modifyDoc (\d -> d {docSelection = mapRanges (\r -> Range (rangeHead r) (rangeAnchor r) Nothing) (docSelection d)})
   , simple "collapse_selection" GSelection "Reduce the selection to the cursor" $
       modifyDoc (\d -> d {docSelection = mapRanges collapse (docSelection d)})
   , action "page_down" GMovement "Move down a page" count (page 1 1)

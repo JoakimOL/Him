@@ -13,6 +13,7 @@ and this project adheres to the
 - Contrib plugins `magit` (`space g g`: a magit-like status buffer to stage, unstage and commit files, hunks and selected lines) and `tetris` (`:tetris`).
 - `X` selects the whole lines a selection touches. `x` in select mode does too, instead of keeping the old anchor.
 - `y` in select mode goes back to normal mode.
+- `o` in select mode puts the cursor at the other end of the selection, to extend it from there (`flip_selections`).
 - `command_mode_with <text>` opens the `:` line with text typed.
 - `him --grammar` sets up highlighting with no other editor installed: it fetches the tree-sitter grammars (pinned revisions) with `git` and builds them; the highlight queries are built into him. `him --build-grammars` and the Helix runtime for queries are gone.
 - Commit messages are highlighted (the language asked for a grammar named `git-commit`; it is `gitcommit`).

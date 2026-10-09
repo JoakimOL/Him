@@ -71,6 +71,8 @@ integrationTests = do
   selectLinesUp <- selectionAfter "one\ntwo\nthree" "j l v k x"
   extendLines <- selectionAfter "one\ntwo\nthree" "l v j X"
   extendWhole <- selectionAfter "one\ntwo\nthree" "x X"
+  flipped <- selectionAfter "one\ntwo\nthree" "v j l o"
+  flippedUp <- selectionAfter "one\ntwo\nthree" "j v j o k"
   change <- textAfter "foo bar" "e c b a z esc"
   gotoEnd <- textAfter "one\ntwo\nthree" "g e x d"
   gotoTop <- textAfter "one\ntwo" "j g g x d"
@@ -183,6 +185,8 @@ integrationTests = do
     , test "x keeps a backward selection backward" (assertEqual (Pos 1 3, Pos 0 0) selectLinesUp)
     , test "X selects the whole lines the selection touches" (assertEqual (Pos 0 0, Pos 1 3) extendLines)
     , test "X on whole lines adds none" (assertEqual (Pos 0 0, Pos 0 3) extendWhole)
+    , test "o in select mode puts the cursor at the selection's other end" (assertEqual (Pos 1 1, Pos 0 0) flipped)
+    , test "after o, select mode extends from the other end" (assertEqual (Pos 2 0, Pos 0 0) flippedUp)
     , test "e c replaces a word" (assertEqual "baz bar" change)
     , test "g e goes to the last line" (assertEqual "one\ntwo" gotoEnd)
     , test "g g goes to the first line" (assertEqual "two" gotoTop)
