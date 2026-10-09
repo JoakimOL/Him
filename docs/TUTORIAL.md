@@ -29,7 +29,8 @@ ship with GHC (`base`, `unix`, `text`, `bytestring`, `containers`, `transformers
 The guide follows the order the editor was actually built in. Each part ends with
 something you can run. Along the way there are tasks, marked **▶ Task**: small pieces to
 write yourself before you look at how him does it. The full source is in this
-repository, so you can always compare.
+repository, so you can always compare. [TUTORIAL-SOLUTIONS.md](TUTORIAL-SOLUTIONS.md)
+solves every task in order and builds them up into a small working editor.
 
 | Part | Builds | Key idea |
 |---|---|---|
