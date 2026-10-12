@@ -21,7 +21,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Json
 import Him.Log (logMsg)
-import Him.Lsp.Config (ServerConfig (..))
+import Him.Lsp.Config (ServerConfig (..), settingsFor)
 import Him.Lsp.Protocol
 import Him.Lsp.State (ServerInfo (..), Sync (..))
 import System.Directory (doesPathExist)
@@ -76,16 +76,20 @@ startServer config root deliver exited = do
             ServerRequest i "workspace/applyEdit" _ -> do
               deliver v
               sendMessage server (response i (object [("applied", JBool True)]))
-            ServerRequest i method params -> sendMessage server (response i (autoReply method params))
+            ServerRequest i method params -> sendMessage server (response i (autoReply (scSettings config) method params))
             _ -> deliver v
       _ <- forkIO (reader hout handle >> exited)
       pid <- getProcessID
-      sendMessage server (request (-1) "initialize" (initializeParams (fromIntegral pid) root))
+      sendMessage server (request (-1) "initialize" (initializeParams (fromIntegral pid) root (scInitOptions config)))
       -- Some servers index before answering; give them time.
       answer <- timeout 60000000 (takeMVar initialized)
       case answer of
         Just (Right result) -> do
           sendMessage server (notification "initialized" (object []))
+          -- Servers that do not ask for their settings get them pushed.
+          case scSettings config of
+            JObject [] -> pure ()
+            settings -> sendMessage server (notification "workspace/didChangeConfiguration" (object [("settings", settings)]))
           pure (Right (server, serverInfo config root result))
         Just (Left e) -> Left ("initialize failed: " <> e) <$ stopServer server
         Nothing -> Left "initialize timed out" <$ stopServer server
@@ -109,10 +113,11 @@ reader h handle = go emptyFramer
           go framer'
 
 -- | Answers for the server's requests that need no decision from the
--- editor: configuration (none), progress tokens and registrations (fine).
-autoReply :: Text -> Value -> Value
-autoReply method params = case method of
-  "workspace/configuration" -> JArray [JNull | _ <- fromMaybe [] (key "items" params >>= asArray)]
+-- editor: configuration (from its settings), progress tokens and
+-- registrations (fine).
+autoReply :: Value -> Text -> Value -> Value
+autoReply settings method params = case method of
+  "workspace/configuration" -> JArray [settingsFor settings (key "section" item >>= asText) | item <- fromMaybe [] (key "items" params >>= asArray)]
   _ -> JNull
 
 sendMessage :: Server -> Value -> IO ()
@@ -129,9 +134,9 @@ stopServer server = do
     void (try @SomeException (terminateProcess (svProcess server)))
   pure ()
 
-initializeParams :: Int -> FilePath -> Value
-initializeParams pid root =
-  object
+initializeParams :: Int -> FilePath -> Maybe Value -> Value
+initializeParams pid root initOptions =
+  object $
     [ ("processId", JInt (fromIntegral pid))
     , ("clientInfo", object [("name", JString "him")])
     , ("rootUri", JString (pathToUri root))
@@ -160,10 +165,11 @@ initializeParams pid root =
                   )
                 ]
             )
-          , ("workspace", object [("configuration", JBool True), ("workspaceFolders", JBool True)])
+          , ("workspace", object [("configuration", JBool True), ("didChangeConfiguration", object []), ("workspaceFolders", JBool True)])
           ]
       )
     ]
+      <> [("initializationOptions", o) | Just o <- [initOptions]]
 
 serverInfo :: ServerConfig -> FilePath -> Value -> ServerInfo
 serverInfo config root result =

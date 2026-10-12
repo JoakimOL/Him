@@ -31,7 +31,8 @@ import Him.Options
 import Him.Picker
 import Him.Effect (Effect (..))
 import Him.UserConfig
-import Him.Lsp.Config (ServerConfig (..), defaultServers)
+import Him.Json (Value (..))
+import Him.Lsp.Config (ServerConfig (..), defaultServers, settingsFor)
 import Him.Config.Default (defaultBindings)
 import System.Environment (setEnv, unsetEnv)
 import Him.Lsp.Protocol
@@ -75,6 +76,19 @@ userConfigTests =
           table = either (error . T.unpack) cfgServers (applyUserConfig uc)
        in assertEqual (Just ("rust-analyzer", ["--x"]), Nothing, Just "lua-ls")
             (fmap (\sc -> (scCommand sc, scArgs sc)) (Map.lookup "rust" table), Map.lookup "go" table, scCommand <$> Map.lookup "lua" table)
+  , test "servers: settings and initialization options" $
+      let uc = either (error . show) id (parseUserConfig "[language-server.haskell.settings.haskell]\nformattingProvider = \"fourmolu\"\n[language-server.haskell.initialization-options]\nx = 1\n")
+          sc = Map.lookup "haskell" (either (error . T.unpack) cfgServers (applyUserConfig uc))
+       in assertEqual
+            (Just ("haskell-language-server-wrapper", JObject [("haskell", JObject [("formattingProvider", JString "fourmolu")])], Just (JObject [("x", JInt 1)])))
+            ((\c -> (scCommand c, scSettings c, scInitOptions c)) <$> sc)
+  , test "a server's settings answer workspace/configuration by section" $
+      let settings = JObject [("haskell", JObject [("formattingProvider", JString "fourmolu")])]
+       in assertEqual
+            [JString "fourmolu", JObject [("formattingProvider", JString "fourmolu")], JNull, settings]
+            [settingsFor settings (Just "haskell.formattingProvider"), settingsFor settings (Just "haskell"), settingsFor settings (Just "rust"), settingsFor settings Nothing]
+  , test "server settings must be a table" $
+      assertEqual True (either (any ("settings/initialization-options: tables" `T.isInfixOf`)) (const False) (parseUserConfig "[language-server.haskell]\nsettings = 3\n"))
   , test "a new language needs a command" $
       assertEqual (Left "language-server.zig: no built-in server, so a command is needed") (() <$ (applyUserConfig =<< either (Left . T.unlines) Right (parseUserConfig "[language-server.zig]\nargs = []\n")))
   , test "editor settings apply to the editor, also from sub-tables" $

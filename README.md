@@ -60,7 +60,9 @@ stack install                # build and install the built binary
     jump between changes.
   - **lsp:** diagnostics (`space d`: this file's, the workspace's, next / previous), `space k` hover, `g d`, `g r`, `space r` rename,
     `space a` code actions, completion, `:format`. Servers: clangd, rust-analyzer,
-    haskell-language-server, typescript-language-server, pylsp, gopls.
+    haskell-language-server, typescript-language-server, pylsp, gopls. Each server's
+    command and settings can be changed under `[language-server.<language>]`, e.g.
+    `formattingProvider = "fourmolu"` under `[language-server.haskell.settings.haskell]`.
   - **repl:** `:repl` opens one beside the file (`stack ghci` in a Haskell project),
     `space e` sends the selection, and saving reloads. Like the chat, it is a
     transcript: only the input after the prompt can change, but you can select and

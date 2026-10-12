@@ -41,6 +41,7 @@ module Him.UserConfig
   , modeSections
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Exception (IOException, try)
 import Data.Either (partitionEithers)
 import Data.List (find, sortOn)
@@ -88,6 +89,8 @@ data ServerOverride = ServerOverride
   , soArgs :: !(Maybe [String])
   , soRoots :: !(Maybe [FilePath])
   , soLanguageId :: !(Maybe Text)
+  , soSettings :: !(Maybe Value)
+  , soInitOptions :: !(Maybe Value)
   , soEnabled :: !Bool
   }
   deriving stock (Eq, Show)
@@ -229,14 +232,16 @@ parseUserConfigWith every src = do
     server (lang, v) = do
       kvs <- table ("[language-server." <> lang <> "]") v
       fs <- collect (map (serverKey lang) kvs)
-      Right (lang, foldr ($) (ServerOverride Nothing Nothing Nothing Nothing True) fs)
+      Right (lang, foldr ($) (ServerOverride Nothing Nothing Nothing Nothing Nothing Nothing True) fs)
     serverKey lang = \case
       ("command", JString t) -> Right (\o -> o {soCommand = Just (T.unpack t)})
       ("args", JArray xs) | Just ss <- traverse asText xs -> Right (\o -> o {soArgs = Just (map T.unpack ss)})
       ("roots", JArray xs) | Just ss <- traverse asText xs -> Right (\o -> o {soRoots = Just (map T.unpack ss)})
       ("language-id", JString t) -> Right (\o -> o {soLanguageId = Just t})
+      ("settings", v@(JObject _)) -> Right (\o -> o {soSettings = Just v})
+      ("initialization-options", v@(JObject _)) -> Right (\o -> o {soInitOptions = Just v})
       ("enabled", JBool b) -> Right (\o -> o {soEnabled = b})
-      (k, _) -> Left ["language-server." <> lang <> "." <> k <> ": unknown setting or wrong type (command: string, args/roots: list of strings, language-id: string, enabled: true/false)"]
+      (k, _) -> Left ["language-server." <> lang <> "." <> k <> ": unknown setting or wrong type (command: string, args/roots: list of strings, language-id: string, settings/initialization-options: tables, enabled: true/false)"]
     table what v = maybe (Left [what <> " must be a table"]) Right (asObject v)
     collect :: [Either [Text] a] -> Either [Text] [a]
     collect xs = case partitionEithers xs of
@@ -318,7 +323,7 @@ applyServers overrides table0 = foldr step (Right table0) (Map.toList overrides)
         else case (Map.lookup lang table, soCommand o) of
           (Nothing, Nothing) -> Left ("language-server." <> lang <> ": no built-in server, so a command is needed")
           (base, cmd) ->
-            let b = fromMaybe (ServerConfig "" [] [] lang) base
+            let b = fromMaybe (ServerConfig "" [] [] lang (JObject []) Nothing) base
              in Right $
                   Map.insert
                     lang
@@ -327,6 +332,8 @@ applyServers overrides table0 = foldr step (Right table0) (Map.toList overrides)
                       , scArgs = fromMaybe (scArgs b) (soArgs o)
                       , scRoots = fromMaybe (scRoots b) (soRoots o)
                       , scLanguageId = fromMaybe (scLanguageId b) (soLanguageId o)
+                      , scSettings = fromMaybe (scSettings b) (soSettings o)
+                      , scInitOptions = soInitOptions o <|> scInitOptions b
                       }
                     table
 
@@ -430,7 +437,17 @@ defaultConfigTextFor every =
       , "args = " <> list (scArgs sc)
       , "roots = " <> list (scRoots sc) <> "   # files that mark a project's root"
       , "language-id = " <> quoteString (scLanguageId sc)
+      , "# [language-server." <> quoteKey lang <> ".settings]                 # the server's settings, as it documents them"
+      , "# [language-server." <> quoteKey lang <> ".initialization-options]   # sent with initialize"
       ]
+        <> [ l
+           | lang == "haskell"
+           , l <-
+               [ "# For example, another formatter:"
+               , "# [language-server.haskell.settings.haskell]"
+               , "# formattingProvider = \"fourmolu\""
+               ]
+           ]
     replBlock (lang, rc) =
       [ ""
       , "[repl." <> quoteKey lang <> "]   # :repl, space e (send the selection), space E (reload)"

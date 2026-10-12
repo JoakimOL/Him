@@ -9,7 +9,10 @@
   - a writer thread with a queue, so the main loop never blocks on a busy server;
   - a drain for stderr;
   - automatic answers to the server's own requests (configuration, progress,
-    registration);
+    registration). `workspace/configuration` is answered from the server's
+    `settings` in the config file (`[language-server.<language>.settings]`, by dotted
+    section), which are also pushed with `workspace/didChangeConfiguration` once the
+    server is initialized; `initialization-options` go with `initialize`;
   - the initialize handshake, which advertises UTF-8 positions.
 
   The runtime starts one server per (command, project root) on demand (`LspEnsure`).
