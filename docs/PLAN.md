@@ -364,8 +364,11 @@ them in the editor.
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-09.* Everything the user asked for so far is done. The latest
-work: plugin canvases ([ADR plugin-canvas](adr/plugin-canvas.md)) with contrib `magit` and `tetris`; a
+*Last updated 2026-10-12.* Everything the user asked for so far is done. The latest
+work: `C-c` toggles comments (line, else block); `<` / `>` indent by a level that comes
+from `.editorconfig`, the file's text or the language ([ADR indentation](adr/indentation.md)); language-server
+settings and initialization options in the config file; `S-tab` in a picker undoes
+`tab`, and the buffer picker does not mark. Before that: plugin canvases ([ADR plugin-canvas](adr/plugin-canvas.md)) with contrib `magit` and `tetris`; a
 highlighted picker preview; case changes (`g u`, `g U`, `g s`); keys without AltGr ([ADR layout-friendly-keys](adr/layout-friendly-keys.md))
 and key hints that follow the bindings ([ADR key-hints](adr/key-hints.md)); `x`, `X`, `o` and `y` in select mode;
 less work per key and at startup. Before that: `him --grammar` ([ADR grammar-setup](adr/grammar-setup.md)), `r`, `O`, the
@@ -411,6 +414,11 @@ clipboard, picker actions, the jumplist and global search.
     `/` and `n` move only the primary range.
   - Files changed on disk are not noticed (`:reload` / `:rla`), and saving does not warn
     about them. Git signs follow saves, staging and switching buffers only.
+  - Indentation is read once, at load: a later `.editorconfig` change needs the file
+    reopened, and a scratch buffer saved under a name keeps the settings' indentation.
+    A block comment around a single cursor takes
+    its whole line. LSP settings were checked against the protocol only, not a live
+    haskell-language-server.
   - LSP, deferred by choice: inlay hints, semantic tokens, snippets (inserted as plain
     text), and file operations in code actions.
   - Highlighting needs `him --grammar` once ([ADR grammar-setup](adr/grammar-setup.md)); without grammars, files
