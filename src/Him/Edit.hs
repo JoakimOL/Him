@@ -17,9 +17,14 @@ module Him.Edit
   , replaceWith
   , replaceChars
   , mapChars
+  , LineEdit (..)
+  , editLines
+  , selectedLines
   ) where
 
 import Data.Char (isSpace)
+import Data.IntMap.Strict qualified as IntMap
+import Data.IntSet qualified as IntSet
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -178,3 +183,35 @@ pasteAt p t b = selectFrom p (insertText p t b)
 -- | Select from a start position up to the last inserted character.
 selectFrom :: Pos -> (Buffer, Pos) -> (Buffer, Range)
 selectFrom start (b', end) = (b', Range start (max start (prevPos b' end)) Nothing)
+
+-- | A change inside one line: at a column, remove some characters and
+-- insert a text without line breaks.
+data LineEdit = LineEdit
+  { leColumn :: !Int
+  , leRemove :: !Int
+  , leInsert :: !Text
+  }
+  deriving stock (Eq, Show)
+
+-- | Make changes on several lines (at most one per line) and move the
+-- selection with the text: a position after a change shifts by what it
+-- added or removed, one inside removed text goes to where it was.
+editLines :: [(Int, LineEdit)] -> Buffer -> Selection -> (Buffer, Selection)
+editLines changes b sel = (foldl change b changes, mapRanges move sel)
+  where
+    byLine = IntMap.fromList changes
+    change buf (l, LineEdit c n t) = fst (insertText (Pos l c) t (deleteRange (Pos l c) (Pos l (c + n)) buf))
+    move (Range a h _) = Range (shift a) (shift h) Nothing
+    shift p@(Pos l c) = case IntMap.lookup l byLine of
+      Just (LineEdit at n t)
+        | c >= at + n -> Pos l (c - n + T.length t)
+        | c > at -> Pos l at
+      _ -> p
+
+-- | The lines a selection touches, each once, in order.
+selectedLines :: Buffer -> Selection -> [Int]
+selectedLines b sel =
+  [ l
+  | l <- IntSet.toAscList (IntSet.fromList (concat [[posLine (rangeStart r) .. posLine (rangeEnd r)] | r <- ranges sel]))
+  , l < lineCount b
+  ]

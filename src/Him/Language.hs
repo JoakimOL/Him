@@ -12,6 +12,7 @@ import Control.Applicative ((<|>))
 import Data.List (find)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Him.Indent (IndentHint (..), noHint)
 import System.FilePath (takeExtension, takeFileName)
 
 data Language = Language
@@ -28,6 +29,9 @@ data Language = Language
   -- ^ What starts a comment to the end of the line (@--@).
   , langBlockComment :: !(Maybe (Text, Text))
   -- ^ What opens and closes a block comment (@{-@, @-}@).
+  , langIndent :: !IndentHint
+  -- ^ The language's custom indentation, for files that do not show
+  -- theirs ("Him.Indent").
   }
   deriving stock (Eq, Show)
 
@@ -37,7 +41,13 @@ grammarFor provider = lookup provider . langGrammars
 
 lang :: Text -> [Text] -> [Text] -> [Text] -> Text -> Maybe Text -> Maybe (Text, Text) -> Language
 lang name exts files shebangs grammar line block =
-  Language name exts files shebangs [("tree-sitter", grammar)] line block
+  Language name exts files shebangs [("tree-sitter", grammar)] line block noHint
+
+spaces :: Int -> Language -> Language
+spaces n l = l {langIndent = IndentHint (Just False) (Just n)}
+
+tabs :: Language -> Language
+tabs l = l {langIndent = IndentHint (Just True) Nothing}
 
 cStyle :: Maybe (Text, Text)
 cStyle = Just ("/*", "*/")
@@ -45,34 +55,35 @@ cStyle = Just ("/*", "*/")
 markup :: Maybe (Text, Text)
 markup = Just ("<!--", "-->")
 
--- | The built-in languages. Tree-sitter grammar names are Helix's.
+-- | The built-in languages. Tree-sitter grammar names are Helix's; the
+-- indentation is each language's common style.
 languages :: [Language]
 languages =
-  [ lang "haskell" ["hs", "hs-boot", "hsc"] [] ["runhaskell", "runghc"] "haskell" (Just "--") (Just ("{-", "-}"))
-  , lang "rust" ["rs"] [] [] "rust" (Just "//") cStyle
-  , lang "c" ["c", "h"] [] [] "c" (Just "//") cStyle
-  , lang "cpp" ["cc", "cpp", "cxx", "hpp", "hh", "hxx", "c++"] [] [] "cpp" (Just "//") cStyle
-  , lang "python" ["py", "pyi"] [] ["python", "python3"] "python" (Just "#") Nothing
-  , lang "javascript" ["js", "mjs", "cjs"] [] ["node"] "javascript" (Just "//") cStyle
-  , lang "typescript" ["ts", "mts", "cts"] [] [] "typescript" (Just "//") cStyle
-  , lang "tsx" ["tsx"] [] [] "tsx" (Just "//") cStyle
-  , lang "go" ["go"] [] [] "go" (Just "//") cStyle
-  , lang "java" ["java"] [] [] "java" (Just "//") cStyle
-  , lang "json" ["json", "jsonc"] [] [] "json" Nothing Nothing
+  [ spaces 2 $ lang "haskell" ["hs", "hs-boot", "hsc"] [] ["runhaskell", "runghc"] "haskell" (Just "--") (Just ("{-", "-}"))
+  , spaces 4 $ lang "rust" ["rs"] [] [] "rust" (Just "//") cStyle
+  , spaces 4 $ lang "c" ["c", "h"] [] [] "c" (Just "//") cStyle
+  , spaces 4 $ lang "cpp" ["cc", "cpp", "cxx", "hpp", "hh", "hxx", "c++"] [] [] "cpp" (Just "//") cStyle
+  , spaces 4 $ lang "python" ["py", "pyi"] [] ["python", "python3"] "python" (Just "#") Nothing
+  , spaces 2 $ lang "javascript" ["js", "mjs", "cjs"] [] ["node"] "javascript" (Just "//") cStyle
+  , spaces 2 $ lang "typescript" ["ts", "mts", "cts"] [] [] "typescript" (Just "//") cStyle
+  , spaces 2 $ lang "tsx" ["tsx"] [] [] "tsx" (Just "//") cStyle
+  , tabs $ lang "go" ["go"] [] [] "go" (Just "//") cStyle
+  , spaces 4 $ lang "java" ["java"] [] [] "java" (Just "//") cStyle
+  , spaces 2 $ lang "json" ["json", "jsonc"] [] [] "json" Nothing Nothing
   , lang "toml" ["toml"] ["Cargo.lock"] [] "toml" (Just "#") Nothing
-  , lang "yaml" ["yaml", "yml"] [] [] "yaml" (Just "#") Nothing
+  , spaces 2 $ lang "yaml" ["yaml", "yml"] [] [] "yaml" (Just "#") Nothing
   , lang "markdown" ["md", "markdown"] [] [] "markdown" Nothing markup
   , lang "bash" ["sh", "bash", "zsh"] [".bashrc", ".zshrc", ".profile", "PKGBUILD"] ["sh", "bash", "zsh"] "bash" (Just "#") Nothing
-  , lang "lua" ["lua"] [] ["lua"] "lua" (Just "--") (Just ("--[[", "]]"))
-  , lang "nix" ["nix"] [] [] "nix" (Just "#") cStyle
-  , lang "html" ["html", "htm"] [] [] "html" Nothing markup
-  , lang "css" ["css"] [] [] "css" Nothing cStyle
-  , lang "make" ["mk", "mak"] ["Makefile", "makefile", "GNUmakefile"] [] "make" (Just "#") Nothing
-  , lang "cabal" ["cabal"] [] [] "cabal" (Just "--") Nothing
-  , lang "ruby" ["rb"] ["Gemfile", "Rakefile"] ["ruby"] "ruby" (Just "#") Nothing
-  , lang "zig" ["zig"] [] [] "zig" (Just "//") Nothing
-  , lang "ocaml" ["ml", "mli"] [] [] "ocaml" Nothing (Just ("(*", "*)"))
-  , lang "elixir" ["ex", "exs"] [] ["elixir"] "elixir" (Just "#") Nothing
+  , spaces 2 $ lang "lua" ["lua"] [] ["lua"] "lua" (Just "--") (Just ("--[[", "]]"))
+  , spaces 2 $ lang "nix" ["nix"] [] [] "nix" (Just "#") cStyle
+  , spaces 2 $ lang "html" ["html", "htm"] [] [] "html" Nothing markup
+  , spaces 2 $ lang "css" ["css"] [] [] "css" Nothing cStyle
+  , tabs $ lang "make" ["mk", "mak"] ["Makefile", "makefile", "GNUmakefile"] [] "make" (Just "#") Nothing
+  , spaces 2 $ lang "cabal" ["cabal"] [] [] "cabal" (Just "--") Nothing
+  , spaces 2 $ lang "ruby" ["rb"] ["Gemfile", "Rakefile"] ["ruby"] "ruby" (Just "#") Nothing
+  , spaces 4 $ lang "zig" ["zig"] [] [] "zig" (Just "//") Nothing
+  , spaces 2 $ lang "ocaml" ["ml", "mli"] [] [] "ocaml" Nothing (Just ("(*", "*)"))
+  , spaces 2 $ lang "elixir" ["ex", "exs"] [] ["elixir"] "elixir" (Just "#") Nothing
   , lang "sql" ["sql"] [] [] "sql" (Just "--") cStyle
   , lang "dockerfile" ["dockerfile"] ["Dockerfile", "Containerfile"] [] "dockerfile" (Just "#") Nothing
   , lang "git-commit" [] ["COMMIT_EDITMSG"] [] "gitcommit" (Just "#") Nothing

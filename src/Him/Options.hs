@@ -125,8 +125,8 @@ optionSpecs :: [OptionSpec]
 optionSpecs =
   [ int "scrolloff" "lines kept visible above and below the cursor" 0 optScrolloff (\v o -> o {optScrolloff = v})
   , bool "show-hidden-files" "dotfiles in directory listings (g . toggles)" optShowHidden (\v o -> o {optShowHidden = v})
-  , int "tab-width" "columns between tab stops" 1 optTabWidth (\v o -> o {optTabWidth = v})
-  , bool "expand-tab" "tab inserts spaces instead of a tab character" optExpandTab (\v o -> o {optExpandTab = v})
+  , int "tab-width" "columns between tab stops, and one level of indentation where the file, its .editorconfig or its language do not say" 1 optTabWidth (\v o -> o {optTabWidth = v})
+  , bool "expand-tab" "indent with spaces instead of tabs, where the file, its .editorconfig or its language do not say" optExpandTab (\v o -> o {optExpandTab = v})
   , choice "line-number" "absolute, relative or off" [("absolute", LineNumbersAbsolute), ("relative", LineNumbersRelative), ("off", LineNumbersOff)] optLineNumbers (\v o -> o {optLineNumbers = v})
   , choice "clipboard-provider" "the clipboard of the + and * registers: auto (the first that works here), or one of these" [(n, n) | n <- "auto" : map cbName systemProviders] optClipboardProvider (\v o -> o {optClipboardProvider = v})
   , int "escape-timeout" "milliseconds to wait after esc for a key sequence (read at startup)" 0 optEscapeTimeout (\v o -> o {optEscapeTimeout = v})

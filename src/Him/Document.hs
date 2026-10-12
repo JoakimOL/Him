@@ -22,6 +22,7 @@ import Data.Text qualified as T
 import Him.Buffer (Buffer, clampPos)
 import Him.GitState (GitInfo (..))
 import Him.History (History, Snapshot (..), beginChange, emptyHistory)
+import Him.Indent (IndentHint, noHint)
 import Him.Lsp.State (DocLsp (..))
 import Him.Repl (ReplState (..))
 import Him.Chat (ChatState (..))
@@ -89,6 +90,9 @@ data Document = Document
   , docSavedBuffer :: !Buffer
   -- ^ The text as last loaded or saved, to recompute 'docDirty' after
   -- undo/redo.
+  , docIndent :: !IndentHint
+  -- ^ The file's indentation, as far as its project, its text or its
+  -- language say (set when it is loaded); the settings fill in the rest.
   }
   deriving stock (Eq, Show)
 
@@ -110,6 +114,7 @@ newDocument path buf =
     , docLsp = LspUnknown
     , docGit = GitUnknown
     , docSavedBuffer = buf
+    , docIndent = noHint
     }
 
 displayName :: Document -> Text

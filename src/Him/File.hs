@@ -42,6 +42,9 @@ import Data.Text.Encoding (Decoding (..), decodeUtf8Lenient, encodeUtf8Builder, 
 import Data.Text.Encoding.Error (lenientDecode)
 import Him.Buffer qualified as Buffer
 import Him.Document
+import Him.EditorConfig (editorConfigIndent)
+import Him.Indent (detectIndent, noHint, orElse)
+import Him.Language (Language (..), detectLanguage, languages)
 import System.FilePath (takeDirectory)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist)
 import System.IO (BufferMode (..), Handle, IOMode (..), hFileSize, hGetBuf, hIsEOF, hPutBuf, hSetBuffering, withBinaryFile)
@@ -62,11 +65,18 @@ loadWith reader path = do
   isDir <- doesDirectoryExist path
   if
     | isDir -> pure (Left (T.pack path <> " is a directory"))
-    | not isFile -> pure (Right (newDocument (Just path) Buffer.empty))
+    | not isFile -> Right <$> withIndent (newDocument (Just path) Buffer.empty)
     | otherwise ->
         try (withBinaryFile path ReadMode reader) >>= \case
           Left e -> pure (Left (T.pack (show (e :: IOException))))
-          Right acc -> pure (Right (finish (Just path) acc))
+          Right acc -> Right <$> withIndent (finish (Just path) acc)
+  where
+    -- The project's .editorconfig, else the text, else the language.
+    withIndent d = do
+      project <- editorConfigIndent path
+      let buf = docBuffer d
+          language = maybe noHint langIndent (detectLanguage languages path (Buffer.lineAt 0 buf))
+      pure d {docIndent = project `orElse` detectIndent buf `orElse` language}
 
 chunkSize :: Int
 chunkSize = 1024 * 1024

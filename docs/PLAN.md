@@ -99,6 +99,7 @@ there are no numbers, so branches that add decisions do not conflict.
 - [layout-friendly-keys](adr/layout-friendly-keys.md): Default keys avoid AltGr and dead keys; next / previous live in their menus
 - [key-hints](adr/key-hints.md): Texts that name keys look them up in the running config
 - [no-test-framework](adr/no-test-framework.md): No test framework
+- [indentation](adr/indentation.md): One level of indentation per document: project, text, language, settings
 
 ## 4. Module map
 
@@ -113,7 +114,7 @@ Pure modules are marked *(pure)*.
 | `Him.Clipboard` | The system clipboard behind `+` / `*`: one `ClipboardProvider` API, backends for wl-clipboard, xclip, xsel, pbcopy, tmux, OSC 52 ([ADR registers-and-clipboard](adr/registers-and-clipboard.md)). |
 | `Him.Native` + `cbits/text.c` | `unsafe` FFI on text arrays: newline scans (SSE2), forward/backward search. |
 | `Him.Position`, `Him.Selection` | Positions; Helix selections: ranges with anchor and head, a primary *(pure)*. |
-| `Him.Motion`, `Him.Edit` | Motions and edits applied to every range ([ADR bottom-up-multi-range-edits](adr/bottom-up-multi-range-edits.md)) *(pure)*. |
+| `Him.Motion`, `Him.Edit`, `Him.Comment`, `Him.Indent`, `Him.EditorConfig` | Motions and edits applied to every range; comments; indentation ([ADR indentation](adr/indentation.md)) ([ADR bottom-up-multi-range-edits](adr/bottom-up-multi-range-edits.md)) *(pure; `Him.EditorConfig` reads the files)*. |
 | `Him.TextObject` | Match mode's objects (`m i w`, `m a (`), the pair around a position, the matching bracket ([ADR match-mode](adr/match-mode.md)) *(pure)*. |
 | `Him.Search`, `Him.Regex` | Literal search with smart case and wrap-around; the regex subset used by highlight queries ([ADR regex-engine](adr/regex-engine.md)) *(pure)*. |
 | `Him.Grep` | The global search: the lines of a text (or a file) that contain a needle ([ADR global-search](adr/global-search.md)). |
@@ -307,10 +308,10 @@ them in the editor.
 |---|---|
 | Normal (moving) | counts (`5 j`); `h j k l`, arrows, `home`/`end`; `w b e` (words); `g g` / `g e` (first / last line), `<count> g g` (that line), `g h` / `g l` (line start / end); `C-f` / `C-b` (also `pagedown` / `pageup`), `C-d` / `C-u` (half pages); `f t F T` + a character, `A-.` repeats; `m m` (the matching bracket); `C-z` suspends. |
 | Normal (selecting) | `x` (the selection's whole lines; repeat to extend), `X` (the whole lines, never adding one), `;` (collapse), `v` (select mode), `%` (all), `s` (matches inside the selection), `C` (copy the selection to the next line), `,` / `A-,` (keep / remove the primary), `(` / `)` (rotate), `A-s` (split into lines); `m i` / `m a` + `w W p m ( [ { < " ' \`` (inside / around a text object; `b B r c q` name `() {} [] <> \`\`` without AltGr or dead keys). |
-| Normal (editing) | `i a I A` (insert before / after / at the line's start / end), `o` / `O` (on a new line below / above), `d` (delete), `c` (change), `y` (yank), `p` / `P` (paste after / before), `"` + a register before any of them (`+` clipboard, `*` primary, `_` discard), `r` + a character (replace each selected character), `g u` / `g U` / `g s` (lower / upper / swap case), `C-c` (toggle comments), `R` (replace with the register), `space y` / `space p` / `space P` / `space R` (the clipboard), `u` / `U` (undo / redo); `m s` + a character (surround), `m r` + two (replace the pair), `m d` + one (delete the pair; `m` the closest). |
+| Normal (editing) | `i a I A` (insert before / after / at the line's start / end), `o` / `O` (on a new line below / above), `d` (delete), `c` (change), `y` (yank), `p` / `P` (paste after / before), `"` + a register before any of them (`+` clipboard, `*` primary, `_` discard), `r` + a character (replace each selected character), `g u` / `g U` / `g s` (lower / upper / swap case), `C-c` (toggle comments), `<` / `>` (unindent / indent the lines, with a count), `R` (replace with the register), `space y` / `space p` / `space P` / `space R` (the clipboard), `u` / `U` (undo / redo); `m s` + a character (surround), `m r` + two (replace the pair), `m d` + one (delete the pair; `m` the closest). |
 | Normal (search) | `/` / `?` (with preview), `n` / `N`, `*` (selection as the pattern). |
 | Select | Normal mode where motions extend; `o` puts the cursor at the selection's other end (as in Vim); `v` / `esc` back; `y` yanks and goes back. |
-| Insert | typing, `ret` (keeps indentation), `tab` (spaces with `expand-tab`), `backspace`, `del`, arrows, `C-r` + a register (insert it), `esc`. |
+| Insert | typing, `ret` (keeps indentation), `tab` (one level, [ADR indentation](adr/indentation.md)), `backspace`, `del`, arrows, `C-r` + a register (insert it), `esc`. |
 | Command line | typing, `tab` (complete names, paths, themes, plugins; again to cycle the candidates), `S-tab` (cycle back), `backspace`, `ret`, `esc`. |
 | Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`, `tab` (mark and go down, for `ret`/`del` to act on all marked; not in the buffer picker), `S-tab` (go up and unmark), `ret`, `del` (the picker's second action: the jumplist removes the entry), `esc`. |
 | Jumplist | `C-o` (back), `C-i` / `tab` (forward), both with a count; `C-s` (save the selection). |

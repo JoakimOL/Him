@@ -176,6 +176,8 @@ normalBindings =
        , ("g U", "to_upper")
        , ("g s", "swap_case")
        , ("C-c", "toggle_comments")
+       , (">", "indent")
+       , ("<", "unindent")
        , ("space R", "replace_with_clipboard")
        , ("u", "undo")
        , ("U", "redo")

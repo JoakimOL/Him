@@ -17,6 +17,7 @@ import Him.Effect (Effect (..))
 import Him.Document (Document (..))
 import Him.Comment (toggleBlockComments, toggleLineComments)
 import Him.Edit
+import Him.Indent (Indent (..), indentLines, indentUnit, resolveIndent, unindentLines)
 import Him.Language (Language (..), detectLanguage, languages)
 import Him.Actions.Register (selectedRegister, yank)
 import Him.History (History, Snapshot (..), redo, undo)
@@ -63,9 +64,12 @@ actions =
   , simple "select_mode" GModes "Toggle select (extend) mode" $
       gets edMode >>= \m -> setMode (if m == Select then Normal else Select)
   , simple "insert_newline" GEditing "Insert a line break" (edit insertNewline)
-  , simple "insert_tab" GEditing "Insert a tab, or tab-width spaces with expand-tab" $ do
-      o <- gets edOptions
-      if optExpandTab o then edit (insertAtHead (T.replicate (optTabWidth o) " ")) else insertChar '\t'
+  , simple "insert_tab" GEditing "Insert one level of indentation: the file's (a tab, or spaces), else as tab-width and expand-tab say" $
+      edit . insertAtHead . indentUnit =<< docIndentation
+  , action "indent" GEditing "Indent the selected lines by one level (or <count>)" (optional "1" 1 (int "count")) $ \n ->
+      docIndentation >>= \ind -> editSelection (indentLines ind n)
+  , action "unindent" GEditing "Take one level (or <count>) of indentation off the selected lines" (optional "1" 1 (int "count")) $ \n ->
+      docIndentation >>= \ind -> editSelection (unindentLines ind n)
   , simple "delete_char_backward" GEditing "Delete the character before the cursor" (edit deleteBackward)
   , simple "delete_char_forward" GEditing "Delete the character under the cursor" (edit deleteForward)
   , simple "delete_selection" GEditing "Delete the selection (and yank it)" $ do
@@ -110,6 +114,13 @@ comments toggle = do
   case docPath d >>= \p -> detectLanguage languages p (Buffer.lineAt 0 (docBuffer d)) of
     Nothing -> failWith "no language known for this buffer, so no comment syntax"
     Just l -> maybe (failWith ("no such comments in " <> langName l)) editSelection (toggle l)
+
+-- | One level of indentation in the current document.
+docIndentation :: EditorM Indent
+docIndentation = do
+  o <- gets edOptions
+  hint <- docIndent <$> getDoc
+  pure (resolveIndent [hint] (Indent (not (optExpandTab o)) (optTabWidth o)))
 
 insertChar :: Char -> EditorM ()
 insertChar c = edit (insertAtHead (T.singleton c))

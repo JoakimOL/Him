@@ -6,13 +6,11 @@ module Him.Comment
   ) where
 
 import Data.Char (isSpace)
-import Data.IntMap.Strict qualified as IntMap
-import Data.IntSet qualified as IntSet
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Buffer
-import Him.Edit (applyEdits)
+import Him.Edit (LineEdit (..), applyEdits, editLines, selectedLines)
 import Him.Position (Pos (..))
 import Him.Selection
 
@@ -23,33 +21,19 @@ import Him.Selection
 toggleLineComments :: Text -> Buffer -> Selection -> (Buffer, Selection)
 toggleLineComments token b sel
   | null nonBlank = (b, sel)
-  | otherwise = (foldl' change b (IntMap.toList changes), mapRanges move sel)
+  | otherwise = editLines (map lineChange nonBlank) b sel
   where
-    covered = IntSet.toAscList (IntSet.fromList (concat [[posLine (rangeStart r) .. posLine (rangeEnd r)] | r <- ranges sel]))
-    nonBlank = [l | l <- covered, l < lineCount b, not (T.all isSpace (lineAt l b))]
+    nonBlank = [l | l <- selectedLines b sel, not (T.all isSpace (lineAt l b))]
     indent l = T.length (T.takeWhile isSpace (lineAt l b))
     commented l = token `T.isPrefixOf` T.stripStart (lineAt l b)
     uncommenting = all commented nonBlank
     col = minimum (map indent nonBlank)
-    -- Per line: where the change is, and how many characters come (> 0) or go (< 0).
-    changes = IntMap.fromList (map lineChange nonBlank)
     lineChange l
       | uncommenting =
           let i = indent l
               afterToken = T.drop (i + T.length token) (lineAt l b)
-              n = T.length token + (if " " `T.isPrefixOf` afterToken then 1 else 0)
-           in (l, (i, negate n))
-      | otherwise = (l, (col, T.length token + 1))
-    change buf (l, (c, delta))
-      | delta > 0 = fst (insertText (Pos l c) (token <> " ") buf)
-      | otherwise = deleteRange (Pos l c) (Pos l (c - delta)) buf
-    move (Range a h _) = Range (shift a) (shift h) Nothing
-    shift p@(Pos l c) = case IntMap.lookup l changes of
-      Just (at, delta)
-        | delta > 0 && c >= at -> Pos l (c + delta)
-        | delta < 0 && c >= at - delta -> Pos l (c + delta)
-        | delta < 0 && c > at -> Pos l at
-      _ -> p
+           in (l, LineEdit i (T.length token + (if " " `T.isPrefixOf` afterToken then 1 else 0)) "")
+      | otherwise = (l, LineEdit col 0 (token <> " "))
 
 -- | Wrap each range in a block comment (inside its surrounding whitespace),
 -- or unwrap them all when every range is one already. A range of one
