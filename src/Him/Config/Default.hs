@@ -270,7 +270,7 @@ pickerBindings =
   , ("tab", "picker_mark")
   , ("up", "picker_previous")
   , ("C-p", "picker_previous")
-  , ("S-tab", "picker_previous")
+  , ("S-tab", "picker_unmark")
   , ("backspace", "picker_backspace")
   , ("del", "picker_secondary")
   ]

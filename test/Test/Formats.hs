@@ -161,6 +161,13 @@ pickerTests =
   , test "with nothing marked the selected item is chosen; marking twice unmarks" $
       let p = moveSelection 1 (newPicker "t" (items ["a", "b"]))
        in assertEqual (["b"], ["b"]) (map piLabel (chosenItems p), map piLabel (chosenItems (toggleMark (toggleMark p))))
+  , test "unmark goes back up and undoes a mark" $
+      let p = newPicker "t" (items ["a", "b", "c"])
+          marked = moveSelection 1 (toggleMark (moveSelection 1 (toggleMark p)))
+          undone = unmark (moveSelection (-1) marked)
+       in assertEqual ((2, 2), (1, ["a"])) ((markCount marked, pkSelected marked), (pkSelected undone, map piLabel (chosenItems (moveSelection (-1) undone))))
+  , test "an unmarkable picker ignores marks" $
+      assertEqual 0 (markCount (toggleMark (newPicker "t" (items ["a"])) {pkMarkable = False}))
   , test "a new query selects the best match" $
       assertEqual (Just "b") (piLabel <$> selectedItem (setQuery "b" (moveSelection 2 (newPicker "t" (items ["a", "b", "c"])))))
   ]

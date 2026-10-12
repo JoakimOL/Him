@@ -12,6 +12,7 @@ module Him.Picker
   , selectedItem
   , moveSelection
   , toggleMark
+  , unmark
   , chosenItems
   , isMarked
   , markCount
@@ -117,6 +118,9 @@ data Picker = Picker
   -- scrolling and filtering.
   , pkMarked :: !IntSet
   -- ^ The marked items, by 'piId' (ADR picker-actions).
+  , pkMarkable :: !Bool
+  -- ^ Whether items can be marked; when not, @tab@ only moves (the buffer
+  -- picker: acting on several buffers makes no sense).
   , pkPrimary :: !Text
   -- ^ The action @ret@ runs (by name), on the 'chosenItems'.
   , pkSecondary :: !(Maybe Text)
@@ -125,7 +129,7 @@ data Picker = Picker
   deriving stock (Eq, Show)
 
 newPicker :: Text -> [PickerItem] -> Picker
-newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty "picker_open" Nothing)
+newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty True "picker_open" Nothing)
 
 -- | Items with their ids, counting from n: the ids are their positions
 -- in 'pkItems', so a picker that replaces its items clears 'pkMarked'.
@@ -248,8 +252,15 @@ moveSelection n p = case length (pkMatches p) of
 toggleMark :: Picker -> Picker
 toggleMark p = case selectedItem p of
   Just item
+    | not (pkMarkable p) -> p
     | isMarked p item -> p {pkMarked = IntSet.delete (piId item) (pkMarked p)}
     | otherwise -> p {pkMarked = IntSet.insert (piId item) (pkMarked p)}
+  Nothing -> p
+
+-- | Unmark the selected item (if it is marked).
+unmark :: Picker -> Picker
+unmark p = case selectedItem p of
+  Just item -> p {pkMarked = IntSet.delete (piId item) (pkMarked p)}
   Nothing -> p
 
 isMarked :: Picker -> PickerItem -> Bool

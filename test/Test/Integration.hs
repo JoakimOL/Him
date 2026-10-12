@@ -347,6 +347,10 @@ openBufferTests = do
   pickedBuffer <- keys "space b down ret" opened
   -- tab marks files, ret opens them all and ends on the last.
   openedMarked <- keys "tab tab ret" start {edPicker = Just (newPicker "files" [pickerItem (T.pack f) (PickFile f) "" | f <- [fileA, fileB]]), edMode = Picking}
+  -- S-tab goes back up and unmarks: only the first file is opened.
+  unmarkedOne <- keys "tab tab S-tab ret" start {edPicker = Just (newPicker "files" [pickerItem (T.pack f) (PickFile f) "" | f <- [fileA, fileB]]), edMode = Picking}
+  -- The buffer picker cannot mark: tab only moves.
+  bufferTab <- keys "space b tab" opened
   pickerTyped <- keys "space b 2 backspace" opened
   pickerEsc <- keys "space b esc" opened
   scanned <- settle config =<< foldlM run start [plain (KChar ' '), plain (KChar 'f')]
@@ -511,6 +515,10 @@ openBufferTests = do
     , test ":n opens a scratch buffer" (assertEqual (Nothing, (1, 2)) (current scratch))
     , test "ret opens every marked file" $
         assertEqual (b, 2, Normal) (docPath (edDoc openedMarked), length (fst (buffers openedMarked)), edMode openedMarked)
+    , test "S-tab goes up and unmarks" $
+        assertEqual (a, 1) (docPath (edDoc unmarkedOne), length (fst (buffers unmarkedOne)))
+    , test "tab in the buffer picker moves without marking" $
+        assertEqual (Just (0, 0)) ((\p -> (markCount p, pkSelected p)) <$> edPicker bufferTab)
     , test "space b picks a buffer" (assertEqual (a, (0, 2), Normal) (docPath (edDoc pickedBuffer), bufferIndex pickedBuffer, edMode pickedBuffer))
     , test "typing narrows the picker, backspace widens it" (assertEqual (Just ("", 2)) ((\p -> (pkQuery p, length (pkMatches p))) <$> edPicker pickerTyped))
     , test "esc closes the picker" (assertEqual (Nothing, Normal, b) (pkTitle <$> edPicker pickerEsc, edMode pickerEsc, docPath (edDoc pickerEsc)))

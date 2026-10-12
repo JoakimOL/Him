@@ -48,7 +48,7 @@ actions =
   , simple "buffer_picker" GBuffers "Switch to an open buffer" $ do
       (bs, cur) <- gets buffers
       let label i b = T.pack (show (i + 1)) <> (if i == cur then " * " else "   ") <> displayName (bufDoc b)
-      open ((newPicker "buffers" [pickerItem (label i b) (PickBuffer i) "" | (i, b) <- zip [0 ..] bs]) {pkSelected = cur})
+      open ((newPicker "buffers" [pickerItem (label i b) (PickBuffer i) "" | (i, b) <- zip [0 ..] bs]) {pkSelected = cur, pkMarkable = False})
   , simple "command_palette" GPrompt "List every action with its keys, and run one" (request OpenPalette)
   , simple "picker_close" GPrompt "Close the picker" close
   , simple "picker_accept" GPrompt "The picker's main action on the chosen items (most pickers: open the selected item, or the marked ones)" $
@@ -81,6 +81,7 @@ actions =
       close
       sequence_ [request (PluginCommand (Just (name, sign == '+'))) | PickValue v <- map piTarget chosen, Just (sign, name) <- [T.uncons v]]
   , simple "picker_mark" GPrompt "Mark the selected item (or unmark it) and select the next" (onPicker (moveSelection 1 . toggleMark))
+  , simple "picker_unmark" GPrompt "Select the previous item and unmark it (undoes picker_mark)" (onPicker (unmark . moveSelection (-1)))
   , simple "picker_next" GPrompt "Select the next item" (onPicker (moveSelection 1))
   , simple "picker_previous" GPrompt "Select the previous item" (onPicker (moveSelection (-1)))
   , simple "picker_backspace" GPrompt "Delete the last character of the query" $
