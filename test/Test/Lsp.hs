@@ -172,6 +172,11 @@ lspTests = do
       uglyDoc <- either (fail . T.unpack) pure =<< loadDocument (project <> "/ugly.c")
       uglyOpen <- settleUntil config rt 20000 isAttached =<< execStateT (handleEvent config (EvResize 24 80)) (newEditor (24, 80) uglyDoc)
       formatted <- settleUntil config rt 10000 ((/= T.strip (T.pack ugly)) . B.toText . docBuffer . edDoc) =<< ex "format" uglyOpen
+      -- = formats the selection only: the second line, not the first.
+      writeFile (project <> "/part.c") "int  a( void ){return 0;}\nint  b( void ){return 0;}\n"
+      partDoc <- either (fail . T.unpack) pure =<< loadDocument (project <> "/part.c")
+      partOpen <- settleUntil config rt 20000 isAttached =<< execStateT (handleEvent config (EvResize 24 80)) (newEditor (24, 80) partDoc)
+      partFormatted <- settleUntil config rt 10000 ((/= "int  b( void ){return 0;}") . B.lineAt 1 . docBuffer . edDoc) =<< keys "j x =" partOpen
       -- Apply a code action (clangd's tweaks are commands, whose edits come
       -- back as a workspace/applyEdit request), in a file of its own.
       writeFile (project <> "/act.c") "int add(int a, int b) { return a + b; }\nint main(void) {\n    int x = add(1, 2) * 3;\n    return x;\n}\n"
@@ -197,7 +202,9 @@ lspTests = do
       restarted <- settleUntil config rt 20000 (\ed -> isAttached ed && diagnosed ed) =<< ex "lsp-restart" attached
       startedAgain <- settleUntil config rt 20000 isAttached =<< ex "lsp-start" stopped
       pure
-        [ test "the document attaches to clangd" (assertEqual True (case docLsp (edDoc attached) of LspAttached _ -> True; _ -> False))
+        [ test "= formats the selected line only" $
+            assertEqual (True, "int  a( void ){return 0;}") (T.isPrefixOf "int b(void)" (B.lineAt 1 (docBuffer (edDoc partFormatted))), B.lineAt 0 (docBuffer (edDoc partFormatted)))
+        , test "the document attaches to clangd" (assertEqual True (case docLsp (edDoc attached) of LspAttached _ -> True; _ -> False))
         , test "an error is reported on its line" (assertEqual [(2, SevError)] (take 1 (errorsOn attached)))
         , test "hover shows a popup" (assertEqual True (isJust (edPopup hovered)))
         , test "g d goes to the definition of add" (assertEqual (Pos 0 4) (rangeHead (primary (docSelection (edDoc defined)))))

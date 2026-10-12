@@ -70,6 +70,7 @@ lspPlugin =
               , ("g i", "goto_implementation")
               , ("space r", "rename_symbol")
               , ("space a", "code_action")
+              , ("=", "format_selection")
               , ("space s", "document_symbols")
               , ("space S", "workspace_symbols")
               ]
@@ -127,6 +128,7 @@ actions =
           setMode CmdLine
         _ -> failWith "no language server for this file"
   , simple "format_document" GLsp "Format the file with the language server" formatDocument
+  , simple "format_selection" GLsp "Format the primary selection with the language server" formatSelection
   , simple "code_action" GLsp "List the language server's actions for the selection" codeActions
   , simple "workspace_symbols" GLsp "Search the symbols of the whole project (as you type)" $ do
       d <- getDoc

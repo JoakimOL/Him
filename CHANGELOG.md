@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- `=` formats the primary selection with the language server (`format_selection`, `textDocument/rangeFormatting`), in normal and select mode. Formatting asks for the file's indentation, not just the settings'.
 - `J` joins the selected lines (or the next line) with single spaces, as in Helix (`join_selections`); `A-J` also selects the spaces (`join_selections_space`).
 - Language servers take settings: `[language-server.<language>.settings]` answers the server's `workspace/configuration` and is sent with `workspace/didChangeConfiguration`; `[language-server.<language>.initialization-options]` goes with `initialize`. For example `formattingProvider = "fourmolu"` under `[language-server.haskell.settings.haskell]`.
 - `<` / `>` unindent / indent the selected lines (`unindent`, `indent`, with a count). One level is the project's (`.editorconfig`), else the file's (detected), else the language's, else `tab-width` / `expand-tab`; `tab` in insert mode uses it too ([ADR indentation](docs/adr/indentation.md)).

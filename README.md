@@ -59,7 +59,7 @@ stack install                # build and install the built binary
   - **git:** signs for changed lines; `space g s` stages the selected lines, `space g n` / `space g p`
     jump between changes.
   - **lsp:** diagnostics (`space d`: this file's, the workspace's, next / previous), `space k` hover, `g d`, `g r`, `space r` rename,
-    `space a` code actions, completion, `:format`. Servers: clangd, rust-analyzer,
+    `space a` code actions, completion, `:format` (`=` formats the selection). Servers: clangd, rust-analyzer,
     haskell-language-server, typescript-language-server, pylsp, gopls. Each server's
     command and settings can be changed under `[language-server.<language>]`, e.g.
     `formattingProvider = "fourmolu"` under `[language-server.haskell.settings.haskell]`.

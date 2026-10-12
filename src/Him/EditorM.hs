@@ -11,6 +11,7 @@ module Him.EditorM
   , edit
   , editEach
   , editSelection
+  , docIndentation
   , motion
   , quit
   , getRegister
@@ -32,6 +33,8 @@ import Him.Buffer qualified as Buffer
 import Control.Monad (when)
 import Him.Edit (Edit, applyEdits)
 import Him.Effect (Effect)
+import Him.Indent (Indent (..), resolveIndent)
+import Him.Options (Options (..))
 import Him.Editor
 import Him.Mode (Mode (..))
 import Him.KeyHints (HintScope (..), hintLine, keyOr)
@@ -136,6 +139,14 @@ changeWith f = do
   if transcriptKept d buf
     then modifyDoc (const (changeDocument buf sel d) {docDirty = True})
     else failWith transcriptMessage
+
+-- | One level of indentation in the current document: what its file says
+-- (ADR indentation), else the settings.
+docIndentation :: EditorM Indent
+docIndentation = do
+  o <- gets edOptions
+  hint <- docIndent <$> getDoc
+  pure (resolveIndent [hint] (Indent (not (optExpandTab o)) (optTabWidth o)))
 
 -- | In a REPL or chat buffer only the input after the prompt may change;
 -- the transcript before it is read-only (ADR transcripts). The first difference

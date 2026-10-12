@@ -6,6 +6,7 @@ module Him.Actions.Lsp.Edits
   , runCodeAction
   , codeActions
   , formatDocument
+  , formatSelection
   , renameTo
   , wordAroundCursor
   ) where
@@ -19,9 +20,10 @@ import Him.Buffer qualified as Buffer
 import Him.EditorM
 import Him.Actions.File (openFile)
 import Him.Document (Document (..), clampSelection, replaceBuffer)
-import Him.Options (Options (..))
 import Him.Editor hiding (Severity (..))
+import Him.Indent (Indent (..))
 import Him.Json hiding (path)
+import Him.Json qualified as J
 import Him.Lsp.Protocol hiding (request)
 import Him.Lsp.State
 import Him.Position (Pos (..))
@@ -125,12 +127,48 @@ codeActions = do
 formatDocument :: EditorM ()
 formatDocument = do
   d <- getDoc
-  o <- gets edOptions
+  options <- formattingOptions
   case docLsp d of
     LspAttached at ->
       sendRequest (atServer at) (PendingFormat (docId d) (docVersion d)) "textDocument/formatting" $
-        object [("textDocument", docIdentifier at), ("options", object [("tabSize", JInt (toInteger (optTabWidth o))), ("insertSpaces", JBool (optExpandTab o))])]
+        object [("textDocument", docIdentifier at), ("options", options)]
     _ -> failWith "no language server for this file"
+
+-- | Format the primary selection only (@textDocument/rangeFormatting@), as
+-- Helix does; the server decides how far around it to reach.
+formatSelection :: EditorM ()
+formatSelection = do
+  ed <- get
+  options <- formattingOptions
+  let d = edDoc ed
+      buf = docBuffer d
+      r = primary (docSelection d)
+      Pos sl sc = rangeStart r
+      Pos el ec = rangeEnd r
+      canRange at = maybe False (\si -> rangeCapable (J.path ["documentRangeFormattingProvider"] (siCapabilities si))) (Map.lookup (atServer at) (lsServers (edLsp ed)))
+      rangeCapable = \case
+        Just (JBool b) -> b
+        Just (JObject _) -> True
+        _ -> False
+  case docLsp d of
+    LspAttached at
+      | not (canRange at) -> failWith "the language server cannot format a selection (:format formats the file)"
+      | otherwise -> do
+          let enc = encodingOf ed at
+              -- The end is exclusive in LSP; a selection ending on a line
+              -- break reaches the next line's start.
+              end
+                | ec >= Buffer.lineLength el buf && el + 1 < Buffer.lineCount buf = lspPosition enc buf (el + 1) 0
+                | otherwise = lspPosition enc buf el (min (ec + 1) (Buffer.lineLength el buf))
+          sendRequest (atServer at) (PendingFormat (docId d) (docVersion d)) "textDocument/rangeFormatting" $
+            object [("textDocument", docIdentifier at), ("range", object [("start", lspPosition enc buf sl sc), ("end", end)]), ("options", options)]
+    _ -> failWith "no language server for this file"
+
+-- | @FormattingOptions@: the document's indentation.
+formattingOptions :: EditorM Value
+formattingOptions = do
+  Indent tabs width <- docIndentation
+  pure (object [("tabSize", JInt (toInteger width)), ("insertSpaces", JBool (not tabs))])
 
 -- | Enter on the rename prompt.
 renameTo :: (Int, Int) -> Text -> EditorM ()

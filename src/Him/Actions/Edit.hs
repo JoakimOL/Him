@@ -17,12 +17,11 @@ import Him.Effect (Effect (..))
 import Him.Document (Document (..))
 import Him.Comment (toggleBlockComments, toggleLineComments)
 import Him.Edit
-import Him.Indent (Indent (..), indentLines, indentUnit, resolveIndent, unindentLines)
+import Him.Indent (indentLines, indentUnit, unindentLines)
 import Him.Language (Language (..), detectLanguage, languages)
 import Him.Actions.Register (selectedRegister, yank)
 import Him.History (History, Snapshot (..), redo, undo)
 import Him.Editor (Await (..), Editor (..))
-import Him.Options (Options (..))
 import Him.Mode (Mode (..))
 import Him.Selection
 
@@ -118,13 +117,6 @@ comments toggle = do
   case docPath d >>= \p -> detectLanguage languages p (Buffer.lineAt 0 (docBuffer d)) of
     Nothing -> failWith "no language known for this buffer, so no comment syntax"
     Just l -> maybe (failWith ("no such comments in " <> langName l)) editSelection (toggle l)
-
--- | One level of indentation in the current document.
-docIndentation :: EditorM Indent
-docIndentation = do
-  o <- gets edOptions
-  hint <- docIndent <$> getDoc
-  pure (resolveIndent [hint] (Indent (not (optExpandTab o)) (optTabWidth o)))
 
 insertChar :: Char -> EditorM ()
 insertChar c = edit (insertAtHead (T.singleton c))
