@@ -4,6 +4,7 @@ module Him.Actions.Edit
   , insertChar
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Monad.Trans.State.Strict (gets, modify')
 import Data.Char (isUpper, toLower, toUpper)
 import Data.Text qualified as T
@@ -14,7 +15,9 @@ import Him.Position (Pos (..))
 import Him.EditorM
 import Him.Effect (Effect (..))
 import Him.Document (Document (..))
+import Him.Comment (toggleBlockComments, toggleLineComments)
 import Him.Edit
+import Him.Language (Language (..), detectLanguage, languages)
 import Him.Actions.Register (selectedRegister, yank)
 import Him.History (History, Snapshot (..), redo, undo)
 import Him.Editor (Await (..), Editor (..))
@@ -51,6 +54,12 @@ actions =
   , simple "to_upper" GEditing "Make the selected text upper case" (edit (mapChars toUpper))
   , simple "swap_case" GEditing "Swap the case of the selected text (upper to lower, lower to upper)" $
       edit (mapChars (\c -> if isUpper c then toLower c else toUpper c))
+  , simple "toggle_comments" GEditing "Comment or uncomment the selected lines (a block comment where the language has no line comments)" $
+      comments (\l -> (toggleLineComments <$> langLineComment l) <|> (toggleBlockComments <$> langBlockComment l))
+  , simple "toggle_line_comments" GEditing "Comment or uncomment the selected lines with line comments" $
+      comments (fmap toggleLineComments . langLineComment)
+  , simple "toggle_block_comments" GEditing "Wrap each selection in a block comment, or unwrap it" $
+      comments (fmap toggleBlockComments . langBlockComment)
   , simple "select_mode" GModes "Toggle select (extend) mode" $
       gets edMode >>= \m -> setMode (if m == Select then Normal else Select)
   , simple "insert_newline" GEditing "Insert a line break" (edit insertNewline)
@@ -93,6 +102,14 @@ history nothingMsg step = do
           , docDirty = buf /= docSavedBuffer doc
           , docVersion = docVersion doc + 1
           }
+
+-- | Toggle comments the way the document's language writes them.
+comments :: (Language -> Maybe (Buffer.Buffer -> Selection -> (Buffer.Buffer, Selection))) -> EditorM ()
+comments toggle = do
+  d <- getDoc
+  case docPath d >>= \p -> detectLanguage languages p (Buffer.lineAt 0 (docBuffer d)) of
+    Nothing -> failWith "no language known for this buffer, so no comment syntax"
+    Just l -> maybe (failWith ("no such comments in " <> langName l)) editSelection (toggle l)
 
 insertChar :: Char -> EditorM ()
 insertChar c = edit (insertAtHead (T.singleton c))

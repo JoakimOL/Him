@@ -10,6 +10,7 @@ module Him.EditorM
   , failWith
   , edit
   , editEach
+  , editSelection
   , motion
   , quit
   , getRegister
@@ -36,7 +37,7 @@ import Him.Mode (Mode (..))
 import Him.KeyHints (HintScope (..), hintLine, keyOr)
 import Him.Motion (Motion, Movement (..), applyMotion)
 import Him.Picker (Picker)
-import Him.Selection (Range (..), mapRanges, normalize, point)
+import Him.Selection (Range (..), Selection, mapRanges, normalize, point)
 
 -- | Actions run with access to the editor state and IO (for files etc.).
 -- Keep the actual logic in pure modules ("Him.Motion", "Him.Edit") where
@@ -119,9 +120,19 @@ editEach f = do
   if readOnly then readOnlyMessage >>= failWith else editAll f
 
 editAll :: (Int -> Edit) -> EditorM ()
-editAll f = do
+editAll f = changeWith (applyEdits f)
+
+-- | Like 'edit', for a change that needs the whole selection at once (e.g.
+-- a decision about all its lines).
+editSelection :: (Buffer.Buffer -> Selection -> (Buffer.Buffer, Selection)) -> EditorM ()
+editSelection f = do
+  readOnly <- isReadOnly <$> getDoc
+  if readOnly then readOnlyMessage >>= failWith else changeWith f
+
+changeWith :: (Buffer.Buffer -> Selection -> (Buffer.Buffer, Selection)) -> EditorM ()
+changeWith f = do
   d <- getDoc
-  let (buf, sel) = applyEdits f (docBuffer d) (docSelection d)
+  let (buf, sel) = f (docBuffer d) (docSelection d)
   if transcriptKept d buf
     then modifyDoc (const (changeDocument buf sel d) {docDirty = True})
     else failWith transcriptMessage

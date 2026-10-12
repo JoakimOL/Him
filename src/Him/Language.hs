@@ -24,7 +24,10 @@ data Language = Language
   , langGrammars :: ![(Text, Text)]
   -- ^ Per provider (@"tree-sitter"@, later @"textmate"@): its name for
   -- the grammar.
-  , langComment :: !(Maybe Text)
+  , langLineComment :: !(Maybe Text)
+  -- ^ What starts a comment to the end of the line (@--@).
+  , langBlockComment :: !(Maybe (Text, Text))
+  -- ^ What opens and closes a block comment (@{-@, @-}@).
   }
   deriving stock (Eq, Show)
 
@@ -32,41 +35,47 @@ data Language = Language
 grammarFor :: Text -> Language -> Maybe Text
 grammarFor provider = lookup provider . langGrammars
 
-lang :: Text -> [Text] -> [Text] -> [Text] -> Text -> Maybe Text -> Language
-lang name exts files shebangs grammar comment =
-  Language name exts files shebangs [("tree-sitter", grammar)] comment
+lang :: Text -> [Text] -> [Text] -> [Text] -> Text -> Maybe Text -> Maybe (Text, Text) -> Language
+lang name exts files shebangs grammar line block =
+  Language name exts files shebangs [("tree-sitter", grammar)] line block
+
+cStyle :: Maybe (Text, Text)
+cStyle = Just ("/*", "*/")
+
+markup :: Maybe (Text, Text)
+markup = Just ("<!--", "-->")
 
 -- | The built-in languages. Tree-sitter grammar names are Helix's.
 languages :: [Language]
 languages =
-  [ lang "haskell" ["hs", "hs-boot", "hsc"] [] ["runhaskell", "runghc"] "haskell" (Just "--")
-  , lang "rust" ["rs"] [] [] "rust" (Just "//")
-  , lang "c" ["c", "h"] [] [] "c" (Just "//")
-  , lang "cpp" ["cc", "cpp", "cxx", "hpp", "hh", "hxx", "c++"] [] [] "cpp" (Just "//")
-  , lang "python" ["py", "pyi"] [] ["python", "python3"] "python" (Just "#")
-  , lang "javascript" ["js", "mjs", "cjs"] [] ["node"] "javascript" (Just "//")
-  , lang "typescript" ["ts", "mts", "cts"] [] [] "typescript" (Just "//")
-  , lang "tsx" ["tsx"] [] [] "tsx" (Just "//")
-  , lang "go" ["go"] [] [] "go" (Just "//")
-  , lang "java" ["java"] [] [] "java" (Just "//")
-  , lang "json" ["json", "jsonc"] [] [] "json" Nothing
-  , lang "toml" ["toml"] ["Cargo.lock"] [] "toml" (Just "#")
-  , lang "yaml" ["yaml", "yml"] [] [] "yaml" (Just "#")
-  , lang "markdown" ["md", "markdown"] [] [] "markdown" Nothing
-  , lang "bash" ["sh", "bash", "zsh"] [".bashrc", ".zshrc", ".profile", "PKGBUILD"] ["sh", "bash", "zsh"] "bash" (Just "#")
-  , lang "lua" ["lua"] [] ["lua"] "lua" (Just "--")
-  , lang "nix" ["nix"] [] [] "nix" (Just "#")
-  , lang "html" ["html", "htm"] [] [] "html" Nothing
-  , lang "css" ["css"] [] [] "css" Nothing
-  , lang "make" ["mk", "mak"] ["Makefile", "makefile", "GNUmakefile"] [] "make" (Just "#")
-  , lang "cabal" ["cabal"] [] [] "cabal" (Just "--")
-  , lang "ruby" ["rb"] ["Gemfile", "Rakefile"] ["ruby"] "ruby" (Just "#")
-  , lang "zig" ["zig"] [] [] "zig" (Just "//")
-  , lang "ocaml" ["ml", "mli"] [] [] "ocaml" Nothing
-  , lang "elixir" ["ex", "exs"] [] ["elixir"] "elixir" (Just "#")
-  , lang "sql" ["sql"] [] [] "sql" (Just "--")
-  , lang "dockerfile" ["dockerfile"] ["Dockerfile", "Containerfile"] [] "dockerfile" (Just "#")
-  , lang "git-commit" [] ["COMMIT_EDITMSG"] [] "gitcommit" (Just "#")
+  [ lang "haskell" ["hs", "hs-boot", "hsc"] [] ["runhaskell", "runghc"] "haskell" (Just "--") (Just ("{-", "-}"))
+  , lang "rust" ["rs"] [] [] "rust" (Just "//") cStyle
+  , lang "c" ["c", "h"] [] [] "c" (Just "//") cStyle
+  , lang "cpp" ["cc", "cpp", "cxx", "hpp", "hh", "hxx", "c++"] [] [] "cpp" (Just "//") cStyle
+  , lang "python" ["py", "pyi"] [] ["python", "python3"] "python" (Just "#") Nothing
+  , lang "javascript" ["js", "mjs", "cjs"] [] ["node"] "javascript" (Just "//") cStyle
+  , lang "typescript" ["ts", "mts", "cts"] [] [] "typescript" (Just "//") cStyle
+  , lang "tsx" ["tsx"] [] [] "tsx" (Just "//") cStyle
+  , lang "go" ["go"] [] [] "go" (Just "//") cStyle
+  , lang "java" ["java"] [] [] "java" (Just "//") cStyle
+  , lang "json" ["json", "jsonc"] [] [] "json" Nothing Nothing
+  , lang "toml" ["toml"] ["Cargo.lock"] [] "toml" (Just "#") Nothing
+  , lang "yaml" ["yaml", "yml"] [] [] "yaml" (Just "#") Nothing
+  , lang "markdown" ["md", "markdown"] [] [] "markdown" Nothing markup
+  , lang "bash" ["sh", "bash", "zsh"] [".bashrc", ".zshrc", ".profile", "PKGBUILD"] ["sh", "bash", "zsh"] "bash" (Just "#") Nothing
+  , lang "lua" ["lua"] [] ["lua"] "lua" (Just "--") (Just ("--[[", "]]"))
+  , lang "nix" ["nix"] [] [] "nix" (Just "#") cStyle
+  , lang "html" ["html", "htm"] [] [] "html" Nothing markup
+  , lang "css" ["css"] [] [] "css" Nothing cStyle
+  , lang "make" ["mk", "mak"] ["Makefile", "makefile", "GNUmakefile"] [] "make" (Just "#") Nothing
+  , lang "cabal" ["cabal"] [] [] "cabal" (Just "--") Nothing
+  , lang "ruby" ["rb"] ["Gemfile", "Rakefile"] ["ruby"] "ruby" (Just "#") Nothing
+  , lang "zig" ["zig"] [] [] "zig" (Just "//") Nothing
+  , lang "ocaml" ["ml", "mli"] [] [] "ocaml" Nothing (Just ("(*", "*)"))
+  , lang "elixir" ["ex", "exs"] [] ["elixir"] "elixir" (Just "#") Nothing
+  , lang "sql" ["sql"] [] [] "sql" (Just "--") cStyle
+  , lang "dockerfile" ["dockerfile"] ["Dockerfile", "Containerfile"] [] "dockerfile" (Just "#") Nothing
+  , lang "git-commit" [] ["COMMIT_EDITMSG"] [] "gitcommit" (Just "#") Nothing
   ]
 
 -- | A file's language, from its name, else from a @#!@ first line.

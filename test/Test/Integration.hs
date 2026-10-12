@@ -74,6 +74,11 @@ integrationTests = do
   lowered <- textAfter "Hello World\nKeep" "x g u"
   uppered <- textAfter "Hello wörld" "w w g U"
   swapped <- textAfter "Hello World" "x g s"
+  let inFile path t ks = B.toText . docBuffer . edDoc <$> typeKeys ks (newEditor (24, 80) (newDocument (Just path) (buf t)))
+  commented <- inFile "a.hs" "main = pure ()\nx" "x C-c"
+  uncommented <- inFile "a.hs" "main = pure ()\nx" "x C-c C-c"
+  blockCommented <- inFile "a.css" "a {}" "C-c"
+  noLanguage <- textAfter "a" "C-c"
   casedEach <- textAfter "ab ab" "% s a ret g U"
   selectLines <- selectionAfter "one\ntwo\nthree" "l v j x"
   selectLinesUp <- selectionAfter "one\ntwo\nthree" "j l v k x"
@@ -196,6 +201,9 @@ integrationTests = do
     , test "g u makes the selection lower case" (assertEqual "hello world\nKeep" lowered)
     , test "g U makes the selection upper case (beyond ASCII too)" (assertEqual "Hello WÖRLD" uppered)
     , test "g s swaps the case" (assertEqual "hELLO wORLD" swapped)
+    , test "C-c toggles line comments" (assertEqual ("-- main = pure ()\nx", "main = pure ()\nx") (commented, uncommented))
+    , test "C-c uses a block comment where there are no line comments" (assertEqual "/* a {} */" blockCommented)
+    , test "C-c without a language changes nothing" (assertEqual "a" noLanguage)
     , test "case changes apply to every selection" (assertEqual "Ab Ab" casedEach)
     , test "x in select mode selects every line the selection touches" (assertEqual (Pos 0 0, Pos 1 3) selectLines)
     , test "x keeps a backward selection backward" (assertEqual (Pos 1 3, Pos 0 0) selectLinesUp)

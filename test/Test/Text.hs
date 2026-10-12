@@ -18,6 +18,7 @@ import Data.List (nub, sort)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Him.Buffer qualified as B
+import Him.Comment (toggleBlockComments, toggleLineComments)
 import Him.Edit
 import Him.Search (Direction (..), Match (..), compileNeedle, findMatch, selectMatches)
 import Him.History qualified as H
@@ -294,6 +295,25 @@ multiSelectionTests =
       let sel = sel_ [r 0 0 0 1, r 0 4 0 5, r 1 1 1 2] 0
           (b, _) = applyEdits (const deleteSelection) (buf "one two\nthree") sel
        in assertEqual "e o\ntee" (B.toText b)
+  , test "line comments go at the smallest indentation, skipping blank lines" $
+      let (b, sel') = toggleLineComments "--" (buf "  a\n\n    b\nc") (sel_ [r 0 2 2 4] 0)
+       in assertEqual ("  -- a\n\n  --   b\nc", [r 0 5 2 7]) (B.toText b, ranges sel')
+  , test "line comments come off when every line has one" $
+      let (b, sel') = toggleLineComments "--" (buf "  -- a\n  --b\nc") (sel_ [r 0 0 1 4] 0)
+       in assertEqual ("  a\n  b\nc", [r 0 0 1 2]) (B.toText b, ranges sel')
+  , test "a line without a comment comments them all" $
+      let (b, _) = toggleLineComments "#" (buf "# a\nb") (sel_ [r 0 0 1 0] 0)
+       in assertEqual "# # a\n# b" (B.toText b)
+  , test "line comments on lines of several cursors, once each" $
+      let (b, _) = toggleLineComments "//" (buf "ab\ncd") (sel_ [r 0 0 0 0, r 0 1 0 1, r 1 0 1 0] 0)
+       in assertEqual "// ab\n// cd" (B.toText b)
+  , test "a block comment wraps the selection inside its whitespace, and comes off" $
+      let (b, sel') = toggleBlockComments ("{-", "-}") (buf "x = 1\n  y\nz") (sel_ [r 1 0 1 3] 0)
+          (b', _) = toggleBlockComments ("{-", "-}") b sel'
+       in assertEqual ("x = 1\n  {- y -}\nz", "x = 1\n  y\nz") (B.toText b, B.toText b')
+  , test "a block comment around a cursor takes its line" $
+      let (b, _) = toggleBlockComments ("<!--", "-->") (buf "a\nhello\n") (sel_ [r 1 2 1 2] 0)
+       in assertEqual "a\n<!-- hello -->\n" (B.toText b)
   , test "random multi-cursor inserts match a model" (multiModel 300 11 Insert')
   , test "random multi-cursor backspaces match a model" (multiModel 300 13 Backspace')
   , test "random multi-cursor forward deletes match a model" (multiModel 300 19 Delete')

@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- `C-c` comments or uncomments the selected lines (`toggle_comments`): line comments where the language has them, else a block comment around each selection. `toggle_line_comments` and `toggle_block_comments` choose. Languages know their block comments too.
 - In a picker, `S-tab` goes up and unmarks (it undoes `tab`, `picker_unmark`). The buffer picker cannot mark; `tab` only moves there.
 - Case: `g u` lower case, `g U` upper case, `g s` swaps (`to_lower`, `to_upper`, `swap_case`), on every selection.
 - The picker's preview is highlighted.
