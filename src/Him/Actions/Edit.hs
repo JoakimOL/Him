@@ -61,6 +61,10 @@ actions =
       comments (fmap toggleLineComments . langLineComment)
   , simple "toggle_block_comments" GEditing "Wrap each selection in a block comment, or unwrap it" $
       comments (fmap toggleBlockComments . langBlockComment)
+  , simple "join_selections" GEditing "Join the selected lines (or the next line to this one) with single spaces" $
+      editSelection (joinLines False)
+  , simple "join_selections_space" GEditing "Join lines like join_selections, and select the spaces put between them" $
+      editSelection (joinLines True)
   , simple "select_mode" GModes "Toggle select (extend) mode" $
       gets edMode >>= \m -> setMode (if m == Select then Normal else Select)
   , simple "insert_newline" GEditing "Insert a line break" (edit insertNewline)

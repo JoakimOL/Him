@@ -79,6 +79,12 @@ integrationTests = do
   uncommented <- inFile "a.hs" "main = pure ()\nx" "x C-c C-c"
   blockCommented <- inFile "a.css" "a {}" "C-c"
   noLanguage <- textAfter "a" "C-c"
+  joinedNext <- textAfter "a  \n    b\nc" "J"
+  joinedAll <- textAfter "a\n  b\n\nc\nd" "x x x x J"
+  joinedLast <- textAfter "a\nb" "j J"
+  joinedTwice <- textAfter "a\nb\nc" "J J"
+  joinSelection <- selectionAfter "ab\n  cd\nef" "x x J"
+  joinSpaces <- selectionAfter "ab\n  cd" "A-J"
   casedEach <- textAfter "ab ab" "% s a ret g U"
   selectLines <- selectionAfter "one\ntwo\nthree" "l v j x"
   selectLinesUp <- selectionAfter "one\ntwo\nthree" "j l v k x"
@@ -204,6 +210,12 @@ integrationTests = do
     , test "C-c toggles line comments" (assertEqual ("-- main = pure ()\nx", "main = pure ()\nx") (commented, uncommented))
     , test "C-c uses a block comment where there are no line comments" (assertEqual "/* a {} */" blockCommented)
     , test "C-c without a language changes nothing" (assertEqual "a" noLanguage)
+    , test "J joins the next line with one space" (assertEqual "a b\nc" joinedNext)
+    , test "J joins every selected line; a blank line adds no space" (assertEqual "a b c\nd" joinedAll)
+    , test "J on the last line does nothing" (assertEqual "a\nb" joinedLast)
+    , test "J again joins the next line too" (assertEqual "a b c" joinedTwice)
+    , test "J keeps the selection on the joined text (to its line break)" (assertEqual (Pos 0 0, Pos 0 5) joinSelection)
+    , test "A-J selects the inserted space" (assertEqual (Pos 0 2, Pos 0 2) joinSpaces)
     , test "case changes apply to every selection" (assertEqual "Ab Ab" casedEach)
     , test "x in select mode selects every line the selection touches" (assertEqual (Pos 0 0, Pos 1 3) selectLines)
     , test "x keeps a backward selection backward" (assertEqual (Pos 1 3, Pos 0 0) selectLinesUp)

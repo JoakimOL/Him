@@ -20,6 +20,7 @@ module Him.Edit
   , LineEdit (..)
   , editLines
   , selectedLines
+  , joinLines
   ) where
 
 import Data.Char (isSpace)
@@ -215,3 +216,46 @@ selectedLines b sel =
   | l <- IntSet.toAscList (IntSet.fromList (concat [[posLine (rangeStart r) .. posLine (rangeEnd r)] | r <- ranges sel]))
   , l < lineCount b
   ]
+
+-- | @J@: join each selection's lines (a selection on one line joins the next
+-- line to it), as in Helix. A line break and the whitespace around it become
+-- one space, or nothing when the joined line is blank. With @selectSpaces@
+-- (@A-J@) the inserted spaces become the selection.
+joinLines :: Bool -> Buffer -> Selection -> (Buffer, Selection)
+joinLines selectSpaces b0 sel0
+  | null joins = (b0, sel0)
+  | selectSpaces, not (null spaces) = (b1, fromMaybe sel1 (fromRanges [point p | p <- spaces] 0))
+  | otherwise = (b1, sel1)
+  where
+    joins =
+      IntSet.toDescList . IntSet.fromList $
+        [ l
+        | r <- ranges sel0
+        , let s = posLine (rangeStart r)
+              e = posLine (rangeEnd r)
+        , l <- if s == e then [s] else [s .. e - 1]
+        , l + 1 < lineCount b0
+        ]
+    -- Bottom up, so the lines still to join keep their numbers; positions
+    -- already moved (the selection, earlier spaces) follow each join.
+    (b1, sel1, spaces) = foldl step (b0, sel0, []) joins
+    step (b, sel, sps) l =
+      let cur = lineAt l b
+          next = lineAt (l + 1) b
+          keep = T.dropWhileEnd blank cur
+          lead = T.length (T.takeWhile blank next)
+          rest = T.drop lead next
+          sep = if T.null rest then "" else " "
+          k = T.length keep
+          at = k + T.length sep
+          move p@(Pos pl c)
+            | pl == l && c > k = Pos l k
+            | pl == l + 1 = Pos l (at + max 0 (c - lead))
+            | pl > l + 1 = Pos (pl - 1) c
+            | otherwise = p
+          moveRange (Range a h _) = Range (move a) (move h) Nothing
+       in ( replaceLines l (l + 2) [keep <> sep <> rest] b
+          , mapRanges moveRange sel
+          , [Pos l k | not (T.null sep)] <> map move sps
+          )
+    blank c = c == ' ' || c == '\t'
