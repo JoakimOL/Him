@@ -321,7 +321,8 @@ exCommands =
           Nothing -> atServer at
         LspStarting -> "the language server is starting"
         _ -> "no language server for this file"
-  , ExCommand ["format", "fmt"] "Format the file with the language server" NoArgs $ \_ -> formatDocument
+  , ExCommand ["format", "fmt"] "Format the file with the language server (from select mode: the selection, as =)" NoArgs $ \_ ->
+      gets edMode >>= \m -> if m == Select then formatSelection else formatDocument
   , ExCommand ["lsp-stop"] "Stop the language server of this file" NoArgs $ \_ ->
       withServer $ \server -> do
         stopServer server LspNone

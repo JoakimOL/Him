@@ -28,7 +28,7 @@ drawCommandLine theme ed rect = case (edMode ed, edStatus ed) of
 
 promptLabel :: Editor -> T.Text
 promptLabel ed = case edPrompt ed of
-  ExPrompt -> ":"
+  ExPrompt _ -> ":"
   SearchPrompt Forward _ -> "/"
   SearchPrompt Backward _ -> "?"
   SelectPrompt _ -> "select:"

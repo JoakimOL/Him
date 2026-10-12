@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- A `:` command typed in select mode runs in select mode and comes back to it, as in Helix; `:format` there formats the selection (as `=`).
 - `=` formats the primary selection with the language server (`format_selection`, `textDocument/rangeFormatting`), in normal and select mode. Formatting asks for the file's indentation, not just the settings'.
 - `J` joins the selected lines (or the next line) with single spaces, as in Helix (`join_selections`); `A-J` also selects the spaces (`join_selections_space`).
 - Language servers take settings: `[language-server.<language>.settings]` answers the server's `workspace/configuration` and is sent with `workspace/didChangeConfiguration`; `[language-server.<language>.initialization-options]` goes with `initialize`. For example `formattingProvider = "fourmolu"` under `[language-server.haskell.settings.haskell]`.

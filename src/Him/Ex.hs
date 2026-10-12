@@ -45,7 +45,7 @@ runExLine table line = case parseExLine line of
 -- argument of a command taking a theme ('ThemeArgs').
 previewedTheme :: [ExCommand] -> Editor -> Maybe Text
 previewedTheme table ed = case (edMode ed, edPrompt ed, parseExLine (edCmdLine ed)) of
-  (CmdLine, ExPrompt, Just (name, [arg]))
+  (CmdLine, ExPrompt _, Just (name, [arg]))
     | Just c <- find ((name `elem`) . exNames) table
     , exArgs c == ThemeArgs ->
         Just arg

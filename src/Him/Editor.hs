@@ -81,8 +81,9 @@ data Status = Status !Severity !Text
 
 -- | What the command line is being used for.
 data PromptKind
-  = -- | A @:@ command.
-    ExPrompt
+  = -- | A @:@ command, typed in this mode (normal or select): the mode the
+    -- command runs in, and comes back to.
+    ExPrompt !Mode
   | -- | A search, with the selection to search from and to restore when
     -- the search is cancelled.
     SearchPrompt !Direction !Selection
@@ -268,7 +269,7 @@ newEditor size doc =
     , edPending = []
     , edCount = Nothing
     , edCmdLine = ""
-    , edPrompt = ExPrompt
+    , edPrompt = ExPrompt Normal
     , edPreviewPending = False
     , edAwait = Nothing
     , edLastFind = Nothing

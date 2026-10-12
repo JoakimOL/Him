@@ -177,6 +177,8 @@ lspTests = do
       partDoc <- either (fail . T.unpack) pure =<< loadDocument (project <> "/part.c")
       partOpen <- settleUntil config rt 20000 isAttached =<< execStateT (handleEvent config (EvResize 24 80)) (newEditor (24, 80) partDoc)
       partFormatted <- settleUntil config rt 10000 ((/= "int  b( void ){return 0;}") . B.lineAt 1 . docBuffer . edDoc) =<< keys "j x =" partOpen
+      -- So does :format typed in select mode.
+      exPartFormatted <- settleUntil config rt 10000 ((/= "int  b( void ){return 0;}") . B.lineAt 1 . docBuffer . edDoc) =<< ex "format" =<< keys "j v x" partOpen
       -- Apply a code action (clangd's tweaks are commands, whose edits come
       -- back as a workspace/applyEdit request), in a file of its own.
       writeFile (project <> "/act.c") "int add(int a, int b) { return a + b; }\nint main(void) {\n    int x = add(1, 2) * 3;\n    return x;\n}\n"
@@ -204,6 +206,8 @@ lspTests = do
       pure
         [ test "= formats the selected line only" $
             assertEqual (True, "int  a( void ){return 0;}") (T.isPrefixOf "int b(void)" (B.lineAt 1 (docBuffer (edDoc partFormatted))), B.lineAt 0 (docBuffer (edDoc partFormatted)))
+        , test ":format in select mode formats the selection only" $
+            assertEqual (True, "int  a( void ){return 0;}") (T.isPrefixOf "int b(void)" (B.lineAt 1 (docBuffer (edDoc exPartFormatted))), B.lineAt 0 (docBuffer (edDoc exPartFormatted)))
         , test "the document attaches to clangd" (assertEqual True (case docLsp (edDoc attached) of LspAttached _ -> True; _ -> False))
         , test "an error is reported on its line" (assertEqual [(2, SevError)] (take 1 (errorsOn attached)))
         , test "hover shows a popup" (assertEqual True (isJust (edPopup hovered)))

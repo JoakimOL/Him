@@ -22,14 +22,8 @@ import Him.Mode (Mode (..))
 
 actions :: [ExCommand] -> [Action]
 actions exTable =
-  [ simple "command_mode" GPrompt "Enter a : command" $ do
-      modify' (\e -> e {edPrompt = ExPrompt})
-      setCmdLine ""
-      setMode CmdLine
-  , action "command_mode_with" GPrompt "Enter a : command that starts with this text (command_mode_with \"magit-commit \")" (text "text") $ \t -> do
-      modify' (\e -> e {edPrompt = ExPrompt})
-      setCmdLine t
-      setMode CmdLine
+  [ simple "command_mode" GPrompt "Enter a : command (from select mode it runs there, e.g. :format formats the selection)" (openExPrompt "")
+  , action "command_mode_with" GPrompt "Enter a : command that starts with this text (command_mode_with \"magit-commit \")" (text "text") openExPrompt
   , simple "cmdline_cancel" GPrompt "Leave the command line" cancel
   , simple "cmdline_backspace" GPrompt "Delete the last character (leave if empty)" $
       gets edCmdLine >>= \case
@@ -39,9 +33,9 @@ actions exTable =
       line <- gets edCmdLine
       prompt <- gets edPrompt
       setCmdLine ""
-      setMode Normal
+      setMode (promptMode prompt)
       case prompt of
-        ExPrompt -> runExLine exTable line
+        ExPrompt _ -> runExLine exTable line
         SearchPrompt dir origin -> executeSearch dir origin line
         SelectPrompt origin -> executeSelect origin line
         FilePrompt act -> runFileAction act line
@@ -55,13 +49,28 @@ cancel :: EditorM ()
 cancel = do
   prompt <- gets edPrompt
   setCmdLine ""
-  setMode Normal
+  setMode (promptMode prompt)
   case prompt of
     SearchPrompt _ origin -> cancelSearch origin
     SelectPrompt origin -> cancelSearch origin
     FilePrompt _ -> pure ()
     RenamePrompt _ -> pure ()
-    ExPrompt -> pure ()
+    ExPrompt _ -> pure ()
+
+-- | Open the @:@ line with some text. A command typed in select mode runs
+-- in select mode (and comes back to it), as in Helix.
+openExPrompt :: T.Text -> EditorM ()
+openExPrompt t = do
+  from <- gets edMode
+  modify' (\e -> e {edPrompt = ExPrompt (if from == Select then Select else Normal)})
+  setCmdLine t
+  setMode CmdLine
+
+-- | The mode to go back to when the prompt is done.
+promptMode :: PromptKind -> Mode
+promptMode = \case
+  ExPrompt from -> from
+  _ -> Normal
 
 cmdlineInsert :: Char -> EditorM ()
 cmdlineInsert c = setCmdLine . (`T.snoc` c) =<< gets edCmdLine
@@ -77,7 +86,7 @@ setCmdLine t = modify' $ \e ->
         SelectPrompt {} -> True
         FilePrompt {} -> False
         RenamePrompt {} -> False
-        ExPrompt -> False
+        ExPrompt _ -> False
     }
 
 -- | @tab@ on the @:@ line: complete the command name, or the last argument
@@ -96,7 +105,7 @@ complete exTable step =
           (before, arg) = T.breakOnEnd " " line
           command = find ((name `elem`) . exNames) exTable
       case prompt of
-        ExPrompt
+        ExPrompt _
           | T.null rest -> offer line "" [n <> " " | c <- exTable, n <- exNames c, name `T.isPrefixOf` n]
           | Just c <- command, exArgs c == PathArgs ->
               offer line before =<< liftIO (completePath (T.unpack arg))

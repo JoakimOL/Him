@@ -33,7 +33,7 @@ refreshInfo config ed = ed {edInfo = box}
             Just (InfoBox "registers" (registerRows ed <> specials) BottomRight Nothing)
       _ | Just w <- edAwait ed, Just b <- awaitInfo w -> Just b
       (_ : _, _, _) -> keyInfo config ed
-      ([], CmdLine, ExPrompt) -> exInfo (cfgExCommands config) ed
+      ([], CmdLine, ExPrompt _) -> exInfo (cfgExCommands config) ed
       _ -> Nothing
 
 -- | The keys that can follow the pending ones.

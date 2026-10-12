@@ -79,6 +79,9 @@ integrationTests = do
   uncommented <- inFile "a.hs" "main = pure ()\nx" "x C-c C-c"
   blockCommented <- inFile "a.css" "a {}" "C-c"
   noLanguage <- textAfter "a" "C-c"
+  exFromSelect <- edMode <$> typeKeys "v : p w d ret" (start "abc")
+  exCancelledSelect <- edMode <$> typeKeys "v : esc" (start "abc")
+  exFromNormal <- edMode <$> typeKeys ": p w d ret" (start "abc")
   joinedNext <- textAfter "a  \n    b\nc" "J"
   joinedAll <- textAfter "a\n  b\n\nc\nd" "x x x x J"
   joinedLast <- textAfter "a\nb" "j J"
@@ -210,6 +213,7 @@ integrationTests = do
     , test "C-c toggles line comments" (assertEqual ("-- main = pure ()\nx", "main = pure ()\nx") (commented, uncommented))
     , test "C-c uses a block comment where there are no line comments" (assertEqual "/* a {} */" blockCommented)
     , test "C-c without a language changes nothing" (assertEqual "a" noLanguage)
+    , test "a : command typed in select mode runs and comes back there" (assertEqual (Select, Select, Normal) (exFromSelect, exCancelledSelect, exFromNormal))
     , test "J joins the next line with one space" (assertEqual "a b\nc" joinedNext)
     , test "J joins every selected line; a blank line adds no space" (assertEqual "a b c\nd" joinedAll)
     , test "J on the last line does nothing" (assertEqual "a\nb" joinedLast)
