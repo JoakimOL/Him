@@ -309,11 +309,11 @@ them in the editor.
 | Normal (moving) | counts (`5 j`); `h j k l`, arrows, `home`/`end`; `w b e` (words); `g g` / `g e` (first / last line), `<count> g g` (that line), `g h` / `g l` (line start / end); `C-f` / `C-b` (also `pagedown` / `pageup`), `C-d` / `C-u` (half pages); `f t F T` + a character, `A-.` repeats; `m m` (the matching bracket); `C-z` suspends. |
 | Normal (selecting) | `x` (the selection's whole lines; repeat to extend), `X` (the whole lines, never adding one), `;` (collapse), `v` (select mode), `%` (all), `s` (matches inside the selection), `C` (copy the selection to the next line), `,` / `A-,` (keep / remove the primary), `(` / `)` (rotate), `A-s` (split into lines); `m i` / `m a` + `w W p m ( [ { < " ' \`` (inside / around a text object; `b B r c q` name `() {} [] <> \`\`` without AltGr or dead keys). |
 | Normal (editing) | `i a I A` (insert before / after / at the line's start / end), `o` / `O` (on a new line below / above), `d` (delete), `c` (change), `y` (yank), `p` / `P` (paste after / before), `"` + a register before any of them (`+` clipboard, `*` primary, `_` discard), `r` + a character (replace each selected character), `g u` / `g U` / `g s` (lower / upper / swap case), `C-c` (toggle comments), `J` / `A-J` (join lines / and select the spaces), `<` / `>` (unindent / indent the lines, with a count), `R` (replace with the register), `space y` / `space p` / `space P` / `space R` (the clipboard), `u` / `U` (undo / redo); `m s` + a character (surround), `m r` + two (replace the pair), `m d` + one (delete the pair; `m` the closest). |
-| Normal (search) | `/` / `?` (with preview), `n` / `N`, `*` (selection as the pattern). |
+| Normal (search) | `/` / `?` (with preview), `n` / `N`, `*` or `'` (selection as the pattern). |
 | Select | Normal mode where motions extend; a `:` command runs in select mode and comes back to it; `o` puts the cursor at the selection's other end (as in Vim); `v` / `esc` back; `y` yanks and goes back. |
 | Insert | typing, `ret` (keeps indentation), `tab` (one level, [ADR indentation](adr/indentation.md)), `backspace`, `del`, arrows, `C-r` + a register (insert it), `esc`. |
 | Command line | typing, `tab` (complete names, paths, themes, plugins; again to cycle the candidates), `S-tab` (cycle back), `backspace`, `ret`, `esc`. |
-| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`, `tab` (mark and go down, for `ret`/`del` to act on all marked; not in the buffer picker), `S-tab` (go up and unmark), `ret`, `del` (the picker's second action: the jumplist removes the entry), `esc`. |
+| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space '` / `space *` (search the files for the selection), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`, `tab` (mark and go down, for `ret`/`del` to act on all marked; not in the buffer picker), `S-tab` (go up and unmark), `ret`, `del` (the picker's second action: the jumplist removes the entry), `esc`. |
 | Jumplist | `C-o` (back), `C-i` / `tab` (forward), both with a count; `C-s` (save the selection). |
 | Directory listings | `space -` (the file's directory), `space .` (the working directory), `:o dir`; in a listing: `ret`, `u` / `-` / `^` / `backspace` (parent), `g r` (refresh), `a` (new file or `dir/`), `+` (new directory), `r` (rename), `d` (delete, asks), `g .` (dotfiles). |
 | Windows | `C-w` or `space w`, then `v` / `s` (split side by side / stacked), `w` (next), `h j k l` (focus), `H J K L` (swap), `q` (close), `o` (only), `n v` / `n s` (split with a scratch buffer). |
@@ -364,8 +364,8 @@ them in the editor.
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-12.* Everything the user asked for so far is done. The latest
-work: `C-c` toggles comments (line, else block); `<` / `>` indent by a level that comes
+*Last updated 2026-10-13.* Everything the user asked for so far is done. The latest
+work: `space '` searches the files for the selection, and `'` is `*` without Shift; `C-c` toggles comments (line, else block); `<` / `>` indent by a level that comes
 from `.editorconfig`, the file's text or the language ([ADR indentation](adr/indentation.md)); language-server
 settings and initialization options in the config file; `S-tab` in a picker undoes
 `tab`, and the buffer picker does not mark. Before that: plugin canvases ([ADR plugin-canvas](adr/plugin-canvas.md)) with contrib `magit` and `tetris`; a

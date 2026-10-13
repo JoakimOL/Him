@@ -121,6 +121,7 @@ integrationTests = do
   searchWrap <- selectionAfter "one two\nthree two" "/ t w o ret n n"
   searchBack <- selectionAfter "one two\nthree two" "g e ? t w o ret"
   searchPrev <- selectionAfter "one two\nthree two" "/ t w o ret n N"
+  quoteNext <- selectionAfter "two one\nthree two" "m i w ' n"
   previewed <- selectionAfter "one two\nthree two" "/ t h r"
   cancelled <- selectionAfter "one two\nthree two" "l / t h r esc"
   starSearch <- selectionAfter "one two\none" "e * n"
@@ -254,6 +255,7 @@ integrationTests = do
     , test "n wraps around" (assertEqual (Pos 0 4, Pos 0 6) searchWrap)
     , test "? searches backward" (assertEqual (Pos 0 4, Pos 0 6) searchBack)
     , test "N goes back" (assertEqual (Pos 0 4, Pos 0 6) searchPrev)
+    , test "' searches for the selection, as * does" (assertEqual (Pos 1 6, Pos 1 8) quoteNext)
     , test "typing previews the match" (assertEqual (Pos 1 0, Pos 1 2) previewed)
     , test "esc restores the selection" (assertEqual (Pos 0 1, Pos 0 1) cancelled)
     , test "* then n searches for the selection" (assertEqual (Pos 1 0, Pos 1 2) starSearch)
@@ -390,6 +392,9 @@ openBufferTests = do
   searched <- settle config =<< foldlM run start ([plain (KChar ' '), charKey '/'] <> map charKey "maxHitText")
   searchedAgain <- foldlM run searched (map charKey " ::")
   let firstHit = edPicker searched >>= selectedItem
+  -- space ' searches the files for the selection, which becomes the pattern.
+  searchedWord <- keys "m i w space '" start
+  searchedLine <- keys "x space '" start
   pickedHit <- foldlM run searched [plain KEnter]
   searchStale <- execStateT (handleEvent config (EvJob (GrepFound (maybe 0 pkGeneration (edPicker searched)) "maxHit" [pickerItem "x" (PickFile "x") ""] 1))) searched
   -- listFiles on a small tree with a hidden directory.
@@ -562,6 +567,10 @@ openBufferTests = do
     , test "space /: a new query keeps the old hits (stale) and searches again" $
         assertEqual (Just (True, True, pkMatches <$> edPicker searched), True)
           ((\p -> (pkLoading p, pkStale p, Just (pkMatches p))) <$> edPicker searchedAgain, any (\case StartJob (GrepFiles _ "maxHitText ::" _ _) -> True; _ -> False) (edEffects searchedAgain))
+    , test "space ' searches the files for the selection" $
+        assertEqual (Just ("search", "alpha"), True, ["alpha"])
+          ((\p -> (pkTitle p, pkQuery p)) <$> edPicker searchedWord, any (\case StartJob (GrepFiles _ "alpha" _ _) -> True; _ -> False) (edEffects searchedWord), Map.findWithDefault [] '/' (edRegisters searchedWord))
+    , test "space ' refuses a selection spanning lines" (assertEqual (Nothing, Normal) (pkTitle <$> edPicker searchedLine, edMode searchedLine))
     , test "space /: hits for another query are dropped" (assertEqual (edPicker searched) (edPicker searchStale))
     , test "space / opens the hit at its line and column" $
         assertEqual ((\case PickPosition f l c _ -> Just (Just f, Pos l c); _ -> Nothing) . piTarget =<< firstHit)

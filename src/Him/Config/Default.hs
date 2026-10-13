@@ -190,6 +190,8 @@ normalBindings =
        , ("space f", "file_picker")
        , ("space b", "buffer_picker")
        , ("space /", "global_search")
+       , ("space '", "global_search_selection")
+       , ("space *", "global_search_selection")
        , ("space j", "jumplist_picker")
        , ("C-o", "jump_backward")
        , ("C-i", "jump_forward")
@@ -218,6 +220,7 @@ normalBindings =
        , ("n", "search_next")
        , ("N", "search_prev")
        , ("*", "search_selection")
+       , ("'", "search_selection")
        ]
     <> Window.windowBindings
 

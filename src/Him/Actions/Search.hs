@@ -1,5 +1,5 @@
 -- | Search actions: @/@ and @?@ prompts with an incremental preview, @n@ and
--- @N@ to repeat, @*@ to search for the selection.
+-- @N@ to repeat, @*@ (or @'@) to search for the selection.
 module Him.Actions.Search
   ( actions
   , startSearch
@@ -7,6 +7,7 @@ module Him.Actions.Search
   , executeSelect
   , cancelSearch
   , refreshSearchPreview
+  , searchSelection
   ) where
 
 import Control.Monad.Trans.State.Strict (gets, modify')
@@ -30,14 +31,8 @@ actions =
   , simple "search_backward" GSearch "Search backward (?)" (startSearch Backward)
   , simple "search_next" GSearch "Select the next match of the last search" (repeatSearch Forward)
   , simple "search_prev" GSearch "Select the previous match of the last search" (repeatSearch Backward)
-  , simple "search_selection" GSearch "Use the selection as the search pattern" $ do
-      d <- getDoc
-      let t = selectionText (docBuffer d) (primary (docSelection d))
-      if T.any (== '\n') t
-        then failWith "cannot search for text spanning lines"
-        else do
-          setSearchRegister t
-          info ("search: " <> t)
+  , simple "search_selection" GSearch "Use the selection as the search pattern" $
+      searchSelection >>= mapM_ (\t -> info ("search: " <> t))
   , simple "select_matches" GSelection "Select the matches of a pattern inside the selection (s)" $ do
       sel <- docSelection <$> getDoc
       modify' (\e -> e {edCmdLine = "", edPrompt = SelectPrompt sel, edPreviewPending = False})
@@ -52,6 +47,16 @@ searchRegister = '/'
 
 setSearchRegister :: Text -> EditorM ()
 setSearchRegister t = setRegister searchRegister [t]
+
+-- | Make the primary selection the search pattern (for @n@ / @N@) and
+-- return it; a selection spanning lines is refused.
+searchSelection :: EditorM (Maybe Text)
+searchSelection = do
+  d <- getDoc
+  let t = selectionText (docBuffer d) (primary (docSelection d))
+  if T.any (== '\n') t
+    then Nothing <$ failWith "cannot search for text spanning lines"
+    else Just t <$ setSearchRegister t
 
 lastSearch :: EditorM (Maybe Text)
 lastSearch = listToMaybe <$> getRegister searchRegister

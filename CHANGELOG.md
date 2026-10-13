@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- `space '` (also `space *`) searches the project's files for the selection (`global_search_selection`); it becomes the search pattern too, so `n` / `N` find it in the file you open. `'` searches for the selection like `*` (both stay), unshifted on Nordic and US layouts.
 - A `:` command typed in select mode runs in select mode and comes back to it, as in Helix; `:format` there formats the selection (as `=`).
 - `=` formats the primary selection with the language server (`format_selection`, `textDocument/rangeFormatting`), in normal and select mode. Formatting asks for the file's indentation, not just the settings'.
 - `J` joins the selected lines (or the next line) with single spaces, as in Helix (`join_selections`); `A-J` also selects the spaces (`join_selections_space`).

@@ -1,5 +1,6 @@
 -- | Pickers: @space f@ (files under the working directory), @space b@
--- (open buffers), @space /@ (search the files), and the keys that drive
+-- (open buffers), @space /@ (search the files; @space '@ for the
+-- selection), and the keys that drive
 -- an open picker.
 module Him.Actions.Picker
   ( actions
@@ -20,6 +21,7 @@ import Him.Actions.File (openFile)
 import Him.Actions.Jump (goToEntry, jumping)
 import Data.IntSet qualified as IntSet
 import Him.Actions.Lsp qualified as Lsp
+import Him.Actions.Search (searchSelection)
 import Him.Lsp.Protocol (Encoding (..), fromLspColumn)
 import Him.Buffer qualified as Buffer
 import Him.Document (Document (..), displayName)
@@ -40,11 +42,9 @@ actions =
       open (newPicker "files" []) {pkGeneration = gen, pkLoading = True}
       o <- gets edOptions
       request (StartJob (ScanFiles gen (walkOptions o) "."))
-  , simple "global_search" GSearch "Search the files of the working directory for text" $ do
-      -- Each query starts a search that streams its hits in (ADR global-search).
-      gen <- gets edNextId
-      modify' (\e -> e {edNextId = gen + 1})
-      open (newPicker "search" []) {pkGeneration = gen, pkSource = GrepQuery}
+  , simple "global_search" GSearch "Search the files of the working directory for text" (globalSearch "")
+  , simple "global_search_selection" GSearch "Search the files of the working directory for the selection (it becomes the search pattern too)" $
+      searchSelection >>= mapM_ globalSearch
   , simple "buffer_picker" GBuffers "Switch to an open buffer" $ do
       (bs, cur) <- gets buffers
       let label i b = T.pack (show (i + 1)) <> (if i == cur then " * " else "   ") <> displayName (bufDoc b)
@@ -95,7 +95,15 @@ actions =
       request (CancelJob FilterJob)
       request (CancelJob GrepJob)
 
--- | What the file picker and the global search walk.
+-- | Open the global search with a query. Each query starts a search that
+-- streams its hits in (ADR global-search).
+globalSearch :: T.Text -> EditorM ()
+globalSearch query = do
+  gen <- gets edNextId
+  modify' (\e -> e {edNextId = gen + 1})
+  openPicker (newPicker "search" []) {pkGeneration = gen, pkSource = GrepQuery}
+  changeQuery (const query)
+
 -- | Going to a place a picker lists (a file, a buffer, a position in a
 -- file), or 'Nothing' for other items.
 place :: PickTarget -> Maybe (EditorM ())
@@ -116,6 +124,7 @@ place = \case
        in d {docSelection = single (point (Pos l c))}
   _ -> Nothing
 
+-- | What the file picker and the global search walk.
 walkOptions :: Options -> WalkOptions
 walkOptions o = WalkOptions (optPickerHidden o) (optPickerGitIgnore o) (optPickerIgnore o) (optPickerFollowSymlinks o) (optPickerMaxFiles o)
 

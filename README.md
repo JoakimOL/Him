@@ -41,7 +41,7 @@ stack install                # build and install the built binary
   terminal's OSC 52); `[editor] clipboard-provider` picks one.
 - **Files, buffers, windows.**
   - `space f` / `space b` pickers with a highlighted preview.
-  - `space /` searches the project's files as you type.
+  - `space /` searches the project's files as you type; `space '` searches them for the selection.
   - A jumplist, as in Helix: `C-o` / `tab`, `C-s` to save a place, `space j` to
     list (and prune) it.
   - `space -` lists the file's directory, `space .` the working one (create, rename, delete).

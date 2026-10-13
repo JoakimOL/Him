@@ -21,6 +21,8 @@ Helix's defaults lean on these keys, so him's defaults moved off them.
 - **Pairs have letters** in `m i`, `m a`, `m s`, `m r` and `m d`: `b` (), `B` {}, `r` [],
   `c` <> ("crocodile"), `q` backticks. The bracket characters still work.
 - **Listings:** `u` goes up. `-`, `^` and `backspace` stay.
+- **`'` searches for the selection** like `*` (and `space '` searches the files for it).
+  On Nordic layouts `'` is `*`'s key without Shift. `*` stays, for Vim and Helix habits.
 - **Shifted keys are fine.** `/ ? : % * " ( )` need Shift on these layouts. That is
   normal for European layouts, so they stay.
 - **When adding keys:** avoid AltGr and dead-key characters, and never put Alt on
