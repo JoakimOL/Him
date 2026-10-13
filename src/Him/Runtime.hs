@@ -43,7 +43,7 @@ import Him.Diff (Hunk (..), diffLines, mapLine)
 import Him.Git (loadBase, removeFromIndex, writeIndex)
 import Him.GitState (GitBase (..))
 import Data.IntMap.Strict qualified as IntMap
-import Him.Picker (PickTarget (..), matchLimit, pickerItem, rank)
+import Him.Picker (PickTarget (..), grepQuery, matchLimit, pathMatches, pickerItem, rankWith)
 import Him.Grep (Hit (..), grepFile)
 import Him.Search (compileNeedle)
 import Data.Foldable (for_)
@@ -248,7 +248,9 @@ runJob rt = \case
     -- Debounce: the search for the next key replaces this one (same key)
     -- while it waits, so typing a word searches once.
     threadDelay 80000
-    for_ (compileNeedle True query) $ \needle -> do
+    -- The pattern, and the %path words the files must match (ADR picker-query).
+    let (pattern, pathAtoms) = grepQuery query
+    for_ (compileNeedle True pattern) $ \needle -> do
       -- The walk calls emit from its worker threads, so files are searched
       -- in parallel. Hits are sent in batches (every 50 ms, or sooner for
       -- many), and only until the picker holds matchLimit of them; after
@@ -258,7 +260,7 @@ runJob rt = \case
       let send (items, n) = when (n > 0) (post (EvJob (GrepFound gen query items n)))
           path f = if root == "." then f else root <> "/" <> f
           emit files = do
-            found <- concat <$> mapM (\f -> map (item f) <$> grepFile needle (path f)) (sort files)
+            found <- concat <$> mapM (\f -> map (item f) <$> grepFile needle (path f)) (sort (filter (pathMatches pathAtoms . T.pack) files))
             let n = length found
             now <- getMonotonicTime
             due <- atomicModifyIORef' pending $ \(acc, count, kept, lastSent) ->
@@ -275,8 +277,8 @@ runJob rt = \case
       rest <- atomicModifyIORef' pending (\(acc, count, kept, t) -> (([], 0, kept, t), (acc, count)))
       send rest
     post (EvJob (GrepFinished gen query))
-  FilterPicker gen query items -> do
-    let (best, total) = rank query (toList items)
+  FilterPicker gen query columns items -> do
+    let (best, total) = rankWith columns query (toList items)
     _ <- evaluate (length best + total)
     post (EvJob (PickerFiltered gen query best total))
   GitLoad doc path -> do

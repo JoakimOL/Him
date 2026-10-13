@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- Picker queries work as in Helix: space-separated words that all match, in any order (`src him magit .hs`); `'exact`, `^prefix`, `suffix$`, `!` to exclude; `%column words` filters one column (`%p` the path, `%d` the detail, `%desc` in the command list). In `space /`, `pattern %p words` searches only matching paths ([ADR picker-query](docs/adr/picker-query.md)).
 - `C-d` / `C-u` (also `pagedown` / `pageup`) in a picker scroll the preview by half a page (`picker_preview_down`, `picker_preview_up`), as far as the file's end; another item, or a new query, shows the preview from its start again.
 - The case keys moved from the goto menu to a `-` (case) menu: `- l` lower, `- u` upper, `- s` swap.
 - `'` in a picker, before typing a query, brings back the last picker of the same kind (`picker_last`): files and search with their hits, selection and marks, others with their query over fresh items. A picker closed untouched does not replace the kept one ([ADR last-picker](docs/adr/last-picker.md)).

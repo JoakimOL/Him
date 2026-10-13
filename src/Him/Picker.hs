@@ -21,6 +21,14 @@ module Him.Picker
   , numbered
   , matchLimit
   , rank
+  , rankWith
+  , Atom (..)
+  , AtomKind (..)
+  , Column (..)
+  , parseQuery
+  , defaultColumns
+  , grepQuery
+  , pathMatches
   , syncLimit
   , fuzzyScore
   , labelWidth
@@ -132,6 +140,9 @@ data Picker = Picker
   , pkPreviewScroll :: !(Int, Int)
   -- ^ How many lines the preview is scrolled from where it starts, and the
   -- item ('piId') that is for; another selected item shows from the start.
+  , pkColumns :: !(Text, Text)
+  -- ^ The names of the label and detail columns, for @%name@ in the query
+  -- (ADR picker-query).
   , pkKeepItems :: !Bool
   -- ^ Whether @'@ brings this picker back with its items (they took a scan
   -- or a search to find), rather than listing them afresh with its query
@@ -140,7 +151,7 @@ data Picker = Picker
   deriving stock (Eq, Show)
 
 newPicker :: Text -> [PickerItem] -> Picker
-newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty True "picker_open" Nothing (-1, 0) False)
+newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty True "picker_open" Nothing (-1, 0) defaultColumns False)
 
 -- | The picker box's height in an area of the given height (most of it).
 boxHeight :: Int -> Int
@@ -185,7 +196,7 @@ addItems new p = refilter p {pkItems = pkItems p <> numbered (Seq.length (pkItem
 
 refilter :: Picker -> Picker
 refilter p =
-  let (ms, n) = rank (pkQuery p) (toList (pkItems p))
+  let (ms, n) = rankWith (pkColumns p) (pkQuery p) (toList (pkItems p))
    in p {pkMatches = ms, pkMatchCount = n, pkSelected = max 0 (min (pkSelected p) (length ms - 1))}
 
 -- | Pickers with more items than this filter in a background job when the
@@ -202,42 +213,175 @@ matchLimit = 1000
 matches :: Text -> [PickerItem] -> [PickerItem]
 matches q = fst . rank q
 
--- | The best matches, and how many items match in all.
+-- | The best matches, and how many items match in all, for a picker with
+-- the default column names.
+rank :: Text -> [PickerItem] -> ([PickerItem], Int)
+rank = rankWith defaultColumns
+
+-- | The best matches, and how many items match in all. The query is
+-- words that must all match, in any order (ADR picker-query).
 --
 -- Fast path for large lists (ADR streaming-file-picker): a cheap in-order character check on
 -- the precomputed lower-case key rejects most items before any scoring,
 -- and instead of sorting every match the matches are bucketed by their
 -- rank (score, exactness, length), which keeps the original order inside
 -- a bucket; only the buckets needed for the first 'matchLimit' are read.
-rank :: Text -> [PickerItem] -> ([PickerItem], Int)
-rank q items
-  | T.null q = (take matchLimit items, length items)
+rankWith :: (Text, Text) -> Text -> [PickerItem] -> ([PickerItem], Int)
+rankWith columns q items
+  | null atoms = (take matchLimit items, length items)
   | otherwise =
       let scored = [(bucket s item, item) | item <- items, Just s <- [score item]]
           buckets = IntMap.fromListWith (<>) [(k, [item]) | (k, item) <- scored]
        in (take matchLimit (concatMap reverse (IntMap.elems buckets)), length scored)
   where
-    lq = T.toLower q
-    qs = T.unpack lq
-    single = T.length lq == 1
-    -- A match in the label beats any match found only in the detail.
-    score item
-      | inOrder lq (piKey item) = Just (if single then 0 else bestSkips qs (T.unpack (piKey item)))
-      | not (T.null (piDetail item)) = (+ 100000) <$> fuzzyScore lq (piDetail item)
-      | otherwise = Nothing
-    -- Score, then a label whose first word or file name is the query
-    -- itself (goto_line before goto_line_end), then the shorter label.
+    atoms = parseQuery columns q
+    score item = sum <$> traverse (atomScore item) atoms
+    -- Score, then a label whose first word or file name is the first
+    -- word itself (goto_line before goto_line_end), then the shorter label.
     bucket s item =
       s * 2 ^ (21 :: Int)
         + (if exact item then 0 else 2 ^ (20 :: Int))
         + min (2 ^ (20 :: Int) - 1) (piLength item)
     -- The first word is the query: a prefix followed by the end or a space.
-    exact item =
-      piName item == lq
-        || ( lq `T.isPrefixOf` piKey item
-              && maybe True ((== ' ') . fst) (T.uncons (T.drop qlen (piKey item)))
-           )
-    qlen = T.length lq
+    exact item = case [atText a | a <- atoms, atColumn a == Primary, atKind a == Fuzzy, not (atNegated a)] of
+      lq : _ ->
+        piName item == lq
+          || ( lq `T.isPrefixOf` piKey item
+                && maybe True ((== ' ') . fst) (T.uncons (T.drop (T.length lq) (piKey item)))
+             )
+      [] -> False
+
+-- | Which part of an item a query word is matched against.
+data Column
+  = -- | The label, or else the detail (a label match ranks first).
+    Primary
+  | LabelColumn
+  | DetailColumn
+  deriving stock (Eq, Show)
+
+-- | How a word matches, after fzf (and Helix): @word@ fuzzy, @'word@ as a
+-- substring, @^word@ at the start, @word$@ at the end, @^word$@ the whole
+-- text; @!@ before any of them excludes what matches.
+data AtomKind = Fuzzy | Substring | Prefix | Suffix | Whole
+  deriving stock (Eq, Show)
+
+-- | A word of a query, lower case.
+data Atom = Atom
+  { atColumn :: !Column
+  , atKind :: !AtomKind
+  , atNegated :: !Bool
+  , atText :: !Text
+  }
+  deriving stock (Eq, Show)
+
+-- | A picker's column names when it names none: its label and its detail.
+defaultColumns :: (Text, Text)
+defaultColumns = ("name", "detail")
+
+-- | Read a query (ADR picker-query): words separated by spaces; @%column@
+-- (any prefix of a column's name: @%p@ for @%path@) sends the words after
+-- it to that column; a backslash makes the next character plain (@\ @ a
+-- space in a word, @\%@, @\!@, @\'@, @\^@, @\$@).
+parseQuery :: (Text, Text) -> Text -> [Atom]
+parseQuery columns = go Primary . queryWords
+  where
+    go _ [] = []
+    go col (w : ws) = case w of
+      ('%', False) : name
+        | Just col' <- columnNamed columns (T.pack (map fst name)) -> go col' ws
+      _ -> maybe id (:) (atom col w) (go col ws)
+
+-- | The column a (non-empty) prefix names, the label's first.
+columnNamed :: (Text, Text) -> Text -> Maybe Column
+columnNamed (label, detail) name
+  | T.null name = Nothing
+  | n `T.isPrefixOf` T.toLower label = Just LabelColumn
+  | n `T.isPrefixOf` T.toLower detail = Just DetailColumn
+  | otherwise = Nothing
+  where
+    n = T.toLower name
+
+-- | A word's characters, each with whether a backslash made it plain.
+queryWords :: Text -> [[(Char, Bool)]]
+queryWords = filter (not . null) . split . T.unpack
+  where
+    split s = case word s of
+      (w, []) -> [w]
+      (w, rest) -> w : split rest
+    word = \case
+      [] -> ([], [])
+      '\\' : c : rest -> let (w, r) = word rest in ((c, True) : w, r)
+      c : rest
+        | c == ' ' || c == '\t' -> ([], rest)
+        | otherwise -> let (w, r) = word rest in ((c, False) : w, r)
+
+atom :: Column -> [(Char, Bool)] -> Maybe Atom
+atom col w0 =
+  let (negated, w1) = case w0 of ('!', False) : r -> (True, r); _ -> (False, w0)
+      (kind0, w2) = case w1 of
+        ('\'', False) : r -> (Substring, r)
+        ('^', False) : r -> (Prefix, r)
+        _ -> (Fuzzy, w1)
+      (kind, w3) = case reverse w2 of
+        ('$', False) : r | kind0 == Prefix -> (Whole, reverse r)
+                         | kind0 == Fuzzy -> (Suffix, reverse r)
+        _ -> (kind0, w2)
+      t = T.toLower (T.pack (map fst w3))
+   in if T.null t then Nothing else Just (Atom col kind negated t)
+
+-- | An atom's score for an item (lower is better), or 'Nothing' when it
+-- rules the item out. A primary word found only in the detail ranks after
+-- every label match.
+atomScore :: PickerItem -> Atom -> Maybe Int
+atomScore item a = case atColumn a of
+  LabelColumn -> verdict inLabel
+  DetailColumn -> verdict inDetail
+  Primary
+    | atNegated a -> verdict (maybe inDetail Just inLabel)
+    | otherwise -> maybe ((+ 100000) <$> inDetail) Just inLabel
+  where
+    verdict m = if atNegated a then maybe (Just 0) (const Nothing) m else m
+    inLabel = matchAtom a (piKey item)
+    inDetail = if T.null (piDetail item) then Nothing else matchAtom a (T.toLower (piDetail item))
+
+-- | Whether an atom's text matches a lower-case key, and its score.
+matchAtom :: Atom -> Text -> Maybe Int
+matchAtom a key = case atKind a of
+  Fuzzy
+    | inOrder t key -> Just (if T.length t == 1 then 0 else bestSkips (T.unpack t) (T.unpack key))
+    | otherwise -> Nothing
+  Substring -> hit (t `T.isInfixOf` key)
+  Prefix -> hit (t `T.isPrefixOf` key)
+  Suffix -> hit (t `T.isSuffixOf` key)
+  Whole -> hit (t == key)
+  where
+    t = atText a
+    hit b = if b then Just 0 else Nothing
+
+-- | The global search's query (ADR picker-query): the text before the first
+-- @%path@ (any prefix of it, after a space or at the start) is the pattern,
+-- spaces and all (@\%@ is a plain @%@); the words after it must match the
+-- file's path.
+grepQuery :: Text -> (Text, [Atom])
+grepQuery q = case T.breakOn "%" q of
+  (before, rest)
+    | T.null rest -> (unescape q, [])
+    | escaped before -> let (needle, atoms) = grepQuery (T.drop 1 rest) in (unescape (before <> "%") <> needle, atoms)
+    | atBoundary before
+    , Just LabelColumn <- columnNamed ("path", "") (T.takeWhile (not . isSpaceChar) (T.drop 1 rest)) ->
+        (unescape (T.stripEnd before), parseQuery ("path", "") rest)
+    | otherwise -> let (needle, atoms) = grepQuery (T.drop 1 rest) in (unescape (before <> "%") <> needle, atoms)
+  where
+    escaped before = "\\" `T.isSuffixOf` before
+    atBoundary before = T.null before || isSpaceChar (T.last before)
+    isSpaceChar c = c == ' ' || c == '\t'
+    unescape = T.replace "\\%" "%"
+
+-- | Whether a path matches all of the atoms (the global search's @%path@).
+pathMatches :: [Atom] -> Text -> Bool
+pathMatches atoms path = all (\a -> atomScore item a /= Nothing) atoms
+  where
+    item = pickerItem path (PickFile "") ""
 
 -- | Do the query's characters occur in the key, in order?
 inOrder :: Text -> Text -> Bool

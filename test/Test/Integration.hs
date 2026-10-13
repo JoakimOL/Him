@@ -408,6 +408,8 @@ openBufferTests = do
   let firstHit = edPicker searched >>= selectedItem
   -- space ' searches the files for the selection, which becomes the pattern.
   searchedWord <- keys "m i w space '" start
+  -- %path keeps the hits in files whose path matches.
+  searchedPath <- settle config =<< foldlM run start ([plain (KChar ' '), charKey '/'] <> map charKey "maxHitText %p test")
   searchedLine <- keys "x space '" start
   -- ' in a picker brings back the last one of its kind.
   searchBack <- keys "esc space / '" searched
@@ -575,7 +577,7 @@ openBufferTests = do
         assertEqual (Just (False, True)) ((\p -> (pkLoading p, any ((== "test/Spec.hs") . piLabel) (toList (pkItems p)))) <$> edPicker scanned)
     , test "typing in a large picker marks it stale and asks for a filter job" $
         assertEqual (Just True, True)
-          (pkStale <$> edPicker typedBig, any (\case StartJob (FilterPicker 7 "needle" _) -> True; _ -> False) (edEffects typedBig))
+          (pkStale <$> edPicker typedBig, any (\case StartJob (FilterPicker 7 "needle" _ _) -> True; _ -> False) (edEffects typedBig))
     , test "the filter job's answer is applied" $
         assertEqual (Just (False, 25)) ((\p -> (pkStale p, pkMatchCount p)) <$> edPicker filteredBig)
     , test "an answer for an older query or another scan is dropped" $
@@ -590,6 +592,9 @@ openBufferTests = do
     , test "space ' searches the files for the selection" $
         assertEqual (Just ("search", "alpha"), True, ["alpha"])
           ((\p -> (pkTitle p, pkQuery p)) <$> edPicker searchedWord, any (\case StartJob (GrepFiles _ "alpha" _ _) -> True; _ -> False) (edEffects searchedWord), Map.findWithDefault [] '/' (edRegisters searchedWord))
+    , test "space /: %p keeps the hits whose path matches" $
+        let paths = [f | Just p <- [edPicker searchedPath], i <- pkMatches p, PickPosition f _ _ _ <- [piTarget i]]
+         in assertEqual (True, True) (not (null paths), all ("test/" `isPrefixOf`) paths)
     , test "space ' refuses a selection spanning lines" (assertEqual (Nothing, Normal) (pkTitle <$> edPicker searchedLine, edMode searchedLine))
     , test "' in the search picker brings the last search back, hits and all" (assertEqual (edPicker searched, Picking) (edPicker searchBack, edMode searchBack))
     , test "a picker closed untouched is not remembered" (assertEqual (edPicker searched) (edPicker searchBackUntouched))

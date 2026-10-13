@@ -336,7 +336,7 @@ runEffects config = go (8 :: Int)
             Command.info "a new config file with the defaults: change what you like, then :w and :config-reload"
       RunAction inv -> either failWith boundRun (bindInvocation (cfgActions config) inv)
       OpenPalette -> modify' $ \e ->
-        e {edPicker = Just (newPicker "commands" (paletteItems config (keymapMode e))), edMode = Picking}
+        e {edPicker = Just (newPicker "commands" (paletteItems config (keymapMode e))) {pkColumns = ("name", "description")}, edMode = Picking}
 
 -- | A digit typed before a key sequence, in normal or select mode, adds to
 -- the count (@1 2 j@ moves 12 lines). @0@ only continues a count, and a

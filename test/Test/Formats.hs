@@ -147,6 +147,39 @@ pickerTests =
   , test "fuzzy: case is ignored" (assertEqual (Just 0) (fuzzyScore "SPEC" "test/Spec.hs"))
   , test "matches: best first, shorter on ties" $
       assertEqual ["src/ab.hs", "a/b.hs", "src/a/long/b.hs"] (map piLabel (matches "ab" (items ["src/a/long/b.hs", "a/b.hs", "src/ab.hs", "xyz"])))
+  , test "query: words match in any order, all of them" $
+      assertEqual ["src/Him/Contrib/Magit.hs"] (map piLabel (matches "magit src .hs him" files))
+  , test "query: ' substring, ^ prefix, $ suffix, ^$ whole" $
+      assertEqual (["src/Him/Picker.hs"], ["test/Spec.hs"], ["test/Spec.hs", "src/Him/Picker.hs", "src/Him/Contrib/Magit.hs"], ["test/Spec.hs"], [])
+        ( map piLabel (matches "'picker" files)
+        , map piLabel (matches "^test" files)
+        , map piLabel (matches ".hs$" files)
+        , map piLabel (matches "^test/spec.hs$" files)
+        , map piLabel (matches "'pkr" files)
+        )
+  , test "query: ! excludes what matches" $
+      assertEqual ["README.md", "test/Spec.hs", "src/Him/Picker.hs"] (map piLabel (matches "!magit" files))
+  , test "query: a lone ! or ' filters nothing" (assertEqual 4 (length (matches "! '" files)))
+  , test "query: %column (any prefix) sends the words after it there" $
+      let cmds = [pickerItem "goto_line" (PickFile "") "g g  Go to a line", pickerItem "write" (PickFile "") "Save the file"]
+          ranked q = map piLabel (fst (rankWith ("name", "description") q cmds))
+       in assertEqual (["write"], [], ["goto_line"], ["write"]) (ranked "%desc save", ranked "%name save", ranked "go %d line", ranked "%n !goto")
+  , test "query: an unknown %column is a plain word; \\ makes a character plain" $
+      assertEqual (["100%x"], ["a b"], ["!x"])
+        ( map piLabel (matches "%x" (items ["100%x", "abc"]))
+        , map piLabel (matches "a\\ b" (items ["a b", "ab"]))
+        , map piLabel (matches "\\!x" (items ["!x", "y"]))
+        )
+  , test "global search: the pattern, then %path words" $
+      assertEqual
+        [ ("foo bar", ["src", "hs"])
+        , ("printf(\"%p\")", [])
+        , ("%p x", [])
+        , ("50 %", [])
+        ]
+        (map ((\(n, as) -> (n, map atText as)) . grepQuery) ["foo bar %p src hs", "printf(\"%p\")", "\\%p x", "50 %"])
+  , test "global search: %path filters by the path" $
+      assertEqual [True, False] (map (pathMatches (snd (grepQuery "x %pa src !test"))) ["src/Him/A.hs", "src/test/B.hs"])
   , test "an empty query keeps the order" (assertEqual ["b", "a"] (map piLabel (matches "" (items ["b", "a"]))))
   , test "moving wraps around" $
       let p = newPicker "t" (items ["a", "b", "c"])
@@ -173,6 +206,7 @@ pickerTests =
   ]
   where
     items = map (\l -> pickerItem l (PickFile (T.unpack l)) "")
+    files = items ["src/Him/Contrib/Magit.hs", "src/Him/Picker.hs", "test/Spec.hs", "README.md"]
     matches' xs q = matches q xs
     head' = \case
       x : _ -> x

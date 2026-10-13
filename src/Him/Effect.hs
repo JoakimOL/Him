@@ -109,7 +109,7 @@ data Job
     -- case), for the global search picker of this generation.
     GrepFiles !Int !Text !WalkOptions !FilePath
   | -- | Rank a large picker's items for a query.
-    FilterPicker !Int !Text !(Seq PickerItem)
+    FilterPicker !Int !Text !(Text, Text) !(Seq PickerItem)
   | -- | Look up a document's file in git (by document id and path).
     GitLoad !Int !FilePath
   | -- | Diff a document version against its git base.

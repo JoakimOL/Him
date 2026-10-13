@@ -40,7 +40,7 @@ actions =
       -- The picker opens at once and fills as the scan streams in (ADR streaming-file-picker).
       gen <- gets edNextId
       modify' (\e -> e {edNextId = gen + 1})
-      open (newPicker "files" []) {pkGeneration = gen, pkLoading = True, pkKeepItems = True}
+      open (newPicker "files" []) {pkGeneration = gen, pkLoading = True, pkKeepItems = True, pkColumns = ("path", "detail")}
       o <- gets edOptions
       request (StartJob (ScanFiles gen (walkOptions o) "."))
   , simple "global_search" GSearch "Search the files of the working directory for text" (globalSearch "")
@@ -49,7 +49,7 @@ actions =
   , simple "buffer_picker" GBuffers "Switch to an open buffer" $ do
       (bs, cur) <- gets buffers
       let label i b = T.pack (show (i + 1)) <> (if i == cur then " * " else "   ") <> displayName (bufDoc b)
-      open ((newPicker "buffers" [pickerItem (label i b) (PickBuffer i) "" | (i, b) <- zip [0 ..] bs]) {pkSelected = cur, pkMarkable = False})
+      open ((newPicker "buffers" [pickerItem (label i b) (PickBuffer i) "" | (i, b) <- zip [0 ..] bs]) {pkSelected = cur, pkMarkable = False, pkColumns = ("path", "detail")})
   , simple "command_palette" GPrompt "List every action with its keys, and run one" (request OpenPalette)
   , simple "picker_close" GPrompt "Close the picker" close
   , simple "picker_accept" GPrompt "The picker's main action on the chosen items (most pickers: open the selected item, or the marked ones)" $
@@ -141,7 +141,7 @@ globalSearch :: T.Text -> EditorM ()
 globalSearch query = do
   gen <- gets edNextId
   modify' (\e -> e {edNextId = gen + 1})
-  openPicker (newPicker "search" []) {pkGeneration = gen, pkSource = GrepQuery, pkKeepItems = True}
+  openPicker (newPicker "search" []) {pkGeneration = gen, pkSource = GrepQuery, pkKeepItems = True, pkColumns = ("path", "line")}
   changeQuery (const query)
 
 -- | Going to a place a picker lists (a file, a buffer, a position in a
@@ -209,7 +209,7 @@ refresh p
   | T.null (pkQuery p) || Seq.length (pkItems p) < syncLimit = setPicker (setQuery (pkQuery p) p) {pkSelected = pkSelected p}
   | otherwise = do
       setPicker p {pkStale = True}
-      request (StartJob (FilterPicker (pkGeneration p) (pkQuery p) (pkItems p)))
+      request (StartJob (FilterPicker (pkGeneration p) (pkQuery p) (pkColumns p) (pkItems p)))
   where
     setPicker p' = modify' (\e -> e {edPicker = Just p'})
 

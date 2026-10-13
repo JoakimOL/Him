@@ -29,6 +29,8 @@ the query, in a picker with a preview.
   0.6 s and the first hits show within about 0.2 s. Reading the files is most of it.
   The editor runs on one capability (no `-N`), so the walk's workers overlap
   I/O but do not search in parallel; `-N4` changed little in a benchmark.
+- **Filtering by path:** `pattern %p words` searches only files whose path matches
+  the words ([ADR picker-query](picker-query.md)).
 - **The selection:** `space '` (and `space *`, next to `*`) opens the picker with the
   primary selection as the query, and makes it the search pattern, so `n` / `N` find
   it in the file a hit opens. A selection spanning lines is refused, as for `*`.
