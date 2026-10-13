@@ -202,6 +202,9 @@ data Editor = Editor
   -- ^ Files read for the picker's preview (while a picker is open).
   , edPicker :: !(Maybe Picker)
   -- ^ The open picker, shown in 'Picking' mode.
+  , edLastPickers :: !(Map Text Picker)
+  -- ^ The last picker of each kind (by title) that was used, for @'@ in a
+  -- picker to bring back (ADR last-picker).
   , edEffects :: ![Effect]
   -- ^ Effects requested by actions, oldest first ("Him.Effect").
   , edNextId :: !Int
@@ -276,6 +279,7 @@ newEditor size doc =
     , edRepaint = False
     , edPreviews = Map.empty
     , edPicker = Nothing
+    , edLastPickers = Map.empty
     , edEffects = []
     , edNextId = 2
     , edLsp = emptyLsp

@@ -42,6 +42,7 @@ stack install                # build and install the built binary
 - **Files, buffers, windows.**
   - `space f` / `space b` pickers with a highlighted preview.
   - `space /` searches the project's files as you type; `space '` searches them for the selection.
+  - `'` in a picker brings back the last one of its kind, so a file search survives a trip through `space b`.
   - A jumplist, as in Helix: `C-o` / `tab`, `C-s` to save a place, `space j` to
     list (and prune) it.
   - `space -` lists the file's directory, `space .` the working one (create, rename, delete).

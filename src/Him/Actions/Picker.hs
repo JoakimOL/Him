@@ -10,6 +10,7 @@ module Him.Actions.Picker
   ) where
 
 import Control.Monad.Trans.State.Strict (get, gets, modify')
+import Control.Monad (when)
 import Data.Foldable (toList)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
@@ -39,7 +40,7 @@ actions =
       -- The picker opens at once and fills as the scan streams in (ADR streaming-file-picker).
       gen <- gets edNextId
       modify' (\e -> e {edNextId = gen + 1})
-      open (newPicker "files" []) {pkGeneration = gen, pkLoading = True}
+      open (newPicker "files" []) {pkGeneration = gen, pkLoading = True, pkKeepItems = True}
       o <- gets edOptions
       request (StartJob (ScanFiles gen (walkOptions o) "."))
   , simple "global_search" GSearch "Search the files of the working directory for text" (globalSearch "")
@@ -84,16 +85,39 @@ actions =
   , simple "picker_unmark" GPrompt "Select the previous item and unmark it (undoes picker_mark)" (onPicker (unmark . moveSelection (-1)))
   , simple "picker_next" GPrompt "Select the next item" (onPicker (moveSelection 1))
   , simple "picker_previous" GPrompt "Select the previous item" (onPicker (moveSelection (-1)))
+  , simple "picker_last" GPrompt "Bring this kind of picker back as it was last used (its query; files and search also their hits, selection and marks). With a query typed, or none to bring back, type '" $
+      gets edPicker >>= \case
+        Just p
+          | T.null (pkQuery p) ->
+              gets (Map.lookup (pkTitle p) . edLastPickers) >>= \case
+                Just old -> bringBack p old
+                Nothing -> pickerInsert '\''
+        _ -> pickerInsert '\''
   , simple "picker_backspace" GPrompt "Delete the last character of the query" $
       changeQuery (T.dropEnd 1)
   ]
   where
     open = openPicker
-    close = do
-      modify' (\e -> e {edPicker = Nothing, edMode = Normal, edPreviews = Map.empty})
-      request (CancelJob ScanJob)
-      request (CancelJob FilterJob)
-      request (CancelJob GrepJob)
+    close = closePicker >> cancelJobs
+
+cancelJobs :: EditorM ()
+cancelJobs = do
+  request (CancelJob ScanJob)
+  request (CancelJob FilterJob)
+  request (CancelJob GrepJob)
+
+-- | Replace the picker that just opened with the last one of its kind (ADR
+-- last-picker): whole when its items keep and were all found, else this
+-- picker's fresh items with its query (and selection, for a list given at once).
+bringBack :: Picker -> Picker -> EditorM ()
+bringBack cur old
+  | pkKeepItems old && not (pkLoading old) && not (pkStale old) = do
+      cancelJobs
+      modify' (\e -> e {edPicker = Just old})
+  | otherwise = do
+      changeQuery (const (pkQuery old))
+      when (pkSource cur == StaticItems) $
+        onPicker (\p -> p {pkSelected = max 0 (min (pkSelected old) (length (pkMatches p) - 1))})
 
 -- | Open the global search with a query. Each query starts a search that
 -- streams its hits in (ADR global-search).
@@ -101,7 +125,7 @@ globalSearch :: T.Text -> EditorM ()
 globalSearch query = do
   gen <- gets edNextId
   modify' (\e -> e {edNextId = gen + 1})
-  openPicker (newPicker "search" []) {pkGeneration = gen, pkSource = GrepQuery}
+  openPicker (newPicker "search" []) {pkGeneration = gen, pkSource = GrepQuery, pkKeepItems = True}
   changeQuery (const query)
 
 -- | Going to a place a picker lists (a file, a buffer, a position in a

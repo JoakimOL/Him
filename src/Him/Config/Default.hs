@@ -281,6 +281,7 @@ pickerBindings =
   , ("S-tab", "picker_unmark")
   , ("backspace", "picker_backspace")
   , ("del", "picker_secondary")
+  , ("'", "picker_last")
   ]
 
 -- | The default bindings, of the core and every plugin. Select mode also

@@ -125,11 +125,15 @@ data Picker = Picker
   -- ^ The action @ret@ runs (by name), on the 'chosenItems'.
   , pkSecondary :: !(Maybe Text)
   -- ^ The action @del@ runs, if the picker has one.
+  , pkKeepItems :: !Bool
+  -- ^ Whether @'@ brings this picker back with its items (they took a scan
+  -- or a search to find), rather than listing them afresh with its query
+  -- (ADR last-picker).
   }
   deriving stock (Eq, Show)
 
 newPicker :: Text -> [PickerItem] -> Picker
-newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty True "picker_open" Nothing)
+newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty True "picker_open" Nothing False)
 
 -- | Items with their ids, counting from n: the ids are their positions
 -- in 'pkItems', so a picker that replaces its items clears 'pkMarked'.

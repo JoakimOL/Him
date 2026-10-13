@@ -98,6 +98,7 @@ there are no numbers, so branches that add decisions do not conflict.
 - [plugin-canvas](adr/plugin-canvas.md): Plugins colour buffers, give them keys, draw canvases and keep time
 - [layout-friendly-keys](adr/layout-friendly-keys.md): Default keys avoid AltGr and dead keys; next / previous live in their menus
 - [key-hints](adr/key-hints.md): Texts that name keys look them up in the running config
+- [last-picker](adr/last-picker.md): `'` in a picker brings back the last picker of its kind
 - [no-test-framework](adr/no-test-framework.md): No test framework
 - [indentation](adr/indentation.md): One level of indentation per document: project, text, language, settings
 
@@ -313,7 +314,7 @@ them in the editor.
 | Select | Normal mode where motions extend; a `:` command runs in select mode and comes back to it; `o` puts the cursor at the selection's other end (as in Vim); `v` / `esc` back; `y` yanks and goes back. |
 | Insert | typing, `ret` (keeps indentation), `tab` (one level, [ADR indentation](adr/indentation.md)), `backspace`, `del`, arrows, `C-r` + a register (insert it), `esc`. |
 | Command line | typing, `tab` (complete names, paths, themes, plugins; again to cycle the candidates), `S-tab` (cycle back), `backspace`, `ret`, `esc`. |
-| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space '` / `space *` (search the files for the selection), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`, `tab` (mark and go down, for `ret`/`del` to act on all marked; not in the buffer picker), `S-tab` (go up and unmark), `ret`, `del` (the picker's second action: the jumplist removes the entry), `esc`. |
+| Buffers, pickers | `g n` / `g p` (next / previous buffer), `space f` (files), `space b` (buffers), `space /` (search the files), `space '` / `space *` (search the files for the selection), `space j` (the jumplist), `space ?` (every action); in a picker: type to filter, `up`/`down`/`C-n`/`C-p`, `tab` (mark and go down, for `ret`/`del` to act on all marked; not in the buffer picker), `S-tab` (go up and unmark), `ret`, `del` (the picker's second action: the jumplist removes the entry), `'` (on an empty query: the last picker of this kind back), `esc`. |
 | Jumplist | `C-o` (back), `C-i` / `tab` (forward), both with a count; `C-s` (save the selection). |
 | Directory listings | `space -` (the file's directory), `space .` (the working directory), `:o dir`; in a listing: `ret`, `u` / `-` / `^` / `backspace` (parent), `g r` (refresh), `a` (new file or `dir/`), `+` (new directory), `r` (rename), `d` (delete, asks), `g .` (dotfiles). |
 | Windows | `C-w` or `space w`, then `v` / `s` (split side by side / stacked), `w` (next), `h j k l` (focus), `H J K L` (swap), `q` (close), `o` (only), `n v` / `n s` (split with a scratch buffer). |
@@ -365,7 +366,7 @@ them in the editor.
 ## 8. Where to pick up
 
 *Last updated 2026-10-13.* Everything the user asked for so far is done. The latest
-work: `space '` searches the files for the selection, and `'` is `*` without Shift; `C-c` toggles comments (line, else block); `<` / `>` indent by a level that comes
+work: `'` in a picker brings back the last one of its kind ([ADR last-picker](adr/last-picker.md)); `space '` searches the files for the selection, and `'` is `*` without Shift; `C-c` toggles comments (line, else block); `<` / `>` indent by a level that comes
 from `.editorconfig`, the file's text or the language ([ADR indentation](adr/indentation.md)); language-server
 settings and initialization options in the config file; `S-tab` in a picker undoes
 `tab`, and the buffer picker does not mark. Before that: plugin canvases ([ADR plugin-canvas](adr/plugin-canvas.md)) with contrib `magit` and `tetris`; a

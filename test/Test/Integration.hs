@@ -395,6 +395,12 @@ openBufferTests = do
   -- space ' searches the files for the selection, which becomes the pattern.
   searchedWord <- keys "m i w space '" start
   searchedLine <- keys "x space '" start
+  -- ' in a picker brings back the last one of its kind.
+  searchBack <- keys "esc space / '" searched
+  searchBackUntouched <- keys "esc space / esc space / '" searched
+  searchQuote <- keys "esc space / a '" searched
+  buffersBack <- keys "space b f a esc space b '" opened
+  buffersQuote <- keys "space b '" opened
   pickedHit <- foldlM run searched [plain KEnter]
   searchStale <- execStateT (handleEvent config (EvJob (GrepFound (maybe 0 pkGeneration (edPicker searched)) "maxHit" [pickerItem "x" (PickFile "x") ""] 1))) searched
   -- listFiles on a small tree with a hidden directory.
@@ -571,6 +577,11 @@ openBufferTests = do
         assertEqual (Just ("search", "alpha"), True, ["alpha"])
           ((\p -> (pkTitle p, pkQuery p)) <$> edPicker searchedWord, any (\case StartJob (GrepFiles _ "alpha" _ _) -> True; _ -> False) (edEffects searchedWord), Map.findWithDefault [] '/' (edRegisters searchedWord))
     , test "space ' refuses a selection spanning lines" (assertEqual (Nothing, Normal) (pkTitle <$> edPicker searchedLine, edMode searchedLine))
+    , test "' in the search picker brings the last search back, hits and all" (assertEqual (edPicker searched, Picking) (edPicker searchBack, edMode searchBack))
+    , test "a picker closed untouched is not remembered" (assertEqual (edPicker searched) (edPicker searchBackUntouched))
+    , test "' after a query is typed" (assertEqual (Just "a'") (pkQuery <$> edPicker searchQuote))
+    , test "' brings the buffer picker's query back over fresh items" (assertEqual (Just ("fa", 1)) ((\p -> (pkQuery p, length (pkMatches p))) <$> edPicker buffersBack))
+    , test "' with nothing to bring back is typed" (assertEqual (Just "'") (pkQuery <$> edPicker buffersQuote))
     , test "space /: hits for another query are dropped" (assertEqual (edPicker searched) (edPicker searchStale))
     , test "space / opens the hit at its line and column" $
         assertEqual ((\case PickPosition f l c _ -> Just (Just f, Pos l c); _ -> Nothing) . piTarget =<< firstHit)

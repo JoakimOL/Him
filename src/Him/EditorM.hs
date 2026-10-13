@@ -20,6 +20,7 @@ module Him.EditorM
   , keyHint
   , keyHints
   , openPicker
+  , closePicker
   , replaceText
   , transcriptKept
   , transcriptMessage
@@ -39,7 +40,9 @@ import Him.Editor
 import Him.Mode (Mode (..))
 import Him.KeyHints (HintScope (..), hintLine, keyOr)
 import Him.Motion (Motion, Movement (..), applyMotion)
-import Him.Picker (Picker)
+import Data.IntSet qualified as IntSet
+import Data.Text qualified as T
+import Him.Picker (Picker (..))
 import Him.Selection (Range (..), Selection, mapRanges, normalize, point)
 
 -- | Actions run with access to the editor state and IO (for files etc.).
@@ -96,7 +99,20 @@ setRegister c vs = modify' (\e -> e {edRegisters = Map.insert c vs (edRegisters 
 -- | Show a picker; its keys take over until it closes (ADR picker-actions: what
 -- choosing does is the picker's 'Him.Picker.pkPrimary' and 'Him.Picker.pkSecondary').
 openPicker :: Picker -> EditorM ()
-openPicker p = modify' (\e -> e {edPicker = Just p, edMode = Picking})
+openPicker p = modify' (\e -> (rememberPicker e) {edPicker = Just p, edMode = Picking})
+
+-- | Close the picker (remembering it, 'rememberPicker'). Its background jobs
+-- are the caller's to cancel.
+closePicker :: EditorM ()
+closePicker = modify' (\e -> (rememberPicker e) {edPicker = Nothing, edMode = Normal, edPreviews = Map.empty})
+
+-- | Keep the open picker for @'@ to bring back (ADR last-picker), unless it
+-- was left untouched (no query, nothing marked): glancing at a picker does
+-- not lose the one before.
+rememberPicker :: Editor -> Editor
+rememberPicker e = case edPicker e of
+  Just p | not (T.null (pkQuery p)) || not (IntSet.null (pkMarked p)) -> e {edLastPickers = Map.insert (pkTitle p) p (edLastPickers e)}
+  _ -> e
 
 request :: Effect -> EditorM ()
 request eff = modify' (\e -> e {edEffects = edEffects e <> [eff]})

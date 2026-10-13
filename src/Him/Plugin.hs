@@ -533,4 +533,4 @@ chosenItems = liftEditor (gets (maybe [] (concatMap item . Picker.chosenItems) .
       _ -> []
 
 closePicker :: PluginM s ()
-closePicker = liftEditor (modify' (\e -> e {edPicker = Nothing, edMode = Normal, edPreviews = Map.empty}))
+closePicker = liftEditor EditorM.closePicker
