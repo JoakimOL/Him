@@ -367,7 +367,7 @@ them in the editor.
 ## 8. Where to pick up
 
 *Last updated 2026-10-13.* Everything the user asked for so far is done. The latest
-work: picker queries as in Helix, with words, fzf atoms and `%column` ([ADR picker-query](adr/picker-query.md)); `C-d` / `C-u` scroll a picker's preview; the case keys moved from `g` (goto) to a `-` menu; `'` in a picker brings back the last one of its kind ([ADR last-picker](adr/last-picker.md)); `space '` searches the files for the selection, and `'` is `*` without Shift; `C-c` toggles comments (line, else block); `<` / `>` indent by a level that comes
+work: picker queries as in Helix, with words, fzf atoms and `%column`, and fuzzy matches that favour word starts ([ADR picker-query](adr/picker-query.md)); `C-d` / `C-u` scroll a picker's preview; the case keys moved from `g` (goto) to a `-` menu; `'` in a picker brings back the last one of its kind ([ADR last-picker](adr/last-picker.md)); `space '` searches the files for the selection, and `'` is `*` without Shift; `C-c` toggles comments (line, else block); `<` / `>` indent by a level that comes
 from `.editorconfig`, the file's text or the language ([ADR indentation](adr/indentation.md)); language-server
 settings and initialization options in the config file; `S-tab` in a picker undoes
 `tab`, and the buffer picker does not mark. Before that: plugin canvases ([ADR plugin-canvas](adr/plugin-canvas.md)) with contrib `magit` and `tetris`; a
