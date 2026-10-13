@@ -42,7 +42,10 @@ import Data.Foldable (toList)
 import Data.IntMap.Strict qualified as IntMap
 import Data.IntSet (IntSet)
 import Data.IntSet qualified as IntSet
-import Data.List (tails)
+import Data.Bits (setBit, testBit, (.|.))
+import Data.Word (Word64)
+import Data.Char (isDigit, isLower, isUpper)
+import Data.List (foldl')
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
@@ -97,11 +100,15 @@ data PickerItem = PickerItem
   , piId :: !Int
   -- ^ Its position among the picker's items (set when it is added), so a
   -- mark stays on it while the query changes.
+  , piStarts :: Integer
+  -- ^ Where words start in the label ('wordStarts'), as bits; lazy, so it is
+  -- worked out once, the first time the item is scored. (Lower-casing
+  -- rarely changes a text's length; where it does, these are a little off.)
   }
   deriving stock (Eq, Show)
 
 pickerItem :: Text -> PickTarget -> Text -> PickerItem
-pickerItem label target detail = PickerItem label target detail key (T.takeWhileEnd (/= '/') key) (T.length label) 0
+pickerItem label target detail = PickerItem label target detail key (T.takeWhileEnd (/= '/') key) (T.length label) 0 (wordStarts label)
   where
     key = T.toLower label
 
@@ -341,14 +348,15 @@ atomScore item a = case atColumn a of
     | otherwise -> maybe ((+ 100000) <$> inDetail) Just inLabel
   where
     verdict m = if atNegated a then maybe (Just 0) (const Nothing) m else m
-    inLabel = matchAtom a (piKey item)
-    inDetail = if T.null (piDetail item) then Nothing else matchAtom a (T.toLower (piDetail item))
+    inLabel = matchAtom a (piKey item) (piStarts item)
+    inDetail = if T.null (piDetail item) then Nothing else matchAtom a (T.toLower (piDetail item)) (wordStarts (piDetail item))
 
--- | Whether an atom's text matches a lower-case key, and its score.
-matchAtom :: Atom -> Text -> Maybe Int
-matchAtom a key = case atKind a of
+-- | Whether an atom's text matches a lower-case key (with its word starts),
+-- and its score.
+matchAtom :: Atom -> Text -> Integer -> Maybe Int
+matchAtom a key starts = case atKind a of
   Fuzzy
-    | inOrder t key -> Just (if T.length t == 1 then 0 else bestSkips (T.unpack t) (T.unpack key))
+    | inOrder t key -> Just (matchCost (T.unpack t) starts (T.unpack key))
     | otherwise -> Nothing
   Substring -> hit (t `T.isInfixOf` key)
   Prefix -> hit (t `T.isPrefixOf` key)
@@ -392,28 +400,75 @@ inOrder q key = case T.uncons q of
     Nothing -> False
 
 -- | Lower is better; 'Nothing' if the query's characters do not all occur
--- in order. The score is the number of characters skipped between the
--- first and the last matched one, so contiguous matches win ('matches'
--- breaks ties by the shorter label). Case is ignored.
+-- in order. Case is ignored. The score is 'matchCost'.
 fuzzyScore :: Text -> Text -> Maybe Int
 fuzzyScore query label
-  | inOrder q key = Just (bestSkips (T.unpack q) (T.unpack key))
+  | inOrder q key = Just (matchCost (T.unpack q) (wordStarts label) (T.unpack key))
   | otherwise = Nothing
   where
     q = T.toLower query
     key = T.toLower label
 
--- | For a query known to match in order: the fewest characters skipped,
--- trying each place the first character occurs.
-bestSkips :: String -> String -> Int
-bestSkips [] _ = 0
-bestSkips qs@(q0 : _) key = minimum (maxBound : [s | t@(c : _) <- tails key, c == q0, Just s <- [skips qs t 0]])
+-- | What a run of matched characters costs when it starts inside a word
+-- (ADR picker-query): more than a few skipped characters, so @lp@ prefers
+-- @last-picker@ to @help@.
+runPenalty :: Int
+runPenalty = 8
+
+-- | Where words start in a text, as bits (bit i for character i): the first
+-- character, one after @/ - _ .@ or a space, an upper-case letter after a
+-- lower-case one, and a digit after a non-digit. One pass, in a machine word
+-- for the first 64 characters.
+wordStarts :: Text -> Integer
+wordStarts t = case T.foldl' step (Starts 0 ' ' 0 0) t of
+  Starts _ _ low high -> high .|. toInteger low
   where
-    skips [] _ cost = Just cost
-    skips _ [] _ = Nothing
-    skips (q : qt) (c : ct) cost
-      | q == c = skips qt ct cost
-      | otherwise = skips (q : qt) ct (cost + 1)
+    step (Starts i prev low high) c
+      | not (start prev c) = Starts (i + 1) c low high
+      | i < 64 = Starts (i + 1) c (setBit low i) high
+      | otherwise = Starts (i + 1) c low (setBit high i)
+    start prev c =
+      prev == '/' || prev == '-' || prev == '_' || prev == '.' || prev == ' '
+        || (isUpper c && isLower prev)
+        || (isDigit c && not (isDigit prev))
+
+data Starts = Starts !Int !Char !Word64 !Integer
+
+-- | For a query known to match in order: the lowest cost of a match, where
+-- every character skipped between the first and the last matched one costs
+-- 1 and every run of matched characters that does not start a word costs
+-- 'runPenalty'. One row per query character over the key (the cheapest way
+-- to have matched up to it with it at each position), so a match can pick
+-- word starts rather than the first occurrences.
+matchCost :: String -> Integer -> String -> Int
+matchCost [] _ _ = 0
+matchCost [q0] starts key = single 0 key
+  where
+    single !i = \case
+      [] -> runPenalty
+      c : rest
+        | c == q0 && testBit starts i -> 0
+        | otherwise -> single (i + 1) rest
+matchCost (q0 : qs) starts key0 = foldl' min inf (foldl' row first qs)
+  where
+    inf = maxBound `div` 4
+    penalty i = if testBit starts i then 0 else runPenalty
+    -- Nothing before the first occurrence of the first character can match.
+    skipped = length (takeWhile (/= q0) key0)
+    key = drop skipped key0
+    first = [let !v = if c == q0 then penalty i else inf in v | (i, c) <- zip [skipped ..] key]
+    -- At position i: 'before' is the last row's cost at i - 1 (going on
+    -- with the run), 'best' the least of its cost at j minus j for
+    -- j <= i - 2 (a new run after a gap of i - j - 1).
+    row prev q = go skipped inf inf key prev
+      where
+        go !i !best !before (c : rest) (p : ps) =
+          let !here
+                | c /= q = inf
+                | otherwise = min inf (min before (best + i - 1 + penalty i))
+              !best' = if i > skipped then min best (before - (i - 1)) else best
+           in here : go (i + 1) best' p rest ps
+        go _ _ _ _ _ = []
 
 selectedItem :: Picker -> Maybe PickerItem
 selectedItem p = case drop (pkSelected p) (pkMatches p) of

@@ -142,8 +142,18 @@ exTests =
 
 pickerTests :: [Test]
 pickerTests =
-  [ test "fuzzy: characters in order" (assertEqual (Just 0, Just 2, Nothing) (fuzzyScore "ab" "xaby", fuzzyScore "ab" "axxb", fuzzyScore "ba" "ab"))
-  , test "fuzzy: the best start wins" (assertEqual (Just 0) (fuzzyScore "ab" "a_xab"))
+  [ test "fuzzy: characters in order; a skipped character costs 1, a run inside a word 8" $
+      assertEqual (Just 8, Just 10, Just 0, Nothing) (fuzzyScore "ab" "xaby", fuzzyScore "ab" "axxb", fuzzyScore "ab" "x-ab", fuzzyScore "ba" "ab")
+  , test "fuzzy: the best start wins" (assertEqual (Just 0) (fuzzyScore "ab" "a_x_ab"))
+  , test "fuzzy: word starts after / - _ . and in camelCase" $
+      assertEqual (Just 4, Just 2, Just 3) (fuzzyScore "lp" "last-picker", fuzzyScore "gd" "getDoc", fuzzyScore "hc" "him/cbits")
+  , test "fuzzy: a match picks word starts over the first occurrences" $
+      assertEqual (Just 4) (fuzzyScore "lp" "help/last-picker")
+  , test "word starts rank first: lsp" $
+      assertEqual ["src/Him/Lsp.hs", "docs/adr/lsp-client.md", "docs/adr/last-picker.md"]
+        (map piLabel (matches "lsp" (items ["docs/adr/last-picker.md", "docs/adr/lsp-client.md", "src/Him/Lsp.hs"])))
+  , test "word starts rank first: an abbreviation" $
+      assertEqual ["docs/adr/last-picker.md", "help.md"] (map piLabel (matches "lp" (items ["help.md", "docs/adr/last-picker.md"])))
   , test "fuzzy: case is ignored" (assertEqual (Just 0) (fuzzyScore "SPEC" "test/Spec.hs"))
   , test "matches: best first, shorter on ties" $
       assertEqual ["src/ab.hs", "a/b.hs", "src/a/long/b.hs"] (map piLabel (matches "ab" (items ["src/a/long/b.hs", "a/b.hs", "src/ab.hs", "xyz"])))

@@ -3,8 +3,18 @@
 The user asked to type several words they know are in a path (`src him magit .hs`)
 and to filter by column with `%p`, as in Helix.
 - **Words:** spaces separate words, and every word must match, in any order. An
-  item's score is the sum of its words' scores (fewest characters skipped), then the
-  usual tie-breaks (an exact first word, the shorter label).
+  item's score is the sum of its words' scores, then the usual tie-breaks (an exact
+  first word, the shorter label).
+- **Word starts:** a fuzzy word's score is its cheapest match. Every character skipped
+  between the first and last matched one costs 1, and every run of matched characters
+  that starts inside a word costs 8 (`runPenalty`). A word starts at the first character,
+  after `/ - _ .` or a space, at an upper-case letter after a lower-case one, and at a digit
+  after a non-digit. So `lsp` puts `Lsp.hs` and `lsp-client.md` before `last-picker.md`,
+  and `lp` puts `last-picker` before `help`. It works like fzf's and Helix's bonuses,
+  but as a cost. A small dynamic-programming pass (one row per query character)
+  finds the cheapest match, so it can choose word starts over first occurrences. An item's
+  word starts are worked out once, lazily, as bits (`piStarts`). LSP completion
+  (`fuzzyScore`) ranks the same way, which also favours camelCase starts.
 - **Atoms** (fzf's, which Helix uses through nucleo): `word` fuzzy, `'word` a
   substring, `^word` a prefix, `word$` a suffix, `^word$` the whole text. `!` in front
   of any of them excludes the items that match. A word that is only `!` or `'` filters
@@ -23,8 +33,11 @@ and to filter by column with `%p`, as in Helix.
   makes a search faster. `printf("%p")` is still a pattern because the `%` follows a
   `(`, and `\%p` makes it plain. The pattern comes first: `%p src foo` searches
   nothing, since the pattern is empty.
-- **Cost:** a one-word query does the same work as before. On 50k files (`/usr/include`)
-  queries took 9 to 15 ms, against 9 to 14 ms before.
+- **Cost:** on 50k files (`/usr/include`, `bench/PickerBench.hs`), queries take 21 to
+  25 ms, against 13 to 16 ms with the plain skip count. Lists that large filter in a
+  background job (ADR streaming-file-picker), and a project of a few thousand files
+  takes a millisecond or two. Lazy, cached `piStarts`, and a one-pass bit scan instead of
+  lists, brought the pass down from 46 to 56 ms.
 - **`'` first:** on an empty query, `'` still brings back the last picker ([ADR last-picker](last-picker.md)).
   To start with a substring word, type another word first (the order of words
   doesn't matter).
