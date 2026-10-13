@@ -284,6 +284,8 @@ pickerBindings =
   , ("'", "picker_last")
   , ("C-d", "picker_preview_down")
   , ("C-u", "picker_preview_up")
+  , ("pagedown", "picker_preview_down")
+  , ("pageup", "picker_preview_up")
   ]
 
 -- | The default bindings, of the core and every plugin. Select mode also

@@ -117,6 +117,7 @@ integrationTests = do
   previewEnd <- typeKeys (T.unwords ("space b" : replicate 40 "C-d")) (start long)
   previewBack <- typeKeys "space b C-d C-u C-u" (start long)
   previewRequeried <- typeKeys "space b C-d s" (start long)
+  previewPaged <- typeKeys "space b pagedown pagedown pageup" (start long)
   nothingToUndo <- typeKeys "u" (start "abc")
   pasteLineBelow <- textAfter "one\ntwo\nthree" "x y j p"
   movedLine <- textAfter "a\nb\nc" "x d p"
@@ -254,6 +255,7 @@ integrationTests = do
     , test "C-d scrolls the picker's preview by half pages" (assertEqual (Just 14) (scrollOf previewDown))
     , test "the preview stops where the file's end is in view" (assertEqual (Just 186) (scrollOf previewEnd))
     , test "C-u scrolls it back, not past the start" (assertEqual (Just 0) (scrollOf previewBack))
+    , test "pagedown / pageup scroll the preview too" (assertEqual (Just 7) (scrollOf previewPaged))
     , test "a new query shows the preview from the start" (assertEqual (Just 0) (scrollOf previewRequeried))
     , test "nothing to undo is reported" (assertEqual (Just (Status Info "nothing to undo")) (edStatus nothingToUndo))
     , test "p pastes a yanked line below" (assertEqual "one\ntwo\none\nthree" pasteLineBelow)

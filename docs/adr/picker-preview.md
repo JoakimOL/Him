@@ -13,7 +13,7 @@
   for its first 20000 lines.
 - **What is not shown:** binary files (a NUL in the first 8 KB) and files over 20 MB
   show a note instead.
-- **Scrolling:** `C-d` / `C-u` move the preview by half its height. It starts a third
+- **Scrolling:** `C-d` / `C-u` (and `pagedown` / `pageup`) move the preview by half its height. It starts a third
   of the way above the item's line and stops once the file's end is in view
   (`previewTop` in `Him.Picker`, shared with the renderer; the box's size follows from
   the terminal's alone, so the keys know the page). The scroll belongs to one item
