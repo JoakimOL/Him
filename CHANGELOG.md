@@ -8,6 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
+- The case keys moved from the goto menu to a `-` (case) menu: `- l` lower, `- u` upper, `- s` swap.
 - `'` in a picker, before typing a query, brings back the last picker of the same kind (`picker_last`): files and search with their hits, selection and marks, others with their query over fresh items. A picker closed untouched does not replace the kept one ([ADR last-picker](docs/adr/last-picker.md)).
 - `space '` (also `space *`) searches the project's files for the selection (`global_search_selection`); it becomes the search pattern too, so `n` / `N` find it in the file you open. `'` searches for the selection like `*` (both stay), unshifted on Nordic and US layouts.
 - A `:` command typed in select mode runs in select mode and comes back to it, as in Helix; `:format` there formats the selection (as `=`).
@@ -17,7 +18,7 @@ and this project adheres to the
 - `<` / `>` unindent / indent the selected lines (`unindent`, `indent`, with a count). One level is the project's (`.editorconfig`), else the file's (detected), else the language's, else `tab-width` / `expand-tab`; `tab` in insert mode uses it too ([ADR indentation](docs/adr/indentation.md)).
 - `C-c` comments or uncomments the selected lines (`toggle_comments`): line comments where the language has them, else a block comment around each selection. `toggle_line_comments` and `toggle_block_comments` choose. Languages know their block comments too.
 - In a picker, `S-tab` goes up and unmarks (it undoes `tab`, `picker_unmark`). The buffer picker cannot mark; `tab` only moves there.
-- Case: `g u` lower case, `g U` upper case, `g s` swaps (`to_lower`, `to_upper`, `swap_case`), on every selection.
+- Case: `g u` lower case, `g U` upper case, `g s` swaps (since moved to `- l`, `- u`, `- s`) (`to_lower`, `to_upper`, `swap_case`), on every selection.
 - The picker's preview is highlighted.
 - Plugin API (version 2): highlights over a buffer's text, keymaps of a plugin's own for its buffers, a canvas in the middle of the screen with its own keys, and timers ([ADR plugin-canvas](docs/adr/plugin-canvas.md)).
 - Contrib plugins `magit` (`space g g`: a magit-like status buffer to stage, unstage and commit files, hunks and selected lines) and `tetris` (`:tetris`).

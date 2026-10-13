@@ -71,9 +71,9 @@ integrationTests = do
   wordDelete <- textAfter "hello world" "w d"
   lineDelete <- textAfter "one\ntwo\nthree" "j x d"
   lineTwice <- textAfter "one\ntwo\nthree" "x x d"
-  lowered <- textAfter "Hello World\nKeep" "x g u"
-  uppered <- textAfter "Hello wörld" "w w g U"
-  swapped <- textAfter "Hello World" "x g s"
+  lowered <- textAfter "Hello World\nKeep" "x - l"
+  uppered <- textAfter "Hello wörld" "w w - u"
+  swapped <- textAfter "Hello World" "x - s"
   let inFile path t ks = B.toText . docBuffer . edDoc <$> typeKeys ks (newEditor (24, 80) (newDocument (Just path) (buf t)))
   commented <- inFile "a.hs" "main = pure ()\nx" "x C-c"
   uncommented <- inFile "a.hs" "main = pure ()\nx" "x C-c C-c"
@@ -88,7 +88,7 @@ integrationTests = do
   joinedTwice <- textAfter "a\nb\nc" "J J"
   joinSelection <- selectionAfter "ab\n  cd\nef" "x x J"
   joinSpaces <- selectionAfter "ab\n  cd" "A-J"
-  casedEach <- textAfter "ab ab" "% s a ret g U"
+  casedEach <- textAfter "ab ab" "% s a ret - u"
   selectLines <- selectionAfter "one\ntwo\nthree" "l v j x"
   selectLinesUp <- selectionAfter "one\ntwo\nthree" "j l v k x"
   extendLines <- selectionAfter "one\ntwo\nthree" "l v j X"
@@ -208,9 +208,9 @@ integrationTests = do
     , test "w d deletes a word and its blanks" (assertEqual "world" wordDelete)
     , test "x d deletes a line" (assertEqual "one\nthree" lineDelete)
     , test "x x d deletes two lines" (assertEqual "three" lineTwice)
-    , test "g u makes the selection lower case" (assertEqual "hello world\nKeep" lowered)
-    , test "g U makes the selection upper case (beyond ASCII too)" (assertEqual "Hello WÖRLD" uppered)
-    , test "g s swaps the case" (assertEqual "hELLO wORLD" swapped)
+    , test "- l makes the selection lower case" (assertEqual "hello world\nKeep" lowered)
+    , test "- u makes the selection upper case (beyond ASCII too)" (assertEqual "Hello WÖRLD" uppered)
+    , test "- s swaps the case" (assertEqual "hELLO wORLD" swapped)
     , test "C-c toggles line comments" (assertEqual ("-- main = pure ()\nx", "main = pure ()\nx") (commented, uncommented))
     , test "C-c uses a block comment where there are no line comments" (assertEqual "/* a {} */" blockCommented)
     , test "C-c without a language changes nothing" (assertEqual "a" noLanguage)
