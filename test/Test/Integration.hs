@@ -109,6 +109,14 @@ integrationTests = do
   undoChange <- textAfter "foo bar" "e c x esc u"
   undoTwice <- textAfter "a\nb\nc" "x d x d u"
   undoClean <- typeKeys "i x esc u" (start "abc")
+  -- C-d / C-u scroll a picker's preview (15 rows at 24x80) by half pages;
+  -- the text has 201 lines (the last one empty).
+  let long = T.unlines (map (T.pack . show) [1 .. 200 :: Int])
+      scrollOf = fmap previewOffset . edPicker
+  previewDown <- typeKeys "space b C-d C-d" (start long)
+  previewEnd <- typeKeys (T.unwords ("space b" : replicate 40 "C-d")) (start long)
+  previewBack <- typeKeys "space b C-d C-u C-u" (start long)
+  previewRequeried <- typeKeys "space b C-d s" (start long)
   nothingToUndo <- typeKeys "u" (start "abc")
   pasteLineBelow <- textAfter "one\ntwo\nthree" "x y j p"
   movedLine <- textAfter "a\nb\nc" "x d p"
@@ -243,6 +251,10 @@ integrationTests = do
     , test "u undoes a change (c + typing) at once" (assertEqual "foo bar" undoChange)
     , test "u undoes one step at a time" (assertEqual "b\nc" undoTwice)
     , test "undo back to the saved text is not dirty" (assertEqual False (docDirty (edDoc undoClean)))
+    , test "C-d scrolls the picker's preview by half pages" (assertEqual (Just 14) (scrollOf previewDown))
+    , test "the preview stops where the file's end is in view" (assertEqual (Just 186) (scrollOf previewEnd))
+    , test "C-u scrolls it back, not past the start" (assertEqual (Just 0) (scrollOf previewBack))
+    , test "a new query shows the preview from the start" (assertEqual (Just 0) (scrollOf previewRequeried))
     , test "nothing to undo is reported" (assertEqual (Just (Status Info "nothing to undo")) (edStatus nothingToUndo))
     , test "p pastes a yanked line below" (assertEqual "one\ntwo\none\nthree" pasteLineBelow)
     , test "x d p moves a line down" (assertEqual "b\na\nc" movedLine)

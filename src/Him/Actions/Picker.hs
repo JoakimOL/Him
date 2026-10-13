@@ -93,12 +93,28 @@ actions =
                 Just old -> bringBack p old
                 Nothing -> pickerInsert '\''
         _ -> pickerInsert '\''
+  , simple "picker_preview_down" GPrompt "Scroll the preview down half a page" (scrollPreview 1)
+  , simple "picker_preview_up" GPrompt "Scroll the preview up half a page" (scrollPreview (-1))
   , simple "picker_backspace" GPrompt "Delete the last character of the query" $
       changeQuery (T.dropEnd 1)
   ]
   where
     open = openPicker
     close = closePicker >> cancelJobs
+
+-- | Scroll the selected item's preview by half pages, as far as the file goes.
+scrollPreview :: Int -> EditorM ()
+scrollPreview dir = do
+  ed <- get
+  case edPicker ed of
+    Just p
+      | Just item <- selectedItem p
+      , Just (_, Right (buf, line, _)) <- previewFor ed (piTarget item) -> do
+          let rows = previewRows (edSize ed)
+              top = previewTop rows line (Buffer.lineCount buf)
+              moved = top (previewOffset p + dir * max 1 (rows `div` 2))
+          onPicker (\q -> q {pkPreviewScroll = (piId item, moved - top 0)})
+    _ -> pure ()
 
 cancelJobs :: EditorM ()
 cancelJobs = do
@@ -165,7 +181,10 @@ changeQuery :: (T.Text -> T.Text) -> EditorM ()
 changeQuery f =
   gets edPicker >>= \case
     Nothing -> pure ()
-    Just p -> case pkSource p of
+    -- A new query starts the preview over (the ids may name other items).
+    Just p0 -> changeQueryOf p0 {pkPreviewScroll = (-1, 0)}
+  where
+    changeQueryOf p = case pkSource p of
       StaticItems -> refresh p {pkQuery = query, pkSelected = 0}
       -- The server filters: ask again, keep showing the last answer.
       ServerQuery server -> do

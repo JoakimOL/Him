@@ -282,6 +282,8 @@ pickerBindings =
   , ("backspace", "picker_backspace")
   , ("del", "picker_secondary")
   , ("'", "picker_last")
+  , ("C-d", "picker_preview_down")
+  , ("C-u", "picker_preview_up")
   ]
 
 -- | The default bindings, of the core and every plugin. Select mode also

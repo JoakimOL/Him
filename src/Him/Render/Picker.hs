@@ -21,7 +21,7 @@ box :: Rect -> Rect
 box (Rect r c h w) = Rect (r + top) (c + left) bh bw
   where
     bw = max 10 (min w (max 40 (w * 4 `div` 5)))
-    bh = max 4 (min h (max 8 (h * 4 `div` 5)))
+    bh = boxHeight h
     left = (w - bw) `div` 2
     top = (h - bh) `div` 2
 
@@ -78,12 +78,12 @@ drawPicker theme ed area f = case edPicker ed of
               (\fr (j, (i, item)) -> if T.null (piDetail item) then fr else putText (top + 2 + j) detailCol (detailStyle i) (T.take (left + 1 + inner - detailCol) (piDetail item)) fr)
               withLabels
               (zip [0 ..] visible)
-          withPreview = maybe withItems (drawPreview top left h w inner withItems) preview
+          withPreview = maybe withItems (drawPreview p top left h w inner withItems) preview
        in forgetRows top h withPreview
 
     -- The preview: right of a divider, the file around the target line
     -- (highlighted), with line numbers; or why there is nothing to show.
-    drawPreview top left h w listInner fr (title, content) =
+    drawPreview p top left h w listInner fr (title, content) =
       let divider = left + 1 + listInner
           col = divider + 1
           pw = left + w - 1 - col
@@ -94,7 +94,7 @@ drawPicker theme ed area f = case edPicker ed of
        in case content of
             Left why -> putText (top + 1) (col + 1) (themePopup theme) {styleFg = styleFg (themePopupDetail theme)} (T.take (pw - 1) why) titled
             Right (buf, line, spans) ->
-              let firstLine = max 0 (line - rows `div` 3)
+              let firstLine = previewTop rows line (Buffer.lineCount buf) (previewOffset p)
                   numberW = length (show (firstLine + rows))
                   shown =
                     [ (r, l, Buffer.lineAt l buf)

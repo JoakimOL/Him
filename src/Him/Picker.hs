@@ -24,6 +24,10 @@ module Him.Picker
   , syncLimit
   , fuzzyScore
   , labelWidth
+  , boxHeight
+  , previewRows
+  , previewTop
+  , previewOffset
   ) where
 
 import Data.Foldable (toList)
@@ -125,6 +129,9 @@ data Picker = Picker
   -- ^ The action @ret@ runs (by name), on the 'chosenItems'.
   , pkSecondary :: !(Maybe Text)
   -- ^ The action @del@ runs, if the picker has one.
+  , pkPreviewScroll :: !(Int, Int)
+  -- ^ How many lines the preview is scrolled from where it starts, and the
+  -- item ('piId') that is for; another selected item shows from the start.
   , pkKeepItems :: !Bool
   -- ^ Whether @'@ brings this picker back with its items (they took a scan
   -- or a search to find), rather than listing them afresh with its query
@@ -133,7 +140,30 @@ data Picker = Picker
   deriving stock (Eq, Show)
 
 newPicker :: Text -> [PickerItem] -> Picker
-newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty True "picker_open" Nothing False)
+newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty True "picker_open" Nothing (-1, 0) False)
+
+-- | The picker box's height in an area of the given height (most of it).
+boxHeight :: Int -> Int
+boxHeight h = max 4 (min h (max 8 (h * 4 `div` 5)))
+
+-- | The preview's text rows for a terminal size: the box over all but the
+-- last two rows (the status and command lines), less its borders.
+previewRows :: (Int, Int) -> Int
+previewRows (rows, _) = boxHeight (max 0 (rows - 2)) - 2
+
+-- | The first line the preview shows: a third of the way above the target
+-- line, moved by the scroll, and kept between the file's start and the
+-- point where its end is in view.
+previewTop :: Int -> Int -> Int -> Int -> Int
+previewTop rows line count scroll = max 0 (min (max start (count - rows)) (start + scroll))
+  where
+    start = max 0 (line - rows `div` 3)
+
+-- | The selected item's preview scroll.
+previewOffset :: Picker -> Int
+previewOffset p = case selectedItem p of
+  Just item | piId item == fst (pkPreviewScroll p) -> snd (pkPreviewScroll p)
+  _ -> 0
 
 -- | Items with their ids, counting from n: the ids are their positions
 -- in 'pkItems', so a picker that replaces its items clears 'pkMarked'.

@@ -13,6 +13,14 @@
   for its first 20000 lines.
 - **What is not shown:** binary files (a NUL in the first 8 KB) and files over 20 MB
   show a note instead.
+- **Scrolling:** `C-d` / `C-u` move the preview by half its height. It starts a third
+  of the way above the item's line and stops once the file's end is in view
+  (`previewTop` in `Him.Picker`, shared with the renderer; the box's size follows from
+  the terminal's alone, so the keys know the page). The scroll belongs to one item
+  (`pkPreviewScroll` holds its `piId`), so selecting another item shows that one from its
+  start, and a new query starts over too, since ids can then name other items. The
+  keys mean half a page in normal mode as well, and letters cannot be used because
+  they go into the query.
 - **Drawing:** the box keeps one border, with a divider between the list and the
   preview; the preview's rows are dropped from the row cache, like every popup.
 
