@@ -13,6 +13,8 @@ module Him.Native
   , countNewlines
   , findForward
   , findBackward
+  , LineHit (..)
+  , grepLines
   ) where
 
 import Data.Text.Array qualified as A
@@ -34,6 +36,9 @@ foreign import ccall unsafe "him_line_starts"
 
 foreign import ccall unsafe "him_find_forward"
   c_findForward :: ByteArray# -> CSize -> CSize -> ByteArray# -> CSize -> CSize -> CInt -> CPtrdiff
+
+foreign import ccall unsafe "him_grep_lines"
+  c_grepLines :: ByteArray# -> CSize -> CSize -> ByteArray# -> CSize -> CSize -> CInt -> CSize -> CSize -> MutableByteArray# RealWorld -> CSize -> IO CSize
 
 foreign import ccall unsafe "him_find_backward"
   c_findBackward :: ByteArray# -> CSize -> CSize -> ByteArray# -> CSize -> CSize -> CInt -> CPtrdiff
@@ -76,3 +81,37 @@ findBackward fold (Text (A.ByteArray narr) noff nlen) (Text (A.ByteArray harr) h
 result :: CPtrdiff -> Maybe Int
 result r = if r < 0 then Nothing else Just (fromIntegral r)
 
+
+-- | A line that contains a needle: its number (from 0) and byte offsets,
+-- relative to the text, of its start, the first match on it, and its end
+-- (its line break, or the text's length).
+data LineHit = LineHit
+  { lhLine :: !Int
+  , lhStart :: !Int
+  , lhMatch :: !Int
+  , lhEnd :: !Int
+  }
+  deriving stock (Eq, Show)
+
+-- | The lines of a text that contain a needle, in order ('findForward''s
+-- @fold@). Found by C a chunk of lines at a time, lazily.
+grepLines :: Bool -> Text -> Text -> [LineHit]
+grepLines fold (Text (A.ByteArray narr) noff nlen) (Text (A.ByteArray harr) hoff hlen) = go 0 0
+  where
+    chunk = 1024
+    go from line = unsafeDupablePerformIO $ IO $ \s0 ->
+      let !(I# bytes) = 4 * 8 * chunk
+       in case newByteArray# bytes s0 of
+            (# s1, mba #) ->
+              let IO run = c_grepLines harr (fromIntegral hoff) (fromIntegral hlen) narr (fromIntegral noff) (fromIntegral nlen) (if fold then 1 else 0) (fromIntegral from) (fromIntegral line) mba (fromIntegral chunk)
+               in case run s1 of
+                    (# s2, written #) -> case unsafeFreezeByteArray# mba s2 of
+                      (# s3, ba #) ->
+                        let at (I# i) = I# (indexIntArray# ba i)
+                            n = fromIntegral written
+                            hits = [LineHit (at (4 * i)) (at (4 * i + 1)) (at (4 * i + 2)) (at (4 * i + 3)) | i <- [0 .. n - 1]]
+                            final = last hits
+                            rest
+                              | n < chunk || lhEnd final >= hlen = []
+                              | otherwise = go (lhEnd final + 1) (lhLine final + 1)
+                         in (# s3, hits <> rest #)

@@ -175,3 +175,57 @@ ptrdiff_t him_find_backward(const uint8_t *harr, size_t hoff, size_t hlen,
     }
     return -1;
 }
+
+/* The lines of the haystack, from byte `from` (a line start, numbered
+ * `line`), that contain the needle: for each, four entries in out (line
+ * number, line start, first match, line end: its '\n' or hlen). Stops after
+ * cap lines and returns how many it wrote; the caller goes on from the last
+ * line's end + 1. The anchor byte is chosen once per call, not once per
+ * match as with him_find_forward in a loop. */
+size_t him_grep_lines(const uint8_t *harr, size_t hoff, size_t hlen,
+                      const uint8_t *narr, size_t noff, size_t nlen, int fold,
+                      size_t from, size_t line, size_t *out, size_t cap)
+{
+    const uint8_t *h = harr + hoff, *n = narr + noff, *end = h + hlen;
+    if (nlen == 0 || nlen > hlen)
+        return 0;
+    size_t k = fold ? rarest(h, hlen, n, nlen, fold) : 0;
+    const uint8_t a = n[k], b = fold ? upper(n[k]) : n[k];
+    const uint8_t *s = h + from;     /* where the next match may start */
+    const uint8_t *ls = s;           /* start of the line s is on */
+    size_t written = 0;
+    while (written < cap && s <= end - nlen) {
+        const uint8_t *m = NULL;
+        if (!fold) {
+            m = memmem(s, end - s, n, nlen);
+        } else {
+            const uint8_t *p = s + k, *last = end - nlen + k + 1;
+            while ((p = find2(p, last, a, b)) != NULL) {
+                if (equal_at(p - k, n, nlen, fold)) {
+                    m = p - k;
+                    break;
+                }
+                p++;
+            }
+        }
+        if (m == NULL)
+            break;
+        line += him_count_byte(s, 0, m - s, '\n');
+        const uint8_t *nl = m > s ? memrchr(s, '\n', m - s) : NULL;
+        if (nl != NULL)
+            ls = nl + 1;
+        const uint8_t *le = memchr(m, '\n', end - m);
+        if (le == NULL)
+            le = end;
+        out[4 * written + 0] = line;
+        out[4 * written + 1] = ls - h;
+        out[4 * written + 2] = m - h;
+        out[4 * written + 3] = le - h;
+        written++;
+        if (le == end)
+            break;
+        line++;
+        s = ls = le + 1;
+    }
+    return written;
+}

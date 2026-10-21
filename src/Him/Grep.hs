@@ -34,18 +34,13 @@ data Hit = Hit
 
 -- | The lines of a text that contain the needle, in order.
 grepText :: Needle -> Text -> [Hit]
-grepText n = go 0
+grepText n t = map hit (Native.grepLines (needleFold n) (needleText n) t)
   where
-    go line t = case Native.findForward (needleFold n) (needleText n) t of
-      Nothing -> []
-      Just off ->
-        let before = takeWord8 off t
-            after = dropWord8 off t
-            line' = line + Native.countNewlines before
-            start = T.takeWhileEnd (/= '\n') before
-            (end, rest) = T.break (== '\n') after
-            text = start <> (if T.isSuffixOf "\r" end then T.dropEnd 1 end else end)
-         in Hit line' (T.length start) (T.copy (T.take maxHitText text)) : go (line' + 1) (T.drop 1 rest)
+    slice from to = takeWord8 (to - from) (dropWord8 from t)
+    hit (Native.LineHit line start match end) =
+      let text = slice start end
+          text' = if T.isSuffixOf "\r" text then T.dropEnd 1 text else text
+       in Hit line (T.length (slice start match)) (T.copy (T.take maxHitText text'))
 
 -- | Longer lines are cut (minified files).
 maxHitText :: Int

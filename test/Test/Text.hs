@@ -20,7 +20,9 @@ import Data.Text (Text)
 import Him.Buffer qualified as B
 import Him.Comment (toggleBlockComments, toggleLineComments)
 import Him.Edit
-import Him.Search (Direction (..), Match (..), compileNeedle, findMatch, selectMatches)
+import Him.Search (Direction (..), Match (..), compileNeedle, findMatch, needleFold, needleText, selectMatches)
+import Him.Native (findForward)
+import Data.Text.Unsafe (takeWord8)
 import Him.History qualified as H
 import Him.Regex
 import Him.Grep (Hit (..), grepText, maxHitText)
@@ -155,11 +157,33 @@ searchTests =
       assertEqual [(1, 1, "xABC")] (grep_ "ABC" "abc\r\nxABC\r\nabc\r\n")
   , test "global search: long lines are cut" $
       assertEqual [maxHitText] (map (\(_, _, t) -> T.length t) (grep_ "x" (T.replicate 1000 "x")))
+  , test "global search: thousands of hits (several C calls)" $
+      assertEqual ([0 .. 2999], 2999) (map (\(l, _, _) -> l) (grep_ "ab" (T.replicate 3000 "x Ab\n")), length (grep_ "ab" (T.replicate 2999 "x Ab\n" <> "none")))
+  , test "global search: 500 random texts match a line-by-line search" (randomGreps 500)
   ]
   where
     grep_ q t = [(hitLine h, hitColumn h, hitText h) | n <- maybe [] pure (compileNeedle True q), h <- grepText n t]
     findIn t p pos = compileNeedle True p >>= \n -> findMatch True Forward n (buf t) pos
     alphabet = "aAbB é漢\t" :: String
+    -- Lines of the alphabet (and CR), searched with and without case.
+    randomGreps :: Int -> Either String ()
+    randomGreps count = go count (randoms 7)
+      where
+        go 0 _ = Right ()
+        go k (r1 : r2 : rs) =
+          let ls = [T.pack [(alphabet <> "\r") !! (x `mod` (length alphabet + 1)) | x <- take (r `mod` 9) (drop (i * 9) rs)] | (i, r) <- zip [0 .. r1 `mod` 30] (drop 400 rs)]
+              text = T.intercalate "\n" ls
+              needle = T.pack [alphabet !! (x `mod` length alphabet) | x <- take (1 + r2 `mod` 2) (drop 300 rs)]
+              expected =
+                [ (i, T.length before, T.take maxHitText (fromMaybe l (T.stripSuffix "\r" l)))
+                | Just n <- [compileNeedle True needle]
+                , (i, l) <- zip [0 ..] ls
+                , Just off <- [findForward (needleFold n) (needleText n) l]
+                , let before = takeWord8 off l
+                ]
+              actual = grep_ needle text
+           in if expected == actual then go (k - 1) (drop 500 rs) else Left (show (needle, text) <> ": expected " <> show expected <> ", got " <> show actual)
+        go _ _ = Right ()
     randomSearches :: Int -> Either String ()
     randomSearches count = go count (randoms 99)
       where

@@ -6,7 +6,8 @@ the query, in a picker with a preview.
   a regex. Regex search is a separate item (§8), and `Him.Regex` is a backtracking
   engine on strings, too slow to run over a project.
 - **Search** (`Him.Grep`, pure apart from reading a file): each file is read whole and
-  scanned in C (`Him.Native.findForward`), one hit per line: the line number, the
+  scanned in C (`Him.Native.grepLines`, a chunk of hit lines per call, so the anchor
+  byte is chosen once, not once per hit), one hit per line: the line number, the
   column of the first match, and the line (cut to 300 characters and copied, so a hit
   does not keep its file alive). Files over 20 MB and binary files (a NUL in the first
   8 KB, as for the preview) are skipped.
