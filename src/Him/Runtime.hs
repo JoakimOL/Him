@@ -44,7 +44,7 @@ import Him.Git (loadBase, removeFromIndex, writeIndex)
 import Him.GitState (GitBase (..))
 import Data.IntMap.Strict qualified as IntMap
 import Him.Picker (grepQuery, pathMatches, rankWith)
-import Him.Grep (chunkSize, grepFile, hitChunk)
+import Him.Grep (chunkSize, grepFiles, hitChunk)
 import Him.Search (compileNeedle)
 import Data.Foldable (for_)
 import Him.Syntax (SyntaxProvider, SyntaxSession (..), startSyntax)
@@ -259,7 +259,7 @@ runJob rt = \case
       let send chunks = unless (null chunks) (post (EvJob (GrepFound gen query (reverse chunks))))
           path f = if root == "." then f else root <> "/" <> f
           emit files = do
-            found <- mapM (\f -> (path f,) <$> grepFile needle (path f)) (sort (filter (pathMatches pathAtoms . T.pack) files))
+            found <- grepFiles needle (map path (sort (filter (pathMatches pathAtoms . T.pack) files)))
             for_ (hitChunk found) $ \chunk -> do
               now <- getMonotonicTime
               due <- atomicModifyIORef' pending $ \(acc, n, lastSent) ->

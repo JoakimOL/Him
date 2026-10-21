@@ -19,6 +19,7 @@ import Test.PluginApi
 import Test.PluginCanvas
 import Test.Grammar
 import Test.Indent
+import Test.Grep
 
 main :: IO ()
 main = do
@@ -42,6 +43,7 @@ main = do
   pluginCanvas <- pluginCanvasTests
   grammars <- grammarIO
   indent <- indentTests
+  grepIO <- grepTests
   runTests
     [ group "Him.Key" keyTests
     , group "Him.Terminal.Input.decodeKeys" decodeTests
@@ -80,6 +82,7 @@ main = do
     , group "multiple selections" multiSelectionTests
     , group "Him.File" fileTests
     , group "Him.Indent and .editorconfig" indent
+    , group "Him.Grep on files" grepIO
     , group "Him.Ex" exTests
     , group "Him.View" viewTests
     , group "Him.TextWidth" widthTests

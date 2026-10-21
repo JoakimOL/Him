@@ -5,11 +5,14 @@ the query, in a picker with a preview.
 - **Pattern:** literal text with smart case, the same needle as `/` (`Him.Search`), not
   a regex. Regex search is a separate item (§8), and `Him.Regex` is a backtracking
   engine on strings, too slow to run over a project.
-- **Search** (`Him.Grep`, pure apart from reading a file): each file is read whole and
-  scanned in C (`Him.Native.grepLines`, a chunk of hit lines per call, so the anchor
-  byte is chosen once, not once per hit), one hit per line: the line number, the
-  column of the first match, and the line (cut to 300 characters and copied, so a hit
-  does not keep its file alive). Files over 20 MB and binary files (a NUL in the first
+- **Search** (`Him.Grep.grepFiles`): each file is read whole (a file descriptor, no
+  `Handle`) into a `malloc`ed buffer reused for a directory's files, and its bytes are
+  scanned in C (`Him.Native.grepLinesAt`, a chunk of hit lines per call, so the anchor
+  byte is chosen once, not once per hit). Only the hit lines are decoded: one hit per
+  line, with the line number, the column of the first match, and the line (cut to 300
+  characters). A file without hits leaves nothing for the garbage collector, which
+  matters with the non-moving collector (`-xn`), where allocating every file kept
+  more capabilities from helping. Files over 20 MB and binary files (a NUL in the first
   8 KB, as for the preview) are skipped.
 - **Job:** the picker's source is `GrepQuery`. Every change of the query starts a
   `GrepFiles` job (one `GrepJob` at a time, so the last one cancels the one before).
@@ -31,8 +34,8 @@ the query, in a picker with a preview.
   column is cut so the detail does not cover it (search hits from the left, keeping
   the file name and line).
 - **Speed:** on `/usr/include` (50k files, 620 MB, warm cache), `the` (1.08M hits)
-  takes about 1.2 s in the editor and peaks at 320 MB (the walk alone, with no hits,
-  0.7 s and 107 MB; Helix 25.07 peaked at 1.1 GB on the same search). The editor runs
+  takes about 1.1 s of CPU in the editor and peaks at 200 MB (with no hits, 0.4 s and
+  34 MB; Helix 25.07 peaked at 1.1 GB on the same search). The editor runs
   on one capability (no `-N`), so the walk's workers overlap I/O but do not search in
   parallel.
 - **Filtering by path:** `pattern %p words` searches only files whose path matches

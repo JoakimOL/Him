@@ -15,15 +15,18 @@ module Him.Native
   , findBackward
   , LineHit (..)
   , grepLines
+  , grepLinesAt
   ) where
 
 import Data.Text.Array qualified as A
 import Data.Text.Internal (Text (..))
 
 import Foreign.C.Types (CInt (..), CPtrdiff (..), CSize (..), CUChar (..))
+import Foreign.Marshal.Alloc (allocaBytes)
+import Foreign.Storable (peekElemOff)
 import GHC.Exts
 import GHC.IO (IO (..), unsafeDupablePerformIO)
-import GHC.Word (Word32 (..))
+import GHC.Word (Word32 (..), Word8)
 
 -- | An immutable array of 32-bit byte offsets.
 data Offsets = Offsets ByteArray#
@@ -39,6 +42,9 @@ foreign import ccall unsafe "him_find_forward"
 
 foreign import ccall unsafe "him_grep_lines"
   c_grepLines :: ByteArray# -> CSize -> CSize -> ByteArray# -> CSize -> CSize -> CInt -> CSize -> CSize -> MutableByteArray# RealWorld -> CSize -> IO CSize
+
+foreign import ccall unsafe "him_grep_lines"
+  c_grepLinesAt :: Ptr Word8 -> CSize -> CSize -> ByteArray# -> CSize -> CSize -> CInt -> CSize -> CSize -> Ptr Int -> CSize -> IO CSize
 
 foreign import ccall unsafe "him_find_backward"
   c_findBackward :: ByteArray# -> CSize -> CSize -> ByteArray# -> CSize -> CSize -> CInt -> CPtrdiff
@@ -115,3 +121,19 @@ grepLines fold (Text (A.ByteArray narr) noff nlen) (Text (A.ByteArray harr) hoff
                               | n < chunk || lhEnd final >= hlen = []
                               | otherwise = go (lhEnd final + 1) (lhLine final + 1)
                          in (# s3, hits <> rest #)
+
+-- | 'grepLines' over bytes in memory (a buffer the caller reuses, so the
+-- hits are found at once, not lazily).
+grepLinesAt :: Bool -> Text -> Ptr Word8 -> Int -> IO [LineHit]
+grepLinesAt fold (Text (A.ByteArray narr) noff nlen) ptr len = allocaBytes (4 * 8 * chunk) (go 0 0 [])
+  where
+    chunk = 1024
+    go from line acc out = do
+      n <- fromIntegral <$> c_grepLinesAt ptr 0 (fromIntegral len) narr (fromIntegral noff) (fromIntegral nlen) (if fold then 1 else 0) (fromIntegral from) (fromIntegral line) out (fromIntegral chunk)
+      let at = peekElemOff out
+      hits <- mapM (\i -> LineHit <$> at (4 * i) <*> at (4 * i + 1) <*> at (4 * i + 2) <*> at (4 * i + 3)) [0 .. n - 1]
+      let acc' = reverse hits <> acc
+      case hits of
+        _ | n < chunk -> pure (reverse acc')
+        _ | LineHit l _ _ end <- last hits, end < len -> go (end + 1) (l + 1) acc' out
+        _ -> pure (reverse acc')

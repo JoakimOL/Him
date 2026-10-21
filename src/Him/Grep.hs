@@ -1,12 +1,12 @@
 -- | Searching the files of a project for text, for the global search
 -- picker (@space /@, ADR global-search). The pattern is a "Him.Search" needle
--- (literal, smart case); the scan runs in C over the whole file
--- ("Him.Native"), one hit per line. The hits of a search are kept in a few
+-- (literal, smart case); the scan runs in C over the file's bytes
+-- ("Him.Native"), one hit per line, and only the hit lines are decoded. The hits of a search are kept in a few
 -- arrays ('Hits'), so a picker can hold a million of them.
 module Him.Grep
   ( Hit (..)
   , grepText
-  , grepFile
+  , grepFiles
   , maxGrepSize
   , maxHitText
   , Hits
@@ -20,7 +20,14 @@ module Him.Grep
   , hitAt
   ) where
 
-import Control.Exception (IOException, try)
+import Control.Exception (IOException, bracket, evaluate, try)
+import Data.ByteString.Unsafe (unsafePackCStringLen)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Foreign.Marshal.Alloc (free, mallocBytes)
+import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
+import System.Posix.Files (fileSize, getFdStatus)
+import System.Posix.IO (OpenMode (..), closeFd, defaultFileFlags, fdReadBuf, openFd)
+import Data.Word (Word8)
 import Data.Array (Array, listArray, (!))
 import Data.Array.Unboxed (UArray)
 import Data.Array.Unboxed qualified as U
@@ -34,7 +41,6 @@ import Data.Text.Encoding (decodeUtf8Lenient)
 import Data.Text.Unsafe (dropWord8, lengthWord8, takeWord8)
 import Him.Native qualified as Native
 import Him.Search (Needle, needleFold, needleText)
-import System.IO (IOMode (..), hFileSize, withBinaryFile)
 
 -- | A line that contains the pattern.
 data Hit = Hit
@@ -66,17 +72,52 @@ maxHitText = 300
 maxGrepSize :: Int
 maxGrepSize = 20 * 1024 * 1024
 
--- | The hits in a file; none for a file that cannot be read, is too large,
--- or looks binary (a NUL in its first 8 KB, as for the preview).
-grepFile :: Needle -> FilePath -> IO [Hit]
-grepFile n path =
-  try @IOException read' >>= \case
-    Right (Just bytes) | not (BS.elem 0 (BS.take 8192 bytes)) -> pure (grepText n (decodeUtf8Lenient bytes))
-    _ -> pure []
+-- | The hits in files; none for a file that cannot be read, is too large,
+-- or looks binary (a NUL in its first 8 KB, as for the preview). The files
+-- are read one at a time into one buffer, so a file with no hits leaves
+-- nothing for the garbage collector.
+grepFiles :: Needle -> [FilePath] -> IO [(FilePath, [Hit])]
+grepFiles n paths = bracket (newIORef (nullPtr, 0)) (\buf -> readIORef buf >>= free . fst) $ \buf ->
+  mapM (\path -> (path,) . either (const []) id <$> try @IOException (grepOne buf path)) paths
   where
-    read' = withBinaryFile path ReadMode $ \h -> do
-      size <- hFileSize h
-      if size > toInteger maxGrepSize then pure Nothing else Just <$> BS.hGet h (fromInteger size)
+    grepOne buf path = bracket (openFd path ReadOnly defaultFileFlags) closeFd $ \fd -> do
+      size <- fromIntegral . fileSize <$> getFdStatus fd
+      if size > maxGrepSize
+        then pure []
+        else do
+          ptr <- room buf size
+          got <- readAll fd ptr size
+          head' <- unsafePackCStringLen (castPtr ptr, min 8192 got)
+          if BS.elem 0 head'
+            then pure []
+            else Native.grepLinesAt (needleFold n) (needleText n) ptr got >>= mapM (hit ptr)
+    -- A line is decoded (copied) from the buffer, at most as many bytes as
+    -- 'maxHitText' characters can take.
+    hit ptr (Native.LineHit line start match end) = do
+      before <- unsafePackCStringLen (castPtr ptr `plusPtr` start, match - start)
+      bytes <- unsafePackCStringLen (castPtr ptr `plusPtr` start, min (end - start) (4 * maxHitText))
+      let text = T.take maxHitText (decodeUtf8Lenient bytes)
+          text' = if T.isSuffixOf "\r" text then T.dropEnd 1 text else text
+      evaluate (Hit line (T.length (decodeUtf8Lenient before)) text')
+    readAll fd ptr size = fill 0
+      where
+        fill done
+          | done >= size = pure done
+          | otherwise = do
+              k <- fromIntegral <$> fdReadBuf fd (ptr `plusPtr` done) (fromIntegral (size - done))
+              if k == 0 then pure done else fill (done + k)
+
+-- | The buffer, grown to hold at least n bytes.
+room :: IORef (Ptr Word8, Int) -> Int -> IO (Ptr Word8)
+room buf n =
+  readIORef buf >>= \case
+    (ptr, cap) | cap >= n && ptr /= nullPtr -> pure ptr
+    (ptr, _) -> do
+      free ptr
+      let cap = max n (64 * 1024)
+      new <- mallocBytes cap
+      writeIORef buf (new, cap)
+      pure new
 
 -- | The hits of several files, packed: a file index, line, column and text
 -- end per hit in unboxed arrays, and their lines in one text.
