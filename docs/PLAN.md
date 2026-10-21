@@ -366,8 +366,10 @@ them in the editor.
 
 ## 8. Where to pick up
 
-*Last updated 2026-10-13.* Everything the user asked for so far is done. The latest
-work: picker queries as in Helix, with words, fzf atoms and `%column`, and fuzzy matches that favour word starts ([ADR picker-query](adr/picker-query.md)); `C-d` / `C-u` scroll a picker's preview; the case keys moved from `g` (goto) to a `-` menu; `'` in a picker brings back the last one of its kind ([ADR last-picker](adr/last-picker.md)); `space '` searches the files for the selection, and `'` is `*` without Shift; `C-c` toggles comments (line, else block); `<` / `>` indent by a level that comes
+*Last updated 2026-10-21.* Everything the user asked for so far is done. The latest
+work: a faster global search that keeps every hit, as Helix does (packed hits, one C
+call per file, a reused read buffer, more capabilities while it runs; ADR
+global-search); picker queries as in Helix, with words, fzf atoms and `%column`, and fuzzy matches that favour word starts ([ADR picker-query](adr/picker-query.md)); `C-d` / `C-u` scroll a picker's preview; the case keys moved from `g` (goto) to a `-` menu; `'` in a picker brings back the last one of its kind ([ADR last-picker](adr/last-picker.md)); `space '` searches the files for the selection, and `'` is `*` without Shift; `C-c` toggles comments (line, else block); `<` / `>` indent by a level that comes
 from `.editorconfig`, the file's text or the language ([ADR indentation](adr/indentation.md)); language-server
 settings and initialization options in the config file; `S-tab` in a picker undoes
 `tab`, and the buffer picker does not mark. Before that: plugin canvases ([ADR plugin-canvas](adr/plugin-canvas.md)) with contrib `magit` and `tetris`; a
@@ -407,8 +409,7 @@ clipboard, picker actions, the jumplist and global search.
   5. Moving the buffer zipper out of `Editor`, and per-subsystem job runners ([ADR module-names](adr/module-names.md)
      left them for later).
   6. Global search ([ADR global-search](adr/global-search.md)): regex patterns (with item 1), searching open buffers'
-     unsaved text, highlighting the match in the list and preview, and speed (scan
-     the bytes before decoding them; more capabilities).
+     unsaved text, and highlighting the match in the list and preview.
 - **Known issues:**
   - Zero-width combining characters are treated as width 1; case-insensitive search
     folds ASCII letters only.

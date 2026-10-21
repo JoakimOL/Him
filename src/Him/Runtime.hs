@@ -10,7 +10,8 @@ module Him.Runtime
   , reconfigure
   ) where
 
-import Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
+import Control.Concurrent (ThreadId, forkIO, getNumCapabilities, killThread, setNumCapabilities, threadDelay)
+import GHC.Conc (getNumProcessors)
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
 import Control.Monad (unless, when)
 import Data.Text (Text)
@@ -22,7 +23,7 @@ import Him.Chat (ChatConfig (..), ChatEvent (..), ChatProvider (..), ChatSession
 import Him.Config (Config (..))
 import Him.Repl.Process (ReplProcess, interruptRepl, sendRepl, startRepl, stopRepl)
 import Him.Lsp.State (ServerInfo)
-import Control.Exception (IOException, try)
+import Control.Exception (IOException, bracket_, try)
 import Data.ByteString qualified as BS
 import Him.Document (Document (..))
 import Him.File (loadDocument)
@@ -72,6 +73,9 @@ data Runtime = Runtime
   -- ^ Plugin processes, by key (@plugin:name@).
   , rtTimers :: MVar (Map Text ThreadId)
   -- ^ Plugin timers, by key (@plugin:name@).
+  , rtSearches :: MVar (Int, Int)
+  -- ^ How many global searches run, and the capabilities to go back to
+  -- when none does ('withSearchCapabilities').
   }
 
 newRuntime :: Config -> (Event -> IO ()) -> IO Runtime
@@ -84,7 +88,8 @@ newRuntime config post = do
   servers <- newMVar Map.empty
   processes <- newMVar Map.empty
   timers <- newMVar Map.empty
-  pure (Runtime post jobs (cfgSyntaxProviders config) sessions configRef replProcesses chats servers processes timers)
+  searches <- newMVar (0, 1)
+  pure (Runtime post jobs (cfgSyntaxProviders config) sessions configRef replProcesses chats servers processes timers searches)
 
 -- | Use another config's tables from now on (after a reload; running
 -- servers and REPLs keep running).
@@ -225,6 +230,28 @@ shutdown rt = do
 previewHighlightLines :: Int
 previewHighlightLines = 20000
 
+-- | The editor runs on one capability; a global search runs on up to this
+-- many, so the walk's workers search in parallel (ADR global-search).
+searchCapabilities :: Int
+searchCapabilities = 4
+
+-- | Run a search with 'searchCapabilities' (or as many as there already
+-- are), and go back once no search runs.
+withSearchCapabilities :: Runtime -> IO a -> IO a
+withSearchCapabilities rt = bracket_ enter leave
+  where
+    enter = modifyMVar_ (rtSearches rt) $ \(n, base) ->
+      if n > 0
+        then pure (n + 1, base)
+        else do
+          caps <- getNumCapabilities
+          procs <- getNumProcessors
+          when (min searchCapabilities procs > caps) (setNumCapabilities (min searchCapabilities procs))
+          pure (1, caps)
+    leave = modifyMVar_ (rtSearches rt) $ \(n, base) -> do
+      when (n == 1) (getNumCapabilities >>= \caps -> when (caps /= base) (setNumCapabilities base))
+      pure (n - 1, base)
+
 runJob :: Runtime -> Job -> IO ()
 runJob rt = \case
   ScanFiles gen opts root -> do
@@ -268,7 +295,7 @@ runJob rt = \case
                       then (([], 0, now), chunk : acc)
                       else ((chunk : acc, n', lastSent), [])
               send due
-      _ <- walkFiles opts root emit
+      _ <- withSearchCapabilities rt (walkFiles opts root emit)
       rest <- atomicModifyIORef' pending (\(acc, _, t) -> (([], 0, t), acc))
       send rest
     post (EvJob (GrepFinished gen query))

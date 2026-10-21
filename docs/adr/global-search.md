@@ -33,11 +33,14 @@ the query, in a picker with a preview.
   number of matching lines found (not `matches/items`). A label too long for its
   column is cut so the detail does not cover it (search hits from the left, keeping
   the file name and line).
+- **Capabilities:** the editor runs on one capability (no `-N`); a search raises it
+  to 4 (`searchCapabilities`, fewer on a smaller machine) while it runs, so the walk's
+  workers search in parallel, and goes back once no search runs (a count, since a
+  cancelled search may end after the next one started).
 - **Speed:** on `/usr/include` (50k files, 620 MB, warm cache), `the` (1.08M hits)
-  takes about 1.1 s of CPU in the editor and peaks at 200 MB (with no hits, 0.4 s and
-  34 MB; Helix 25.07 peaked at 1.1 GB on the same search). The editor runs
-  on one capability (no `-N`), so the walk's workers overlap I/O but do not search in
-  parallel.
+  takes 0.7 s in the editor, 1.6 s of CPU, and peaks at 250 MB; with no hits, 0.3 s
+  (Helix 25.07 peaked at 1.1 GB on the same search). On one capability it took 1.1 s,
+  1.0 s of CPU and 200 MB.
 - **Filtering by path:** `pattern %p words` searches only files whose path matches
   the words ([ADR picker-query](picker-query.md)).
 - **The selection:** `space '` (and `space *`, next to `*`) opens the picker with the

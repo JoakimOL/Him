@@ -8,7 +8,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (execStateT, runStateT)
 import Him.Buffer qualified as B
 import Him.Key (KeyCode (..), plain)
-import Him.Picker (Picker (..), PickerItem (..), matchList)
+import Him.Picker (PickerItem (..), matchList)
 import Him.Plugin (getState, modifyState, openScratch, putState, replaceRange)
 import Him.Plugin.Types (Ctx (..), runPluginM)
 import Him.Position (Pos (..))
