@@ -12,7 +12,7 @@ module Him.Runtime
 
 import Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Him.Lsp.Config (ServerConfig (..), serverFor)
@@ -43,8 +43,8 @@ import Him.Diff (Hunk (..), diffLines, mapLine)
 import Him.Git (loadBase, removeFromIndex, writeIndex)
 import Him.GitState (GitBase (..))
 import Data.IntMap.Strict qualified as IntMap
-import Him.Picker (PickTarget (..), grepQuery, matchLimit, pathMatches, pickerItem, rankWith)
-import Him.Grep (Hit (..), grepFile)
+import Him.Picker (grepQuery, pathMatches, rankWith)
+import Him.Grep (chunkSize, grepFile, hitChunk)
 import Him.Search (compileNeedle)
 import Data.Foldable (for_)
 import Him.Syntax (SyntaxProvider, SyntaxSession (..), startSyntax)
@@ -252,29 +252,24 @@ runJob rt = \case
     let (pattern, pathAtoms) = grepQuery query
     for_ (compileNeedle True pattern) $ \needle -> do
       -- The walk calls emit from its worker threads, so files are searched
-      -- in parallel. Hits are sent in batches (every 50 ms, or sooner for
-      -- many), and only until the picker holds matchLimit of them; after
-      -- that only the count grows.
+      -- in parallel. Each call's hits are packed into a chunk there, and
+      -- the chunks are sent in batches (every 50 ms, or sooner for many).
       start <- getMonotonicTime
-      pending <- newIORef ([], 0 :: Int, 0 :: Int, start)
-      let send (items, n) = when (n > 0) (post (EvJob (GrepFound gen query items n)))
+      pending <- newIORef ([], 0 :: Int, start)
+      let send chunks = unless (null chunks) (post (EvJob (GrepFound gen query (reverse chunks))))
           path f = if root == "." then f else root <> "/" <> f
           emit files = do
-            found <- concat <$> mapM (\f -> map (item f) <$> grepFile needle (path f)) (sort (filter (pathMatches pathAtoms . T.pack) files))
-            let n = length found
-            now <- getMonotonicTime
-            due <- atomicModifyIORef' pending $ \(acc, count, kept, lastSent) ->
-              let new = take (matchLimit - kept) found
-                  acc' = acc <> new
-                  count' = count + n
-                  kept' = kept + length new
-               in if length acc' >= 500 || now - lastSent >= 0.05
-                    then (([], 0, kept', now), (acc', count'))
-                    else ((acc', count', kept', lastSent), ([], 0))
-            send due
-          item f h = pickerItem (T.pack (f <> ":" <> show (hitLine h + 1))) (PickPosition (path f) (hitLine h) (hitColumn h) Nothing) (T.strip (hitText h))
+            found <- mapM (\f -> (path f,) <$> grepFile needle (path f)) (sort (filter (pathMatches pathAtoms . T.pack) files))
+            for_ (hitChunk found) $ \chunk -> do
+              now <- getMonotonicTime
+              due <- atomicModifyIORef' pending $ \(acc, n, lastSent) ->
+                let !n' = n + chunkSize chunk
+                 in if n' >= 20000 || now - lastSent >= 0.05
+                      then (([], 0, now), chunk : acc)
+                      else ((chunk : acc, n', lastSent), [])
+              send due
       _ <- walkFiles opts root emit
-      rest <- atomicModifyIORef' pending (\(acc, count, kept, t) -> (([], 0, kept, t), (acc, count)))
+      rest <- atomicModifyIORef' pending (\(acc, _, t) -> (([], 0, t), acc))
       send rest
     post (EvJob (GrepFinished gen query))
   FilterPicker gen query columns items -> do

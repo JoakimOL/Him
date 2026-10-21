@@ -187,7 +187,7 @@ lspTests = do
       picked <- settleUntil config rt 10000 (isJust . edPicker) =<< keys "space a" (selecting 2 12 20 actOpen)
       -- Workspace symbols, asked again as the query changes.
       symbolsFound <-
-        settleUntil config rt 10000 (maybe False (any ((== "add") . piLabel) . pkMatches) . edPicker)
+        settleUntil config rt 10000 (maybe False (any ((== "add") . piLabel) . matchList) . edPicker)
           =<< keys "space S a d d" actOpen
       -- Completing printf without stdio.h adds the include (clangd sends it
       -- with the item).
@@ -220,7 +220,7 @@ lspTests = do
         , test "typing ( shows the signature" $
             assertEqual (Just "signature", True) (infoTitle <$> edPopup signature, maybe False (any (T.isInfixOf "int a" . fst) . infoRows) (edPopup signature))
         , test "space a lists code actions" (assertEqual (Just "code actions") (pkTitle <$> edPicker actionsShown))
-        , test "space S finds workspace symbols as you type" (assertEqual (Just "workspace symbols") (pkTitle <$> edPicker symbolsFound) >> assertEqual True (maybe False (any ((== "add") . piLabel) . pkMatches) (edPicker symbolsFound)))
+        , test "space S finds workspace symbols as you type" (assertEqual (Just "workspace symbols") (pkTitle <$> edPicker symbolsFound) >> assertEqual True (maybe False (any ((== "add") . piLabel) . matchList) (edPicker symbolsFound)))
         , test "a completion brings its import" $
             assertEqual ("#include <stdio.h>", True) (B.lineAt 0 (docBuffer (edDoc imported)), "printf" `T.isInfixOf` B.toText (docBuffer (edDoc imported)))
         , test "a picked code action is applied" (assertEqual True (T.isInfixOf "placeholder" (B.toText (docBuffer (edDoc extracted)))))

@@ -44,6 +44,7 @@ import Him.View (View (..))
 import Him.Render (render)
 import Him.Render.Theme (defaultTheme)
 import Data.Foldable (toList)
+import Him.Grep (Hit (..), hitChunk)
 import Data.Text qualified as T
 import Test.Harness
 import Test.Util
@@ -418,7 +419,7 @@ openBufferTests = do
   buffersBack <- keys "space b f a esc space b '" opened
   buffersQuote <- keys "space b '" opened
   pickedHit <- foldlM run searched [plain KEnter]
-  searchStale <- execStateT (handleEvent config (EvJob (GrepFound (maybe 0 pkGeneration (edPicker searched)) "maxHit" [pickerItem "x" (PickFile "x") ""] 1))) searched
+  searchStale <- execStateT (handleEvent config (EvJob (GrepFound (maybe 0 pkGeneration (edPicker searched)) "maxHit" (toList (hitChunk [("x", [Hit 0 0 "x"])]))))) searched
   -- listFiles on a small tree with a hidden directory.
   let tree = dir <> "/him-test-tree"
   createDirectoryIfMissing True (tree <> "/sub/deeper")
@@ -571,7 +572,7 @@ openBufferTests = do
     , test "tab in the buffer picker moves without marking" $
         assertEqual (Just (0, 0)) ((\p -> (markCount p, pkSelected p)) <$> edPicker bufferTab)
     , test "space b picks a buffer" (assertEqual (a, (0, 2), Normal) (docPath (edDoc pickedBuffer), bufferIndex pickedBuffer, edMode pickedBuffer))
-    , test "typing narrows the picker, backspace widens it" (assertEqual (Just ("", 2)) ((\p -> (pkQuery p, length (pkMatches p))) <$> edPicker pickerTyped))
+    , test "typing narrows the picker, backspace widens it" (assertEqual (Just ("", 2)) ((\p -> (pkQuery p, length (matchList p))) <$> edPicker pickerTyped))
     , test "esc closes the picker" (assertEqual (Nothing, Normal, b) (pkTitle <$> edPicker pickerEsc, edMode pickerEsc, docPath (edDoc pickerEsc)))
     , test "space f scans in the background" $
         assertEqual (Just (False, True)) ((\p -> (pkLoading p, any ((== "test/Spec.hs") . piLabel) (toList (pkItems p)))) <$> edPicker scanned)
@@ -585,7 +586,7 @@ openBufferTests = do
     , test "space f opens the chosen file" (assertEqual (Just "test/Spec.hs", (1, 2)) (docPath (edDoc pickedFile), bufferIndex pickedFile))
     , test "space / finds the lines that contain the query" $
         assertEqual (Just (False, True))
-          ((\p -> (pkLoading p, any (\i -> piDetail i == "maxHitText :: Int" && (case piTarget i of PickPosition f _ _ _ -> f == "src/Him/Grep.hs"; _ -> False)) (pkMatches p))) <$> edPicker searched)
+          ((\p -> (pkLoading p, any (\i -> piDetail i == "maxHitText :: Int" && (case piTarget i of PickPosition f _ _ _ -> f == "src/Him/Grep.hs"; _ -> False)) (matchList p))) <$> edPicker searched)
     , test "space /: a new query keeps the old hits (stale) and searches again" $
         assertEqual (Just (True, True, pkMatches <$> edPicker searched), True)
           ((\p -> (pkLoading p, pkStale p, Just (pkMatches p))) <$> edPicker searchedAgain, any (\case StartJob (GrepFiles _ "maxHitText ::" _ _) -> True; _ -> False) (edEffects searchedAgain))
@@ -593,13 +594,13 @@ openBufferTests = do
         assertEqual (Just ("search", "alpha"), True, ["alpha"])
           ((\p -> (pkTitle p, pkQuery p)) <$> edPicker searchedWord, any (\case StartJob (GrepFiles _ "alpha" _ _) -> True; _ -> False) (edEffects searchedWord), Map.findWithDefault [] '/' (edRegisters searchedWord))
     , test "space /: %p keeps the hits whose path matches" $
-        let paths = [f | Just p <- [edPicker searchedPath], i <- pkMatches p, PickPosition f _ _ _ <- [piTarget i]]
+        let paths = [f | Just p <- [edPicker searchedPath], i <- matchList p, PickPosition f _ _ _ <- [piTarget i]]
          in assertEqual (True, True) (not (null paths), all ("test/" `isPrefixOf`) paths)
     , test "space ' refuses a selection spanning lines" (assertEqual (Nothing, Normal) (pkTitle <$> edPicker searchedLine, edMode searchedLine))
     , test "' in the search picker brings the last search back, hits and all" (assertEqual (edPicker searched, Picking) (edPicker searchBack, edMode searchBack))
     , test "a picker closed untouched is not remembered" (assertEqual (edPicker searched) (edPicker searchBackUntouched))
     , test "' after a query is typed" (assertEqual (Just "a'") (pkQuery <$> edPicker searchQuote))
-    , test "' brings the buffer picker's query back over fresh items" (assertEqual (Just ("fa", 1)) ((\p -> (pkQuery p, length (pkMatches p))) <$> edPicker buffersBack))
+    , test "' brings the buffer picker's query back over fresh items" (assertEqual (Just ("fa", 1)) ((\p -> (pkQuery p, length (matchList p))) <$> edPicker buffersBack))
     , test "' with nothing to bring back is typed" (assertEqual (Just "'") (pkQuery <$> edPicker buffersQuote))
     , test "space /: hits for another query are dropped" (assertEqual (edPicker searched) (edPicker searchStale))
     , test "space / opens the hit at its line and column" $

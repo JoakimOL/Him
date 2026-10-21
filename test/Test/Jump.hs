@@ -18,7 +18,7 @@ import Him.Event (Event (..))
 import Him.Jumplist
 import Him.Key (parseKeys)
 import Him.Mode (Mode (..))
-import Him.Picker (Picker (..), PickerItem (..))
+import Him.Picker (Picker (..), PickerItem (..), matchList)
 import Him.Position (Pos (..))
 import Him.Selection (Range (..), point, primary, rangeHead, single)
 import Him.Session (handleEvent)
@@ -66,11 +66,11 @@ jumpTests = do
     , test "jumps follow edits above them" (assertEqual 5 followed)
     , test "a search is a jump" (assertEqual 0 searched)
     , test "space j lists the jumps, newest first" $
-        assertEqual (Just ["[scratch]:5", "[scratch]:1"], Picking) (map piLabel . pkMatches <$> edPicker listed, edMode listed)
+        assertEqual (Just ["[scratch]:5", "[scratch]:1"], Picking) (map piLabel . matchList <$> edPicker listed, edMode listed)
     , test "del removes the selected entry" $
-        assertEqual (Just ["[scratch]:1"], [0]) (map piLabel . pkMatches <$> edPicker deleted, jumpLines deleted)
+        assertEqual (Just ["[scratch]:1"], [0]) (map piLabel . matchList <$> edPicker deleted, jumpLines deleted)
     , test "tab marks entries and del removes them all" $
-        assertEqual (Just [], []) (map piLabel . pkMatches <$> edPicker deletedMarked, jumpLines deletedMarked)
+        assertEqual (Just [], []) (map piLabel . matchList <$> edPicker deletedMarked, jumpLines deletedMarked)
     , test "ret jumps to it, and where the cursor was is pushed" $
         assertEqual (4, Nothing, [0, 4, 49]) (cursorLine picked, edPicker picked, jumpLines picked)
     , test "pickers without a second action say so" $

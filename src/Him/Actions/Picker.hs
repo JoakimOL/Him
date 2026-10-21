@@ -11,7 +11,6 @@ module Him.Actions.Picker
 
 import Control.Monad.Trans.State.Strict (get, gets, modify')
 import Control.Monad (when)
-import Data.Foldable (toList)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
@@ -31,6 +30,7 @@ import Him.Selection (point, single)
 import Him.Editor
 import Him.Mode (Mode (..))
 import Him.Picker
+import Him.Grep (addChunks, noHits)
 import Him.FileTree (WalkOptions (..))
 import Him.Options (Options (..))
 
@@ -133,7 +133,7 @@ bringBack cur old
   | otherwise = do
       changeQuery (const (pkQuery old))
       when (pkSource cur == StaticItems) $
-        onPicker (\p -> p {pkSelected = max 0 (min (pkSelected old) (length (pkMatches p) - 1))})
+        onPicker (\p -> p {pkSelected = max 0 (min (pkSelected old) (matchesShown p - 1))})
 
 -- | Open the global search with a query. Each query starts a search that
 -- streams its hits in (ADR global-search).
@@ -193,7 +193,7 @@ changeQuery f =
       -- Search again; the last hits stay (stale) until new ones arrive.
       GrepQuery
         | T.null query -> do
-            modify' (\e -> e {edPicker = Just p {pkQuery = query, pkItems = Seq.empty, pkMatches = [], pkMatchCount = 0, pkSelected = 0, pkLoading = False, pkStale = False, pkLabelWidth = 0, pkMarked = IntSet.empty}})
+            modify' (\e -> e {edPicker = Just (setHits noHits p) {pkQuery = query, pkSelected = 0, pkLoading = False, pkStale = False, pkMarked = IntSet.empty}})
             request (CancelJob GrepJob)
         | otherwise -> do
             modify' (\e -> e {edPicker = Just p {pkQuery = query, pkLoading = True, pkStale = True}})
@@ -237,21 +237,20 @@ applyJobResult result =
                 PreviewText b _ -> PreviewText b spans
                 other -> other
            in e {edPreviews = Map.adjust withSpans file (edPreviews e)}
-      GrepFound gen query new n
+      GrepFound gen query new
         | gen == pkGeneration p && query == pkQuery p ->
             -- The first hits for a new query replace the last query's.
-            let (old, oldCount, sel, marked) = if pkStale p then (Seq.empty, 0, 0, IntSet.empty) else (pkItems p, pkMatchCount p, pkSelected p, pkMarked p)
-                items = old <> numbered (Seq.length old) new
+            let (old, sel, marked) = if pkStale p then (noHits, 0, IntSet.empty) else (grepHits p, pkSelected p, pkMarked p)
              in Just $ modify' $ \e ->
-                  e {edPicker = Just p {pkItems = items, pkMatches = toList items, pkMatchCount = oldCount + n, pkSelected = sel, pkMarked = marked, pkStale = False, pkLabelWidth = (if pkStale p then 0 else pkLabelWidth p) `max` labelWidth new}}
+                  e {edPicker = Just (setHits (addChunks new old) p) {pkSelected = sel, pkMarked = marked, pkStale = False}}
       GrepFinished gen query
         | gen == pkGeneration p && query == pkQuery p ->
             Just $ modify' $ \e ->
-              e {edPicker = Just (if pkStale p then p {pkItems = Seq.empty, pkMatches = [], pkMatchCount = 0, pkSelected = 0, pkLabelWidth = 0, pkMarked = IntSet.empty} else p) {pkLoading = False, pkStale = False}}
+              e {edPicker = Just (if pkStale p then (setHits noHits p) {pkSelected = 0, pkMarked = IntSet.empty} else p) {pkLoading = False, pkStale = False}}
       PickerFiltered gen query best total
         | gen == pkGeneration p && query == pkQuery p ->
             Just $ modify' $ \e ->
-              e {edPicker = Just p {pkMatches = best, pkMatchCount = total, pkStale = False, pkSelected = min (pkSelected p) (max 0 (length best - 1))}}
+              e {edPicker = Just p {pkMatches = Ranked best, pkMatchCount = total, pkStale = False, pkSelected = min (pkSelected p) (max 0 (length best - 1))}}
       _ -> Nothing
 
 -- | After every event: read the file the selected item points at, for the

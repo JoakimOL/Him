@@ -25,7 +25,8 @@ import Him.Native (findForward)
 import Data.Text.Unsafe (takeWord8)
 import Him.History qualified as H
 import Him.Regex
-import Him.Grep (Hit (..), grepText, maxHitText)
+import Him.Grep (Hit (..), addChunks, grepText, hitAt, hitChunk, hitCount, hitsLabelWidth, maxHitText, noHits)
+import Him.Picker (Picker (..), PickerItem (..), chosenItems, moveSelection, newPicker, selectedItem, setHits, toggleMark)
 import Him.Motion
 import Him.Position (Pos (..))
 import Him.Selection
@@ -160,6 +161,16 @@ searchTests =
   , test "global search: thousands of hits (several C calls)" $
       assertEqual ([0 .. 2999], 2999) (map (\(l, _, _) -> l) (grep_ "ab" (T.replicate 3000 "x Ab\n")), length (grep_ "ab" (T.replicate 2999 "x Ab\n" <> "none")))
   , test "global search: 500 random texts match a line-by-line search" (randomGreps 500)
+  , test "global search: hits are packed in chunks and read back" $
+      let chunk fs = maybe [] pure (hitChunk fs)
+          hits = addChunks (chunk [("b", [Hit 9 1 "x y"])]) (addChunks (chunk [("a", [Hit 0 2 "漢字"]), ("none", []), ("dir/c", [Hit 4 0 "", Hit 99 3 "zz"])]) noHits)
+       in assertEqual
+            (4, 9, [Just ("a", Hit 0 2 "漢字"), Just ("dir/c", Hit 4 0 ""), Just ("dir/c", Hit 99 3 "zz"), Just ("b", Hit 9 1 "x y"), Nothing])
+            (hitCount hits, hitsLabelWidth hits, map (hitAt hits) [0 .. 4])
+  , test "global search: the picker holds every hit, and marks them by index" $
+      let hits = addChunks (maybe [] pure (hitChunk [("f", [Hit i 0 "the" | i <- [0 .. 2999]])])) noHits
+          p = toggleMark (moveSelection (-1) (setHits hits (newPicker "search" [])))
+       in assertEqual (3000, Just "f:3000", ["f:3000"]) (pkMatchCount p, piLabel <$> selectedItem p, map piLabel (chosenItems p))
   ]
   where
     grep_ q t = [(hitLine h, hitColumn h, hitText h) | n <- maybe [] pure (compileNeedle True q), h <- grepText n t]

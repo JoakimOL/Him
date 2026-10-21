@@ -26,6 +26,7 @@ import Him.GitState (GitBase)
 import Him.Invocation (Invocation)
 import Him.Json (Value)
 import Him.Lsp.State (ServerInfo)
+import Him.Grep (HitChunk)
 import Him.Picker (PickerItem)
 import Him.FileTree (WalkOptions)
 import Him.Repl (ReplConfig)
@@ -148,10 +149,8 @@ jobKey = \case
 data JobResult
   = FilesFound !Int ![FilePath]
   | ScanFinished !Int
-  | -- | Generation, query, more matching lines (until the picker holds
-    -- 'Him.Picker.matchLimit'), and how many matching lines were found
-    -- since the last batch (those included).
-    GrepFound !Int !Text ![PickerItem] !Int
+  | -- | Generation, query, more matching lines.
+    GrepFound !Int !Text ![HitChunk]
   | GrepFinished !Int !Text
   | -- | Generation, query, best matches, total number of matches.
     PickerFiltered !Int !Text ![PickerItem] !Int

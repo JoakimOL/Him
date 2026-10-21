@@ -39,13 +39,12 @@ drawPicker theme ed area f = case edPicker ed of
             Just _ -> (w - 3) * 2 `div` 5
             Nothing -> w - 2
           listRows = h - 3
-          ms = pkMatches p
           sel = pkSelected p
           -- Scroll the list so the selected item is visible.
           first = max 0 (sel - listRows + 1)
-          visible = zip [first ..] (take listRows (drop first ms))
-          -- A search shows the matching lines it found (it keeps only the
-          -- first ones); other pickers, matches out of all items.
+          visible = [(i, item) | i <- [first .. first + listRows - 1], Just item <- [matchAt p i]]
+          -- A search shows the matching lines it found; other pickers,
+          -- matches out of all items.
           count = T.pack (if pkSource p == GrepQuery then show (pkMatchCount p) else show (pkMatchCount p) <> "/" <> show (length (pkItems p))) <> (if pkLoading p || pkStale p then "…" else "") <> (if markCount p > 0 then " · " <> T.pack (show (markCount p)) <> " marked" else "")
           titled = T.take inner (" " <> pkTitle p <> " ")
           fit t = T.take inner t <> T.replicate (inner - T.length t) " "

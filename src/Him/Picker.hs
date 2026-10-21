@@ -7,6 +7,12 @@ module Him.Picker
   , pickerItem
   , PickTarget (..)
   , PickerSource (..)
+  , Matches (..)
+  , matchList
+  , matchAt
+  , matchesShown
+  , grepHits
+  , setHits
   , newPicker
   , matches
   , selectedItem
@@ -50,6 +56,7 @@ import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as T
+import Him.Grep (Hit (..), Hits, hitAt, hitCount, hitsLabelWidth, noHits)
 import Him.Json (Value)
 
 -- | What choosing an item does.
@@ -116,14 +123,13 @@ data Picker = Picker
   { pkTitle :: !Text
   , pkItems :: !(Seq PickerItem)
   , pkQuery :: !Text
-  , pkMatches :: ![PickerItem]
-  -- ^ The best matches of the query, best first, at most 'matchLimit'
-  -- (kept up to date by 'setQuery' and 'addItems', so rendering does not
-  -- filter again).
+  , pkMatches :: !Matches
+  -- ^ What the query matches, best first (kept up to date by 'setQuery'
+  -- and 'addItems', so rendering does not filter again).
   , pkMatchCount :: !Int
   -- ^ How many items match in all.
   , pkSelected :: !Int
-  -- ^ Index into 'pkMatches'.
+  -- ^ Index into the matches.
   , pkGeneration :: !Int
   -- ^ Which background scan fills this picker (items from another are
   -- dropped); 0 for a picker filled at once.
@@ -158,7 +164,53 @@ data Picker = Picker
   deriving stock (Eq, Show)
 
 newPicker :: Text -> [PickerItem] -> Picker
-newPicker title items = refilter (Picker title (numbered 0 items) "" [] 0 0 0 False False StaticItems (labelWidth items) IntSet.empty True "picker_open" Nothing (-1, 0) defaultColumns False)
+newPicker title items = refilter (Picker title (numbered 0 items) "" (Ranked []) 0 0 0 False False StaticItems (labelWidth items) IntSet.empty True "picker_open" Nothing (-1, 0) defaultColumns False)
+
+-- | A picker's matches.
+data Matches
+  = -- | The best items, at most 'matchLimit'.
+    Ranked ![PickerItem]
+  | -- | The global search's hits, all of them; an item is made from a hit
+    -- when it is shown (ADR global-search).
+    SearchHits !Hits
+  deriving stock (Eq, Show)
+
+-- | All the matches, best first (made lazily from hits).
+matchList :: Picker -> [PickerItem]
+matchList p = case pkMatches p of
+  Ranked items -> items
+  SearchHits hits -> [item | i <- [0 .. hitCount hits - 1], Just item <- [hitItem hits i]]
+
+-- | The i-th match.
+matchAt :: Picker -> Int -> Maybe PickerItem
+matchAt p i = case pkMatches p of
+  Ranked items | i >= 0 -> case drop i items of
+    item : _ -> Just item
+    [] -> Nothing
+  Ranked _ -> Nothing
+  SearchHits hits -> hitItem hits i
+
+-- | How many matches the list holds.
+matchesShown :: Picker -> Int
+matchesShown p = case pkMatches p of
+  Ranked items -> length items
+  SearchHits hits -> hitCount hits
+
+-- | A global search hit as an item: @path:line@, the line as the detail.
+hitItem :: Hits -> Int -> Maybe PickerItem
+hitItem hits i = do
+  (path, h) <- hitAt hits i
+  pure (pickerItem (T.pack (path <> ":" <> show (hitLine h + 1))) (PickPosition path (hitLine h) (hitColumn h) Nothing) (T.strip (hitText h))) {piId = i}
+
+-- | The global search's hits so far (none for other pickers).
+grepHits :: Picker -> Hits
+grepHits p = case pkMatches p of
+  SearchHits hits -> hits
+  Ranked _ -> noHits
+
+-- | Show these hits; the count, the label width and the ids follow them.
+setHits :: Hits -> Picker -> Picker
+setHits hits p = p {pkItems = Seq.empty, pkMatches = SearchHits hits, pkMatchCount = hitCount hits, pkLabelWidth = hitsLabelWidth hits}
 
 -- | The picker box's height in an area of the given height (most of it).
 boxHeight :: Int -> Int
@@ -204,7 +256,7 @@ addItems new p = refilter p {pkItems = pkItems p <> numbered (Seq.length (pkItem
 refilter :: Picker -> Picker
 refilter p =
   let (ms, n) = rankWith (pkColumns p) (pkQuery p) (toList (pkItems p))
-   in p {pkMatches = ms, pkMatchCount = n, pkSelected = max 0 (min (pkSelected p) (length ms - 1))}
+   in p {pkMatches = Ranked ms, pkMatchCount = n, pkSelected = max 0 (min (pkSelected p) (length ms - 1))}
 
 -- | Pickers with more items than this filter in a background job when the
 -- query is not empty (ADR streaming-file-picker); smaller ones filter at once.
@@ -471,13 +523,11 @@ matchCost (q0 : qs) starts key0 = foldl' min inf (foldl' row first qs)
         go _ _ _ _ _ = []
 
 selectedItem :: Picker -> Maybe PickerItem
-selectedItem p = case drop (pkSelected p) (pkMatches p) of
-  item : _ -> Just item
-  [] -> Nothing
+selectedItem p = matchAt p (pkSelected p)
 
 -- | Move the selection, wrapping around.
 moveSelection :: Int -> Picker -> Picker
-moveSelection n p = case length (pkMatches p) of
+moveSelection n p = case matchesShown p of
   0 -> p
   len -> p {pkSelected = (pkSelected p + n) `mod` len}
 
@@ -507,4 +557,5 @@ markCount = IntSet.size . pkMarked
 chosenItems :: Picker -> [PickerItem]
 chosenItems p
   | IntSet.null (pkMarked p) = maybe [] pure (selectedItem p)
+  | SearchHits hits <- pkMatches p = [item | i <- IntSet.toAscList (pkMarked p), Just item <- [hitItem hits i]]
   | otherwise = [item | i <- IntSet.toAscList (pkMarked p), Just item <- [Seq.lookup i (pkItems p)]]

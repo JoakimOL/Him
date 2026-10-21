@@ -8,7 +8,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (execStateT, runStateT)
 import Him.Buffer qualified as B
 import Him.Key (KeyCode (..), plain)
-import Him.Picker (Picker (..), PickerItem (..))
+import Him.Picker (Picker (..), PickerItem (..), matchList)
 import Him.Plugin (getState, modifyState, openScratch, putState, replaceRange)
 import Him.Plugin.Types (Ctx (..), runPluginM)
 import Him.Position (Pos (..))
@@ -152,14 +152,14 @@ pluginApiTests = do
     , test "recent-files: space o lists the others, del forgets them, the list is kept in a file" $
         assertEqual
           (Just ["him-test-recent-a.txt"], ["him-test-recent-b.txt"], Nothing)
-          ( map (T.pack . takeFileName . T.unpack . piLabel) . pkMatches <$> edPicker picked
+          ( map (T.pack . takeFileName . T.unpack . piLabel) . matchList <$> edPicker picked
           , map takeFileName (lines remembered)
-          , map piLabel . pkMatches <$> edPicker forgot
+          , map piLabel . matchList <$> edPicker forgot
           )
     , test "the :plugins picker lists them all; ret switches the chosen one" $
         assertEqual
           (Just ["git", "lsp", "repl", "chat", "wordcount", "recent-files", "magit", "tetris"], [PluginCommand (Just ("git", False))])
-          (map piLabel . pkMatches <$> edPicker pluginsPicker, [e | e@(PluginCommand _) <- edEffects toggled])
+          (map piLabel . matchList <$> edPicker pluginsPicker, [e | e@(PluginCommand _) <- edEffects toggled])
     , test "[plugins.<name>]: enabled and settings; unknown settings are errors" $
         assertEqual
           (Right (Map.singleton "wordcount" True), Left ["plugins.wordcount.colour: unknown setting (known: enabled, max-lines)"])

@@ -16,20 +16,25 @@ the query, in a picker with a preview.
   - The job waits 80 ms first, so typing a word searches once.
   - It walks the files as `space f` does (`walkFiles`, the `[editor.file-picker]`
     options), searching each directory's files in the walk's worker threads.
-  - Hits go out in batches (`GrepFound`, every 50 ms or 500 hits), only until the
-    picker holds `matchLimit` (1000) of them; after that only the count grows.
-    `GrepFinished` ends it.
+  - Each call of the walk's `emit` packs its files' hits into a `HitChunk`
+    (`Him.Grep`): file index, line, column and text end per hit in unboxed arrays, and
+    the lines in one text. Chunks go out in batches (`GrepFound`, every 50 ms or 20000
+    hits). `GrepFinished` ends it.
   - Results name their generation and query; others are dropped.
-- **Picker:** items are `path:line` with the line as the detail, and `PickPosition`
-  targets, so the preview and `ret` go to the match. While a new query runs, the last
+- **Picker:** keeps every hit, as Helix does (no `matchLimit`): its matches are
+  `SearchHits`, the chunks by their first index, and an item (`path:line` with the line
+  as the detail, and a `PickPosition` target, so the preview and `ret` go to the match)
+  is made only for the rows shown, the selection and marked hits. A `PickerItem` per
+  hit (five texts) would cost hundreds of bytes each; a hit costs its line plus 16. While a new query runs, the last
   hits stay, marked stale, until its first batch replaces them. The count is the
   number of matching lines found (not `matches/items`). A label too long for its
   column is cut so the detail does not cover it (search hits from the left, keeping
   the file name and line).
-- **Speed:** on `/usr/include` (49k files, 600 MB, warm cache) the search takes about
-  0.6 s and the first hits show within about 0.2 s. Reading the files is most of it.
-  The editor runs on one capability (no `-N`), so the walk's workers overlap
-  I/O but do not search in parallel; `-N4` changed little in a benchmark.
+- **Speed:** on `/usr/include` (50k files, 620 MB, warm cache), `the` (1.08M hits)
+  takes about 1.2 s in the editor and peaks at 320 MB (the walk alone, with no hits,
+  0.7 s and 107 MB; Helix 25.07 peaked at 1.1 GB on the same search). The editor runs
+  on one capability (no `-N`), so the walk's workers overlap I/O but do not search in
+  parallel.
 - **Filtering by path:** `pattern %p words` searches only files whose path matches
   the words ([ADR picker-query](picker-query.md)).
 - **The selection:** `space '` (and `space *`, next to `*`) opens the picker with the
